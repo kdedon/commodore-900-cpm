@@ -1,4 +1,6 @@
 /*
+ * beep.c - Sound the console bell n times (default 1) through BDOS function
+ * 2.
  */
 
 #include "cpm.h"

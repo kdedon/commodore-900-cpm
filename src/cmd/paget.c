@@ -1,4 +1,6 @@
 /*
+ * paget.c - Set a five-line console page and print twelve lines to exercise
+ * paging.
  */
 
 #include "cpm.h"

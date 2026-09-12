@@ -1,7 +1,17 @@
 /*
+ * submit.c - Expand a CP/M 3 SUBMIT file for the CCP.
  *
+ *   SUBMIT
+ *   SUBMIT FILE
+ *   SUBMIT FILE P1 P2 ...
  *
+ * The source .SUB file is expanded into $$$.SUB. Supported substitutions are
+ * $n parameters, $$, ^X control characters, ! command separators, and the '<'
+ * program-input marker. The original base-page command tail is retained
+ * because argv parsing replaces its separators with NUL bytes.
  *
+ * $$$.SUB is written on the SCB temporary drive when configured, otherwise on
+ * A:, which is where this CCP reads it.
  */
 
 #include "cpm.h"
@@ -49,6 +59,7 @@ static VOID crlf()
 	cputs("\r\n");
 }
 
+/* "00001", bumped once per CR read from the source. */
 static VOID bumpline()
 {
 	register int	i;
@@ -62,6 +73,7 @@ static VOID bumpline()
 
 /*
  * Abandon the run: report the line, remove the half-built $$$.SUB and
+ * quit.
  */
 static VOID fatal(msg)
 char *msg;
@@ -108,6 +120,7 @@ int b;
 
 /*
  * Line ends are counted, not emitted, so that the CR,LF closing the last
+ * line can be dropped without a second pass over the output.
  */
 static VOID endline()
 {
@@ -125,6 +138,7 @@ int b;
 	putout(b);
 }
 
+/* Spaces and tabs are skipped between parameters. */
 static VOID deblankparm()
 {
 	while (sstring[ssbp] == ' ' || sstring[ssbp] == TAB)
@@ -132,6 +146,9 @@ static VOID deblankparm()
 }
 
 /*
+ * True while sstring[ssbp] is part of the current parameter. Tabs delimit
+ * parameters only while leading whitespace is skipped; within a parameter,
+ * this scanner stops only at a space or NUL.
  */
 static int notend()
 {
@@ -145,6 +162,7 @@ static int notend()
 /*
  * Copy parameter n of the command tail to the output.  Parameter 0 is
  * the .SUB file name itself, because the scan restarts at the head of
+ * the tail. A parameter that was never typed expands to nothing.
  */
 static VOID subparm(n)
 int n;
@@ -164,6 +182,7 @@ int n;
 /*
  * ^X: '^^' is a literal '^', '^' followed by a character below '@' takes
  * that character minus 20h, '@'..'_' minus 40h, and anything above minus
+ * 60h, so both ^C and ^c give 03h.
  */
 static VOID subctl()
 {
@@ -182,6 +201,7 @@ static VOID subctl()
 		emit((b - '`') & 0xff);
 }
 
+/* Expand the source into the output stream. */
 static VOID expand()
 {
 	register int	b;

@@ -1,3 +1,5 @@
+/* BIOS dispatch, ROM console access, and WD disk deblocking.
+ * DPH/DPB layouts are shared with BDOS through bdosdef.h. */
 #include "romabi.h"
 #include "boottrace.h"
 #include "c900cfg.h"		/* TPASEG/TPABASE			*/
@@ -19,9 +21,18 @@
 /*	Console								*/
 /************************************************************************/
 
+/* Console 0 uses the ROM-selected serial/video device through crsr.c.
+ * Other consoles bind to raw serial channels in condev[]. The loader's
+ * bi_serial bitmap supplies channels, with on-board channels as fallback.
+ * pend[] is per-console lookahead (0 means empty, so NUL is dropped);
+ * receive rings belong to channels and survive console rebinding. */
 
 #define SCC_RR0		0x0101		/* SCC channel B: Rx/Tx status */
 #define SCC_RR8		0x0111		/* SCC channel B: data */
+/* WR2 (vector) and WR9 (master interrupt control) are shared per SCC.
+ * WR1 is per channel: the ROM console keeps WR1=0 and remains polled
+ * while spare channels enable receive interrupts. Do not arm channel 0:
+ * ROM console routines also access it. */
 
 #define CONMAX		4
 #define NCHAN		16	/* bi_serial is 16 bits			*/
@@ -47,6 +58,10 @@ static int ncon = 1;	/* consoles 0..ncon-1.  coninit() sets it; 1 until
 			   start is over reaches console 0 and not an
 			   unbuilt table entry. */
 
+/* Channel index follows the loader's bi_serial bit order and ascending
+ * I/O address: 0x0100 is the ROM line, 0x0120 the spare motherboard port.
+ * Keep this table synchronized with kboot's bootinfo interface.
+ * sccport() returns zero for channels without a known address. */
 #define NSCCBASE	6
 static unsigned int sccbase[NSCCBASE] = {
 	0x0100,		/* motherboard SCC U74 -- the ROM's console line	*/
@@ -68,6 +83,16 @@ int chan, reg;
 		return (0);
 	return ((int)(sccbase[chan] | (unsigned int)(reg << 1) | 1));
 }
+/* Rings belong to hardware channels, so rebinding a console does not move
+ * pending device input. The ISR alone advances rxhead; consumers advance
+ * rxtail. Word-sized indices are atomic on the target.
+ * A full ring still drains the receiver to clear its interrupt level,
+ * counting discarded bytes in rxlost. */
+/* Drain every armed channel on an SCC receive interrupt. The stub saves
+ * r0-r13; channel 0 stays polled. Reading RR8 clears receive availability. */
+/* Arm receive interrupts with vectors base|0x04 (B) or base|0x0c (A),
+ * matching crt.s. WR9=0x09 enables MIE and low-position vector status
+ * without resetting either channel. Returns 1 if armed, otherwise 0. */
 	/*
 	 * rxon BEFORE the enable, and that order is the whole of it.  The
 	 * other way round -- WR1/WR9 first -- a byte already sitting in the
@@ -91,12 +116,22 @@ int chan, reg;
 	 * console 0's device and the last place an error message can go. */
 	if (dev != CD_NONE && dev != CD_ROM
 	    && (conmap & (1 << (dev - 1))) == 0)
+/* BIOS 30: mode 1 arms reception, 0 selects polling, other values query.
+ * Returns 1 for interrupt reception, 0 for polling, -1 for no serial port. */
 /************************************************************************/
 /*	AUX -- the spare line as a device, not a terminal (N2)		*/
 /************************************************************************/
 
+/* AUX uses a raw, eight-bit serial channel and shares its receive ring.
+ * A transfer caller must unbind any console on that channel with BIOS 28
+ * to prevent console polling from consuming transfer bytes.
+ * READER is nonblocking: 0x1a means no byte or a literal EOF character;
+ * BIOS 31 reports availability so callers can implement their own timeout. */
 static int auxchan = -1;	/* channel BIOS 6/7 use; -1 = no AUX line */
 
+/* Bind AUX using CD_SER numbering; negative values query, CD_NONE detaches.
+ * CD_ROM is refused to preserve the machine's console. Returns the old
+ * device or -1 for an invalid device. */
 static auxattach(dev)
 int dev;
 {
@@ -182,6 +217,8 @@ int c;
 	outb(sccport(auxchan, 8), c & 0xff);
 }
 
+/* Configure a spare serial channel for eight data bits, one stop bit,
+ * no parity, and BRG clocking. Arm receive interrupts after enabling it. */
 static sccinit(chan)
 int chan;
 	if (sccport(chan, 0) == 0)
@@ -196,6 +233,8 @@ int chan;
 	outb(sccport(chan, 3), 0xc1);	/* receiver ON			    */
 	outb(sccport(chan, 5), 0x68);	/* transmitter ON		    */
 
+/* Only IOBYTE bits 7:6 (LST) affect routing: 0/1 use the ROM console,
+ * 2/3 discard output. Other fields are stored but do not change devices. */
 static char iobyte;
 
 /* LIST routes to the console iff the LST: field selects TTY: or CRT:. */
@@ -215,6 +254,8 @@ static char iobyte;
 	return (inb(SCC_RR8) & 0x7f);
 }
 
+/* ROM console output uses the shared H19/Z19 parser; spare serial ports
+ * send bytes unchanged. LIST bypasses the parser. Tx polling is bounded. */
 {
 	register int p;
 
@@ -225,10 +266,15 @@ static char iobyte;
 	outb(sccport(condev[con] - 1, 8), c & 0xff);
 }
 
+/* BIOS 27: output n bytes from a full XADDR. crsr.c batches LR screen
+ * stores; other devices use character output. */
 long p;
 {
 }
 
+/* The scheduler calls this directly to wake console waiters, including
+ * from tick dispatch when no BDOS activation is in progress.
+ * pend[] preserves the polled character for the next CONIN. */
 conststat(con)
 {
 }
@@ -243,12 +289,19 @@ conststat(con)
 /*	Disk: drives A: and B: on the raw hard disk			*/
 /************************************************************************/
 
+/* kboot slots 8..14 describe drives A:..G:; zero-sized slots are absent.
+ * Without a usable drive handoff, use dflpart[]. Layout is fixed at boot.
+ * Tracks are drive-relative: record = track*64 + sector (zero-based),
+ * physical block = drive base + record/4, offset = (record%4)*128.
+ * Every DPB has trk_off=0; allocation blocks are 4096 bytes. */
 #define ASPT		64		/* 128-byte records per track */
 #define BLSBLKS		8		/* 512-byte blocks per 4096-byte alloc blk */
 #define BIDRV0		8		/* bootinfo slot of drive A: */
 #define NDRIVE		7		/* A: .. G:, slots 8..14 */
 /* SECLEN (128) comes from bdosdef.h */
 
+/* Fallback layout: A: spans 20480 blocks at 38144; B: spans 16384 at
+ * 59136. The intervening 512 blocks hold CPM.SYS. */
 #define CPMABASE	38144L		/* cpma partition base block */
 #define CPMABLKS	20480L		/* 2560 x 4096 = 10 MB */
 #define BTRKOFF		1312L		/* B:'s old track offset within cpma */
@@ -261,6 +314,8 @@ static struct bipart dflpart[NDRIVE] = {
 	{ 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L }
 };
 
+/* Keep this externally patched handoff in initialized data: kboot scans
+ * the staged l.out data segment for its magic before launching the image. */
 struct bootinfo bootinf = {
 	BI_MAGIC,
 	BI_ASK,			/* the version asked of the loader		*/
@@ -286,6 +341,10 @@ extern mem_cpy();
 extern ccpentry();		/* glue.s: reset the stack, enter the CCP */
 extern long tickget();		/* src/bios/tick900.c, trap.s	*/
 
+/* Drives share a directory buffer but need separate live allocation maps.
+ * Carve maps from a bounded pool in drive order; refuse a drive when its
+ * map does not fit. A 83776-sector disk needs at most 1316 bytes for
+ * disjoint partitions with 4096-byte allocation blocks. */
 static UBYTE dirbuf[128];
 #define ALVPOOL		1536
 static UBYTE alvpool[ALVPOOL];
@@ -320,6 +379,9 @@ char *why;
 	putchar('\n');
 }
 
+/* Accept loader-supplied blocks only with a recognized version, matching
+ * length, and valid checksum. Drive and console consumers validate their
+ * respective fields separately. */
 static int bivalid()
 {
 	if (bootinf.bi_src != BI_SRC_KBOOT)
@@ -338,6 +400,8 @@ static int bivalid()
 	return (1);
 }
 
+/* Require a drive A: slot before using the handoff's partition table.
+ * A valid handoff without CP/M drives can still supply console metadata. */
 static int bigood()
 {
 	if (!bivalid())
@@ -492,6 +556,8 @@ int mode;
 	return (dskerr ? 1L : 0L);
 }
 
+/* Return the selected drive's DPH, or zero for an absent drive.
+ * BDOS selects before transferring and reselects when the drive changes. */
 static long seldsk(dsk)
 int dsk;
 {
@@ -569,6 +635,9 @@ static struct mrt memtab = {
 /*	map_adr (space-code address mapping)				*/
 /************************************************************************/
 
+/* System spaces already contain CPU far pointers. Space 0xffff records
+ * the loader's user segment (-1 for a segmented image). TPA spaces map
+ * 16-bit offsets into that segment, or retain full segmented addresses. */
 static int usrseg = TPASEG;	/* segment recorded via space 0xffff;
 				 * -1 = segmented load (pgmld passes -1L:
 				 * its addresses are already full XADDRs,
@@ -642,6 +711,7 @@ int vec, id, fcw, pcseg, pcoff;
 /*	Init + dispatcher						*/
 /************************************************************************/
 
+ * Missing/older handoffs and zero bitmaps use the on-board channel map. */
 #define CONDFLMAP	0x0003		/* channels 0 and 1: the on-board SCC */
 
 static coninit()
@@ -747,6 +817,8 @@ long d1, d2;
 		ccpentry();			/* resets the stack; no return */
 		break;
 
+	/* CONST/CONIN take the console in d1; CONOUT takes it in d2.
+	 * Zero preserves the standard console-0 interface. */
 
 
 		break;
@@ -833,9 +905,12 @@ long d1, d2;
 	case 23:				/* TIME: read/set the RTC */
 		return (rtctime(d1, (int)d2));
 
+	/* TICK returns the 100 Hz counter; it is reserved for resident callers. */
 	case 24:				/* TICK */
 		return (tickget());
 
+	/* SEGMENT: d1=0 allocates (segment or 0); d1=1 frees d2 (1 or 0);
+	 * d1=2 counts free slots. Other operations return 0. */
 	case 25:				/* SEGMENT */
 		switch ((int)d1) {
 		case 0:
@@ -847,17 +922,28 @@ long d1, d2;
 		}
 		return (0L);
 
+	/* TPASWAP: d1=0 queries the TPA physical page; otherwise exchange it
+	 * with allocated segment d1 (1 on success, 0 on failure).
+	 * Resident callers only: code executing in the TPA cannot swap itself. */
 	case 26:				/* TPASWAP */
 		if ((int)d1 == 0)
 			return ((long)tpaphys);
 		return ((long)pgtpaswap((int)d1));
 
+	/* CONOUTN: d1 is the buffer XADDR; d2 packs the count in bits 15:0
+	 * and console number in bits 23:16. Reserved for resident callers. */
 	case 27:				/* CONOUTN */
 		break;
 
+	/* CONDEV binds console d1 to device d2, returning its old device or -1.
+	 * CD_NONE detaches; serial channel c is device c+1. */
+	/* CONCNT returns the number of configured consoles (1..CONMAX). */
 	case 29:				/* CONCNT */
 		return ((long)ncon);
 
+	/* CONRX: d2=1 arms, 0 polls, other values query console d1.
+	 * Returns 1 (interrupt), 0 (polled), or -1 (no serial channel). */
+	/* AUXIST returns 1 for pending input, 0 for none, -1 for no AUX port. */
 	case 31:				/* AUXIST */
 		return ((long)auxist());
 

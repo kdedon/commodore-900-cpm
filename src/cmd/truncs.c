@@ -1,4 +1,6 @@
 /*
+ * truncs.c - Exercise truncation of sparse files and verify surviving
+ * records.
  */
 
 #include "cpm.h"

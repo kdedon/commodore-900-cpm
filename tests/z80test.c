@@ -6,6 +6,10 @@
  * Build: cc -DHOSTCC -o z80test z80test.c ../src/cmd/z80dec.c \
  *		../src/cmd/z80exec.c ../src/cmd/z80load.c ../src/cmd/z80bdos.c
  *
+ * Coverage includes instruction lengths and execution, every base opcode,
+ * differential flags, explicit refusal cases, loader behavior, real COM
+ * files, the CALL 5 convention, and complete DUMP and PIP runs against a stub
+ * CP/M. The `-c` mode inventories any additional COM file.
  */
 
 #include <stdio.h>

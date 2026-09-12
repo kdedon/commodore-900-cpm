@@ -1,3 +1,8 @@
+/* Shared C/assembly memory layout (crt.s is preprocessed).
+ * Transients link at TPABASE without relocation records, so TPASEG must
+ * remain fixed. pgalloc.c swaps the physical backing page instead.
+ * Changing TPASEG requires updating the build's UBASE and rebuilding all
+ * programs. CPM.SYS text must fit one 64 KB segment to leave 0x32 free. */
 #define	TPASEG		0x32
 #define	TPABASE		0x32000000L	/* (long)TPASEG<<24 -- keep in sync */
 #define	TPAPHYSPAGE	0x0a		/* phys 0x0A0000, high descriptor byte */
@@ -16,6 +21,12 @@
 #define	SPLITDPAGE	0x0b00		/* phys 0x0B0000 (mapseg base page) */
 #define	SPLITTSEG	0x36		/* side table + scanner scratch */
 #define	SPLITTBASE	0x36000000L
+#define	SPLITTPAGE	0x0e00		/* phys 0x0E0000, above the C stack */
+/* Split-I/D slow-path module: cmain.c copies its linked image from resident
+ * data to SPLITMSEG at cold boot. The descriptor limit excludes ROM state
+ * at physical 0x0FE400 on a 512 KB machine.
+ * The fixed interface offsets are defined by splitent.s and checked by
+ * mkblob.py; implementation entry addresses remain internal to the module. */
 #define	SPLITMSEG	0x37		/* relocated shim slow path */
 #define	SPLITMBASE	0x37000000L
 #define	SPLITMPAGE	0x0f00		/* phys 0x0F0000 (mapseg base page) */
@@ -30,6 +41,10 @@
 #define	SPM_USP		0x37000012	/* zw spusp */
 #define	SPM_UFP		0x37000014	/* zw spufp */
 
+/* System-only disk cache segment. Buffers occupy NBCB*512 bytes starting
+ * at offset zero; the directory signature table starts at 0x4000 and
+ * uses DHMAX entries of five bytes each. WD DMA uses physical addresses.
+ * Keep NBCB, DHBASE, and the segment capacity consistent. */
 #define	BUFSEG		0x33
 #define	BUFBASE		0x33000000L
 #define	BUFPHYS		0x000C0000L	/* phys 0x0C0000 (DMA target) */
@@ -44,6 +59,8 @@
 					 * scan scratch begins at this offset
 					 * in the SPLITTSEG segment */
 
+/* Allocator slots pair logical segments with physical 64 KB pages.
+ * PGPGLO follows the resident physical layout. pginit() limits capacity
  * using the ROM RAM report and reserves its top page for ROM state.
  *
  * THE POOL MUST NOT OVERLAP THE ROM'S VIDEO DESCRIPTORS.  It used to run

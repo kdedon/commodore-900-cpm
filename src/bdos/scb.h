@@ -1,3 +1,5 @@
+/* CP/M 3 SCB byte offsets (ref/cpm3/resbdos.asm and scb.asm). Use a byte
+ * array to avoid struct padding; word values are little-endian. */
 
 /* Expansion area */
 #define SCB_HASHL	0x00	/* hash length (0,2,3)			*/

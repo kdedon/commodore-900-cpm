@@ -1,3 +1,8 @@
+/* CP/M-86 .CMD loader (DRI System Guide 3.4). The 128-byte header has
+ * eight nine-byte descriptors followed by group images. Fields are a form
+ * byte, then little-endian paragraph words: length, base, minimum, maximum.
+ * One group owns one 64 KB segment; absolute bases and larger requests
+ * are refused. Destination memory must be cleared before copying images. */
 
 #include "i86.h"
 
@@ -8,6 +13,8 @@ int n;
 	return ((i16)((h[n] & 0xff) | ((h[n + 1] & 0xff) << 8)));
 }
 
+/* Allocate at least supplied length and minimum, growing toward maximum.
+ * Maximum zero means 64 KB; minimum wins if above a nonzero maximum. */
 static i16 galloc(g)
 struct i86grp *g;
 {
@@ -28,6 +35,8 @@ struct i86grp *g;
 	return (n);
 }
 
+/* Validate the header against file length, allowing trailing record padding.
+ * Returns CE_OK or a CE_* refusal. */
 int i86hdr(hdr, flen, c)
 char *hdr;
 i32 flen;
@@ -98,6 +107,9 @@ struct i86cmd *c;
 	if (flen < off)
 		return (CE_TRUNC);
 
+	/* Code-only enters at 0x100 with its base page in the same group.
+	 * DATA, EXTRA/STACK, and AUX select small, compact, and large models;
+	 * these enter code at zero. */
 	c->entry = 0;
 	if (seen[G_AUX1] || seen[G_AUX2] || seen[G_AUX3] || seen[G_AUX4])
 		c->model = M_LARGE;
@@ -130,6 +142,10 @@ int e;
 }
 
 
+/* Place groups densely in CODE, DATA, EXTRA, STACK, AUX order using
+ * caller-supplied segments. CS uses code, DS uses data or code, ES/SS
+ * default to DS unless overridden. Aux paragraphs appear in the base
+ * page. Code-only aliases all registers. Refuse insufficient segments. */
 int i86place(c, m, nseg)
 struct i86cmd *c;
 struct i86 *m;
@@ -239,6 +255,8 @@ int nseg;
 	return (CE_OK);
 }
 
+/* Parse FCBs at 0x5c/0x6c using CCP delimiters and wildcards. Tokens split
+ * at whitespace; an unqualified name uses default drive zero. */
 static int cdelim(c)
 int c;
 {
@@ -304,6 +322,8 @@ char *s, *f;
 	return (1);
 }
 
+/* Build the data group's (or code-only group's) 256-byte base page:
+ * eight paragraph base/length pairs, FCBs at 0x5c/0x6c, tail at 0x80. */
 int i86bpage(c, m, slot, tail)
 struct i86cmd *c;
 struct i86 *m;

@@ -1,4 +1,6 @@
 /*
+ * xdosd.c - Coordinate a child process through queues, a delay, and an
+ * event flag.
  */
 
 #include "cpm.h"

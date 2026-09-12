@@ -1,3 +1,12 @@
+/* MSM58321 RTC through Z-CIO #1, following Mark Williams' C900 driver
+ * firmware/hd/extracted/src/frankh/src/oki/date.c (07/31/85) and the
+ * MSM58321 datasheet. Register ports are 2*r+1.
+ * PB0..3 are bidirectional data; PB4 READ, PB5 WRITE, PB6 address latch,
+ * PB7 STOP, and PC1 active-low /CS. Addresses do not auto-increment.
+ * Preserve PC3 (keyboard FIFO acknowledge). ROM keyboard polling leaves
+ * /CS asserted, so every RTC transaction sets and releases it explicitly.
+ * Port B is also printer data: a printer driver must serialize access.
+ * D10 bits 3:2 encode (4-year%4)%4; H10 bit 3 selects 24-hour mode. */
 #include "stdio.h"
 
 extern int	inb();
@@ -51,6 +60,8 @@ extern		mem_cpy();
 #define RTC_OK		0
 #define RTC_NONE	0xff		/* no clock responding		*/
 
+/* 1978-01-01 is day 1 and was a Sunday; the two-digit-year
+ * window used by this driver ends in 2077. */
 #define BASEYEAR	1978
 #define WRAPYEAR	78		/* yy >= 78 is 19yy, else 20yy	*/
 
@@ -98,6 +109,8 @@ int m, y;
 
 /*
  * Calendar date -> CP/M 3 date word (days since 1977-12-31, 1978-01-01 =
+ * 1).  y is the full year.  Everything is UWORD: the largest date this
+ * driver accepts is 36525 (2077-12-31), so no long arithmetic -- and
  * therefore none of its runtime -- is needed anywhere in this driver.
  * The leap-day count in [1978,y) is (y-1)/4 - 494 because 1977/4 = 494.
  */
@@ -115,6 +128,7 @@ int y, m, d;
 }
 
 /*
+ * CP/M 3 date word -> calendar date.  Returns 0 and leaves the output parameters
  * untouched if the day count is 0 (= "no date") or beyond 2077-12-31.
  */
 static day2ymd(day, yp, mp, dp)
@@ -238,6 +252,8 @@ int hold;
 		buf[i] = (UBYTE)rtcrd(i, hold);
 }
 
+/* Validate BCD fields, hour mode, and calendar bounds before decoding.
+ * Invalid images, including all-zero/all-one bus reads, leave tod untouched. */
 static decode(buf, tod)
 UBYTE *buf, *tod;
 {
@@ -289,6 +305,9 @@ UBYTE *buf, *tod;
 /*	The two public operations					*/
 /************************************************************************/
 
+/* Read two complete register images until they agree (up to four tries).
+ * BUSY is not wired, so this detects rollover without asserting STOP,
+ * which would disturb the clock's subsecond divider. Returns RTC_OK/NONE. */
 rtcget(tod)
 UBYTE *tod;
 {
@@ -329,6 +348,8 @@ UBYTE *tod;
 	int y, m, d, h, mi, s, wd;
 	UWORD day;
 
+	/* UBYTE is signed char in the DRI layer; mask date bytes before widening
+	 * so a low byte >= 0x80 does not sign-extend into the date word. */
 	day = ((UWORD)(tod[TOD_DATEHI] & 0xff) << 8)
 	    | (UWORD)(tod[TOD_DATELO] & 0xff);
 	if (!day2ymd(day, &y, &m, &d))

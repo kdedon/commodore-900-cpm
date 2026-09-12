@@ -45,6 +45,9 @@ wdinit900()
 	mapseg(WDCBSEG, WDCBPAGE, 2);	/* attr 2 = system read/write */
 }
 
+/* Poll the command completion byte with a three-second deadline.
+ * A spin budget also bounds the wait if the tick is unavailable;
+ * check the clock every 256 polls. Timeout leaves completion at 0xff. */
 #define WDWAIT		300L		/* ticks (100 Hz) -- 3 seconds	*/
 /* Attempts on a 0x76 "controller busy, retry" answer.  Each one restarts
  * WDWAIT, so this also bounds the total wait: five times three seconds,

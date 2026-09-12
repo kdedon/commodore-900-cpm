@@ -1,4 +1,5 @@
 /*
+ * concz.c - Measure idle-console polling cost with a competing workload.
  */
 
 #include "cpm.h"

@@ -1,4 +1,5 @@
 /*
+ * concb.c - Competing workload for the concurrency exercisers.
  */
 
 #include "cpm.h"

@@ -1,4 +1,6 @@
 /*
+ * xfcbt.c - Verify that password XFCBs remain reachable and are preserved
+ * without treating their password bytes as allocation maps.
  */
 
 #include "cpm.h"

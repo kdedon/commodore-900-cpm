@@ -23,6 +23,8 @@ EXTERN BYTE	*bios6();	/* for get memory segment table	    */
 
 
 #define bwboot()	bios1(1)	/* warm boot 		*/	
+/* Pass concur to console BIOS calls. Batched output packs the console
+ * into count bits 23:16 and the character count into bits 15:0. */
 			/* console output, a whole RUN of characters at
 			   once (src/bios/bios900.c case 26).  The BDOS
 			   still owns tab expansion, the column, ^S/^Q,
@@ -31,6 +33,7 @@ EXTERN BYTE	*bios6();	/* for get memory segment table	    */
 			   bios2_'s marshalling and the BIOS dispatch
 			   switch for the plain text in between.  */
 #define bconcnt()	((WORD)bios(29, 0L, 0L))
+			/* runtime console count from the loader-supplied serial map */
 #define blstout(parm)	bios2(5,parm)	/* list device output	*/
 #define bpun(parm)	bios2(6,parm)	/* punch char output	*/
 #define brdr()		bios1(7)	/* reader input		*/

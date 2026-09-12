@@ -7,6 +7,14 @@
  *	SET afn [afn ...] [options]	files
  *	SET [options] afn [afn ...]	the same, options first
  *
+ * Drive protection and passwords use the directory label (function 100);
+ * file protection and passwords use XFCBs (functions 102 and 103). A default
+ * password is installed with function 106. The label's protection bit enables
+ * BDOS password checks for the drive.
+ *
+ * Access and create share one timestamp field, so enabling either disables
+ * the other. Wildcards are collected before updates so directory changes do
+ * not disturb the active search. The table therefore spans the full directory.
  */
 
 #include "cpm.h"

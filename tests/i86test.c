@@ -6,6 +6,10 @@
  * Build: cc -DHOSTCC -o i86test i86test.c ../src/cmd/i86dec.c \
  *		../src/cmd/i86exec.c ../src/cmd/i86load.c ../src/cmd/i86bdos.c
  *
+ * Coverage includes instruction lengths and execution, differential flags,
+ * loader acceptance/refusal cases, real CMD files, generated malformed
+ * fixtures, the INT E0h calling convention, and complete PIP/SUBMIT/GENCMD
+ * runs against a stub CP/M. The `-c` mode inventories any additional CMD file.
  */
 
 #include <stdio.h>
@@ -3129,6 +3133,10 @@ static void t_pip(const char *dir)
 
 /* ---- 8c: DRI's SUBMIT.CMD, the second real program ---- */
 
+/* SUBMIT verifies the default FCB and functions 25 and 32, then writes the
+ * fixed $$$.SUB format: reversed 128-byte command records with a length byte.
+ * Its PL/M runtime exits by restoring the entry stack and jumping to offset
+ * zero in the entry SS, the CP/M-86 warm-boot convention recognized by wboot(). */
 static void t_submit(const char *dir)
 {
 	struct ld L;

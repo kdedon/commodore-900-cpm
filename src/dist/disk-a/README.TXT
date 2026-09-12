@@ -30,3 +30,7 @@ reads success after them whatever they did -- even when they refuse bad
 input.  Branch on their output instead.  Every other command here does
 set a return code; see the SUBMIT topic in HELP for IF ERROR.
 
+SET supports file passwords and READ, WRITE or DELETE protection through
+XFCBs. Enable enforcement with SET [PROTECT=ON] on the drive, and supply
+a default file password with SET [DEFAULT=...]. SDIR [XFCB] and [NONXFCB]
+filter files by whether they have an extended FCB.

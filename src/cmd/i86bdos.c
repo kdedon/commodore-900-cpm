@@ -1,3 +1,6 @@
+/* CP/M-86 INT 0xe0 bridge: CL selects the function, DX the parameter;
+ * return results in AX and BX. Translate guest pointers and random-record
+ * byte order for native BDOS calls. */
 
 #include "i86.h"
 
@@ -23,6 +26,8 @@ i16	i86dmaseg;		/* ... and base paragraph (fn 51)	*/
  */
 static int	i86mult = 1;
 
+/* Collect consecutive function-2 output into native function 111 blocks.
+ * Flush before other calls and when the interpreter stops. */
 #define I86OBUF	128		/* pending function 2 characters	*/
 
 static char	obuf[I86OBUF];
@@ -62,6 +67,8 @@ int i86oflush()
 	return (n);
 }
 
+/* Report CP/M 2.2 compatibility to avoid CP/M 3-specific FCB attributes
+ * in CP/M-86 guests. */
 i16	i86ver = 0x2022;
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +86,8 @@ i16	i86ver = 0x2022;
 #define I86REN	52		/* fn 23: old FCB at 0, new at 16	*/
 #define I86DMA	128		/* one CP/M record			*/
 
+/* Parameter classes for supported calls. Refuse native-pointer APIs and
+ * environment operations without a guest representation. */
 static i8 pmap[53] = {
 	P_NONE,		/*  0 system reset -- handled before this table	*/
 	P_NONE,		/*  1 console input				*/
@@ -264,6 +273,9 @@ struct i86 *m;
  * there too, because there is no sense in re-executing an INT whose
  * function we will refuse again.
  */
+/* Guest FCB random records are little-endian; native BDOS uses big-endian
+ * bytes at 33..35. Swap around relevant calls, excluding rename because
+ * those bytes belong to its second name. */
 static ranswap(p, fn)
 char *p;
 int fn;

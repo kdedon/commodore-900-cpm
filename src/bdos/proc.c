@@ -1,3 +1,17 @@
+/* Process descriptors, scheduling and TPA page switching.
+ *
+ * Each process owns a 64 KB TPA image and an 8 KB supervisor stack.
+ * Switches save/restore gbls, CCP state, RSX bounds and the register frame.
+ * pyield() can park live BDOS frames; the recursive filesystem lock protects
+ * shared state while a process is parked inside a call.
+ *
+ * The timer dispatches only from Normal mode or an empty System-mode stack
+ * (trap.s ttick_). Interrupts are disabled while gbls is copied, so another
+ * process cannot observe a partial restore.
+ *
+ * Split-I/D data/text banks are shared physical pages: only one split
+ * program may be live. A second is rejected with PC_SPLIT.
+ * Ready processes run round robin; priority selects the quantum length. */
 
 #include "stdio.h"		/* Standard declarations		*/
 #include "bdosdef.h"		/* struct stvars, GBL/BSETUP		*/
@@ -30,6 +44,8 @@ EXTERN	WORD	pgcur;		/* and the allocator's idea of which
     the assignment is a macro rather than two statements to keep apart.  */
 #define	PCUR(x)		(pgcur = pcur = (x))
 
+/* pnext() also runs from timer dispatch, where an SC trap is unsafe.
+   Call the resident BIOS functions directly. */
 EXTERN	LONG	tickget();	/* src/bios/trap.s: one LDL of tickcnt	*/
 EXTERN	WORD	conststat();	/* src/bios/bios900.c: poll console `n'	*/
 
@@ -60,9 +76,13 @@ GLOBAL	short	sysstk = PSTKTOP;	/* the running process's supervisor
 					   so nothing changes until there is
 					   a second process.		*/
 
+/* Timer dispatch decrements this word and clamps it at zero while a live
+ * BDOS stack prevents preemption. A switch reloads the incoming quantum. */
 
 GLOBAL	short	pquant = PQBASE;	/* ticks left in this slice	*/
 
+/* Priority selects quantum length in four bands, floored at one tick.
+ * Ready-process order remains round robin. */
 
 MLOCAL WORD pqfor(prio)
 WORD	prio;
@@ -73,6 +93,7 @@ WORD	prio;
 	return (q < 1 ? 1 : q);
 }
 
+/* Mirror the running process's console for the per-character BIOS path. */
 MLOCAL	struct pdesc	pd[PNPROC];
 MLOCAL	WORD		pcur = 0;	/* index of the running process	*/
 
@@ -99,6 +120,7 @@ MLOCAL	WORD		pnlive = 0;	/* live descriptors; 0 until the
 					   first pcreate() adopts the one
 					   that was already running	*/
 MLOCAL	WORD		pnsplit = 0;	/* live split-I/D processes, 0 or 1 */
+MLOCAL	WORD		pnwait = 0;	/* number of blocked descriptors; zero skips the wakeup sweep */
 MLOCAL	WORD		pnxt = 0;	/* who pgone() must give the machine
 					   to.  A variable rather than an
 					   argument because pgone() is also
@@ -114,6 +136,8 @@ MLOCAL	WORD		pnxt = 0;	/* who pgone() must give the machine
 MLOCAL	WORD		lkown;		/* process holding it, if lkdep	*/
 MLOCAL	WORD		lkdep;		/* how many times over		*/
 
+/* Disable yielding while pcrgen temporarily maps the child into the TPA.
+ * Descriptors describe the parent until the second page swap restores it. */
 
 MLOCAL	WORD		pnoyld;
 
@@ -132,6 +156,7 @@ MLOCAL	struct pcreq	pq;
 MLOCAL	UBYTE		pqfcb1[36], pqfcb2[36];	/* the base page's two FCBs */
 
 
+/* Copy resident state using mapped pointers; avoid unsupported struct assignment. */
 
 MLOCAL VOID pmove(s, d, n)
 BYTE	*s, *d;
@@ -141,6 +166,7 @@ UWORD	n;
 }
 
 
+/* Save and restore state that does not move with the TPA image. */
 
 MLOCAL VOID psave(p)
 REG struct pdesc *p;
@@ -169,7 +195,11 @@ REG struct pdesc *p;
 }
 
 
+/* Return the next runnable process, or i if none is ready. The latter
+ * lets an all-blocked system continue polling external events. */
 
+/* Poll waiting console inputs and tick deadlines. Compare time by
+ * subtraction so deadlines work across counter wrap. */
 
 MLOCAL VOID pwscan()
 {
@@ -195,6 +225,8 @@ MLOCAL VOID pwscan()
 }
 
 
+/* Return the next runnable process, or i if none is ready. The latter
+ * lets an all-blocked system continue polling external events. */
 
 MLOCAL WORD pnext(i)
 REG WORD i;
@@ -215,6 +247,8 @@ REG WORD i;
 }
 
 
+/* Choose a live successor even if blocked: a dying process cannot resume
+ * itself. A resumed waiter will recheck its condition. */
 
 MLOCAL WORD pnextany(i)
 REG WORD i;
@@ -232,6 +266,8 @@ REG WORD i;
 }
 
 
+/* Track the running process's wait reason. pwake makes all matching
+ * waiters runnable; each rechecks the condition after resuming. */
 
 GLOBAL VOID pblock(why, obj, dl)
 WORD	why, obj;
@@ -275,6 +311,7 @@ REG WORD	why, obj;
 }
 
 
+/* Lazily adopt the initial TPA as process 0 and assign supervisor stacks. */
 
 MLOCAL VOID padopt()
 {
@@ -344,6 +381,9 @@ GLOBAL WORD pspother()
 }
 
 
+/* Create a process from a resident copy of its FCB and command tail.
+ * Swap the child into the TPA for loading, then restore the parent.
+ * Nested BDOS calls use child stvars; parent state is restored on exit. */
 
 XADDR	infop;
 {
@@ -386,6 +426,8 @@ XADDR	infop;
 		return (PC_NOPAGE);
 	}
 
+	/* Acquire before swapping pages: loader lock acquisitions must recurse,
+ * since the temporary child mapping cannot safely yield. */
 	plock();
 
 	/*  The request, out of the caller's page and into ours, BEFORE
@@ -512,6 +554,8 @@ XADDR	infop;
 		return (k);
 	}
 
+	/* Build the child's initial trap frame from the loader context. Keep VIE
+ * enabled and mask NVIE, matching xfer_, so timer preemption works. */
 	for (i = 0; i < 14; i++)
 		kid->pd_f.pf_reg[i] = ctx.regs[i];
 	kid->pd_f.pf_id     = 0;
@@ -552,6 +596,10 @@ XADDR	infop;
 }
 
 
+/* Start a CCP on console con in user area con. Multiple sessions may
+ * share a console; ownership serializes their input. */
+/* Resume pnxt after the caller saves its state. Gate-parked processes use
+ * presume; processes parked in a BDOS call resume their supervisor stack. */
 
 GLOBAL VOID pgone()
 {
@@ -579,6 +627,8 @@ GLOBAL VOID pgone()
 }
 
 
+/* Park the current BDOS call on its own supervisor stack and resume here
+ * later. Return zero if no switch is possible; callers recheck conditions. */
 
 GLOBAL WORD pyield()
 {
@@ -601,6 +651,8 @@ GLOBAL WORD pyield()
 }
 
 
+/* Mark blocked, yield, then clear the wait on return. A false result means
+ * nobody else ran, which each caller interprets for its own wait condition. */
 
 GLOBAL WORD pwait(why, obj, dl)
 WORD	why, obj;
@@ -615,7 +667,11 @@ LONG	dl;
 }
 
 
+/* Recursive filesystem lock. Only the outer release wakes waiters.
+ * plkdrop releases a terminating process's outstanding acquisitions. */
 
+/* A blocked owner still holds the lock. Wait even when no peer is runnable;
+ * polling can wake the owner when its operator supplies input. */
 
 GLOBAL VOID plock()
 {
@@ -650,6 +706,8 @@ GLOBAL VOID plkdrop()
 }
 
 
+/* Dispatch from a complete SC/timer frame. Return if the current process
+ * remains selected; otherwise save its frame and resume the successor. */
 
 GLOBAL VOID pdisp(frame)
 XADDR	frame;
@@ -683,6 +741,8 @@ XADDR	frame;
 }
 
 
+/* Release process resources at warm boot. Sessions keep their TPA for CCP
+ * reload; a background transient frees its page and resumes a live peer. */
 
 GLOBAL WORD procdead()
 {
@@ -694,6 +754,7 @@ GLOBAL WORD procdead()
 					   warm boot too, where it is a no-op
 					   unless a BDOS error killed the
 					   program inside a locked region */
+	pconrel();			/* release console ownership on every termination path */
 		return (0);
 
 	/*  This process is about to stop existing, so its scratch segments
@@ -733,6 +794,7 @@ GLOBAL WORD procdead()
 }
 
 
+/* Function 145: count live processes, including the unadopted initial one. */
 
 GLOBAL WORD proccnt()
 {
@@ -740,6 +802,8 @@ GLOBAL WORD proccnt()
 }
 
 
+/* Read or select consoles by descriptor. Assignment matches an eight-byte
+ * process name and updates the running console mirror when needed. */
 
 /*  All three call padopt() first.  A program that asks which console it
     is on may be the only thing that has ever run -- no fn 144 has
@@ -783,3 +847,10 @@ WORD	con;
 	}
 	return (0);
 }
+/* Console input requires ownership; attach waits until its owner detaches.
+ * Detach hands ownership directly to one waiter so the previous owner
+ * cannot retake it before that waiter runs. Selecting a console alone
+ * does not acquire it. Warm boot preserves the home console. */
+/* Output polling may consume input only on an unowned console or one
+ * owned by this process. It cannot block to acquire another owner's console. */
+/* Store/read the running descriptor's default DMA for function 13. */

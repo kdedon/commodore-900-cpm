@@ -1,3 +1,7 @@
+/* 8086 interpreter: bytewise guest memory, lazy ALU flags, and decoded
+ * instruction dispatch. Unsupported operations return X_UNIMP.
+ * Segment writes resolve assigned paragraphs or bounded interior windows;
+ * a failed reference is reported as X_WINDOW after dispatch. */
 
 #include "i86.h"
 
@@ -80,6 +84,9 @@ int n, v;
 /* ------------------------------------------------------------------ */
 /* memory: bytewise, little-endian, offsets wrap inside the segment    */
 
+/* Guest addresses use a segment base plus a 16-bit bias and offset.
+ * Detect bias+offset wrap before accessing memory. Zero-bias segments
+ * retain normal guest offset wraparound. */
 static int mrb(m, s, off)
 struct i86 *m;
 int s;
@@ -280,6 +287,9 @@ i16 a, b, r;
 /* ------------------------------------------------------------------ */
 /* signed widths						       */
 
+/* Use explicit sign extension for multiply/divide so target 16-bit int
+ * and host wider arithmetic produce the same guest values. Mask unsigned
+ * intermediates to 32 bits before interpreting their sign. */
 static long sx8(v)
 int v;
 {
@@ -596,6 +606,8 @@ i16 v;
 /* ------------------------------------------------------------------ */
 /* segment-register writes: K3's check				       */
 
+/* Resolve a paragraph inside an assigned segment by storing its byte
+ * bias. Otherwise consult i86segnew if installed, then refuse. */
 static int setsr(m, s, par)
 struct i86 *m;
 int s;
@@ -640,6 +652,8 @@ i16 par;
 	return (X_SEGESC);
 }
 
+/* A far transfer to entry SS:0000 is the guest warm-boot convention.
+ * wset enables this environment rule; CPU-only callers can leave it off. */
 static int wboot(m, seg, off)
 struct i86 *m;
 i16 seg, off;
@@ -867,6 +881,8 @@ struct i86in *in;
 		if (in->fl & IN_IMM)
 			m->r[R_SP] = (i16)(m->r[R_SP] + in->imm);
 		break;
+	/* Resolve far destinations before changing stack state. Recognize
+	 * entry SS:0000 as warm boot; otherwise validate the new CS paragraph. */
 	case I_JMPI:
 		if (in->x) {			/* far, through memory	*/
 			if (!(in->fl & IN_MEM))

@@ -1,4 +1,6 @@
 /*
+ * stampt.c - Exercise create/update stamps using deterministic BDOS clock
+ * values.
  */
 
 #include "cpm.h"

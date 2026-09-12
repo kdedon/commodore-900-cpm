@@ -1,4 +1,6 @@
 /*
+ * wildt.c - Exercise wildcard and existing-name errors for open, make,
+ * attribute, and rename operations.
  */
 
 #include "cpm.h"

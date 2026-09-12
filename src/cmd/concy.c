@@ -1,4 +1,5 @@
 /*
+ * concy.c - CPU workload used by scheduler and console polling tests.
  */
 
 #include "cpm.h"

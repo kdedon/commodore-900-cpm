@@ -1,3 +1,5 @@
+/ prsxn.s -- PROTN.RSX sets PROT.RSX bank flag so GENCOM makes it temporary.
+/ Its unchanged module name also exercises replacement of a bound PROT.
 
 #define	NBANKF	1
 

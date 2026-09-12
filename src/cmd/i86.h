@@ -1,3 +1,6 @@
+/* Shared CP/M-86 decoder, executor, loader, and BDOS bridge interfaces.
+ * Target C uses 16-bit int; guest words use unsigned short. Access guest
+ * memory bytewise for little-endian layout on host and Z8001 builds. */
 
 #define i8	unsigned char		/* a guest byte			*/
 #define i16	unsigned short		/* a guest word; 16 bits both ways */
@@ -223,6 +226,9 @@ extern int i86nseg;
 extern i32 i86nsegslow;		/* K3's counter: slow-path resolutions	*/
 extern i32 i86nsegbad;		/* ... and the ones it could not cover	*/
 
+/* Optional hook for resolving an unowned paragraph. Returns a host base
+ * for a covering 64 KB segment, or zero to refuse; it may cache the result
+ * in i86spar/i86sbase. Null means no allocation policy is installed. */
 extern char *(*i86segnew)();
 
 /* Host address of `len' guest bytes at slot:off, or 0 when they do not
@@ -296,6 +302,10 @@ extern int i86sys();
 #define G_AUX4		8
 #define G_SHCODE	9	/* shared code -- CP/M-86 only, refused	*/
 
+/* Group descriptors determine the memory model (DRI System Guide 3.4).
+ * Code-only shares CS/DS/ES/SS and enters at 0x100; other models enter at
+ * zero. DATA supplies DS, EXTRA ES, STACK SS; auxiliary groups are listed
+ * in the base page and have no initial segment register. */
 #define M_8080		0	/* one group; CS = DS = ES = SS; IP = 0x100 */
 #define M_SMALL		1	/* code + data; IP = 0; base page at DS:0 */
 #define M_COMPACT	2	/* + extra and/or stack, each its own	*/

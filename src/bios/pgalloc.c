@@ -1,5 +1,13 @@
+/* 64 KB segment/page allocator.
  * Slot i pairs logical segment PGSEG(i) with a physical pool page.
+ * Capacity comes from the ROM memory report, capped by available segments;
+ * reserve the top RAM page for ROM state. A 512 KB machine has no free slots.
+ * Allocated segments are accessible in Normal mode; freeing restores the
+ * System-only attribute. Pool pages are not offered as loader TPA regions.
  *
+ * pgtpaswap() exchanges a pool page with the physical backing of TPASEG.
+ * TPASEG stays fixed because transient binaries have no relocation records.
+ * The caller must preserve resident process state and split-I/D banks.
  * pgrelall() restores the boot TPA mapping and releases unheld slots.
  *
  * OWNERSHIP IS A PROCESS, NOT A BOOLEAN.  pgown[i] holds pgcur+1, the
@@ -17,6 +25,9 @@
 
 extern int mapseg();
 
+/* Segment 1 offset zero contains a CPU far pointer, (seg<<24)|offset,
+ * to the ROM configuration block. rom_bram/rom_eram are its first two
+ * words, in 1 KB clicks (COHERENT machine.h ctob() uses shift 10). */
 #define ROMCONF_PP	0x01000000L	/* seg 1:0 -- the ROM's far ptr	*/
 #define RC_BRAM		0		/* word 0: first click of RAM	*/
 #define RC_ERAM		1		/* word 1: click past the end	*/
@@ -97,6 +108,8 @@ unsigned bram, eram;
 	return (n);
 }
 
+/* Size the pool once at cold boot. Unrecognized ROM reports leave it
+ * empty; resident pages and the top RAM page are never allocated. */
 pginit()
 {
 	register long pp;
@@ -142,6 +155,8 @@ int pgalloc()
 	return (0);
 }
 
+/* Release an allocated slot, returning 1. Invalid or already-free slots
+ * return 0. The descriptor becomes System-only. */
 int pgfree(seg)
 int seg;
 {
@@ -156,6 +171,8 @@ int seg;
 	return (1);
 }
 
+/* Mark a slot as a live process's parked image. The scheduler sets this
+ * flag on creation and clears it on exit; pgrelall() preserves held slots. */
 pghold(seg, on)
 int seg, on;
 {
@@ -179,6 +196,9 @@ static int pgheld()
 	return (0);
 }
 
+/* Exchange the TPA backing page with an allocated pool segment's page.
+ * Both mappings retain Normal-mode access. Only resident code may call:
+ * a caller executing in the TPA would replace its own instructions. */
 int pgtpaswap(seg)
 int seg;
 {
@@ -257,6 +277,8 @@ pgrelproc()
 /* Give everything back.  The warm-boot path; see the banner. */
 pgrelall()
 {
+	/* Do not restore the boot TPA while a live process is parked: that could
+	 * put its image under the CCP loader. Release only unheld scratch slots. */
 	if (!pgheld())
 		pgtparest();
 	return (pgrelproc());

@@ -1,7 +1,13 @@
 /*
  * initdir.c -- INITDIR: give a drive CP/M 3 date and time stamping.
  *
+ * Date stamps live in type-21h SFCBs occupying every fourth directory slot.
+ * Because BDOS only maintains existing SFCBs, this utility rewrites directory
+ * records through BIOS calls exposed by BDOS function 50.
  *
+ * Existing XFCBs are preserved. Password assignment belongs to SET. Removing
+ * stamping and compacting a full directory are unsupported; insufficient room
+ * is detected before any directory record is written.
  */
 
 #include "cpm.h"

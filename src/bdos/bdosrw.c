@@ -1,4 +1,5 @@
 
+/* Sequential, random and multi-record file transfers. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -319,6 +320,9 @@ REG struct fcb *fcbp;
 }
 
 
+/* Transfer multcnt records, restoring DMA and random-record fields on exit.
+ * Nonphysical failures return completed records in the high byte; physical
+ * errors reserve that byte for the extended error code. */
 
 UWORD multio(fcbp, reading, random)
 

@@ -1,4 +1,7 @@
 /*
+ * xdospol.c - Exercise a blocked console poll with a competing process.
+ * Attach before waiting so the selected console can deliver input to this
+ * process.
  */
 
 #include "cpm.h"

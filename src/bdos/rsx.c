@@ -1,3 +1,7 @@
+/* RSX modules intercept SC 2 through a TPA chain. rsxtop fences program
+ * loads below resident images; warm boot removes flagged modules.
+ * Images have fixed link origins and are attached by GENCOM loading
+ * or function 60. */
 
 #include "stdio.h"		/* Standard I/O declarations		*/
 
@@ -34,6 +38,7 @@ EXTERN XADDR	tpa_hp;
 #define	BPLEN		256		/* sizeof (struct b_page)	*/
 #define	DEFSTACK	0x100		/* pgmld.c's default stack	*/
 
+/* TPA offsets: rsxhead is the newest/lowest module (zero if empty);
  * rsxtop is its base, or 0 -- meaning the top of the segment -- when empty. */
 
 GLOBAL UWORD	rsxhead = 0;
@@ -96,6 +101,8 @@ struct rsxhdr *hp;
 }
 
 
+/* Check placement before copying the image below the current RSX fence,
+ * leaving space for the base page and default stack. */
 
 GLOBAL UWORD rsxchk(org, len)
 UWORD org;
@@ -116,6 +123,8 @@ UWORD len;
 }
 
 
+/* Validate the loaded prefix, link the image at the chain head and
+ * publish the lowered TPA fence. */
 
 GLOBAL UWORD rsxlink(org, len)
 UWORD org;
@@ -173,6 +182,7 @@ REG struct rsxpb *pb;
 }
 
 
+/* Handle unclaimed function-60 calls: attach, query, or return not handled. */
 
 UWORD rsxfn(param, xparam)
 UWORD param;
@@ -216,6 +226,7 @@ VOID rsxwboot()
 	rsxget(cur, &h);
 	next = h.next;
 	if (h.warmflg != 0)
+	    continue;		/* any nonzero byte requests removal; UBYTE is signed here */
 	h.prev = 0;
 	h.next = 0;
 	h.endchain = 0xff;	/* until something links above it	*/

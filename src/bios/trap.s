@@ -1,3 +1,9 @@
+/ C900 trap handlers. Hardware pushes {id, FCW, PCseg, PCoff};
+/ stubs save r0-r13 on the system stack before calling C or xvec handlers.
+/ Frame offsets: r0-r13 0..27, id 28, FCW 30, PCseg 32, PCoff 34.
+/ Vector numbering follows the M20: NMI 0, EPU 1, SEG 2, PRV 8;
+/ C900 uses 6/7 for NVI/VI. Unhandled Normal-mode faults warm boot;
+/ unhandled System-mode faults halt.
 
 	.globl	tepa_, tprv_, tseg_, tnmi_, tnvi_, tvi_
 	.globl	faultcom_, faultpanic_
@@ -86,6 +92,8 @@ faultcom_:
 	iret
 
 faultpanic_:
+	/ Report PC-2 from the saved resume address. For multiword opcodes
+	/ this may name an operand; the identifier remains the first word.
 	ld	r0, rr14(34)		/ PC offset (post-instruction)
 	sub	r0, $2			/ -> address of the instruction itself
 	ld	r1, rr14(32)		/ PC segment word
@@ -103,6 +111,13 @@ fhang:
 	halt
 	jr	fhang
 
+/ 100 Hz CIO #1 CT3 ISR, vector 0. Clear level-triggered IP/IUS first.
+/ The 36-byte saved frame matches struct pframe for pdisp().
+/ Spend one quantum tick; clamp an exhausted quantum until a safe switch.
+/ Normal-mode callers are safe. System-mode callers are preempted only
+/ with an empty supervisor stack (interrupted SP == sysstk), ensuring
+/ there is no active BDOS frame or partially updated shared state.
+/ Entry FCW disables interrupts, making scheduler state changes atomic.
 ttick_:
 	sub	r15, $28
 	ldm	(rr14), r0, $14		/ r0-r13 under the hardware frame
@@ -118,6 +133,8 @@ ttick_:
 	dec	r0, $1			/   ticks long (proc.h PQBASE), and
 	ld	pquant_, r0		/   only the tick that spends the
 	jr	gt, 1f			/   last of it asks for a dispatch.
+	ld	r0, $0			/ clamp while a BDOS call blocks preemption
+	ld	pquant_, r0
 	ld	r0, rr14(30)		/ the interrupted FCW
 	bit	r0, $14			/ S/N: clear = Normal mode, the TPA,
 	jr	z, 2f			/   nothing of ours on this stack
@@ -135,9 +152,14 @@ ttick_:
 	add	r15, $28
 	iret
 
+/ PDMAC disk-completion interrupt, vector 0x80. The polled WD path
+/ handles transfer completion; this stub only restores the CPU frame.
 tvidsm_:
 	iret
 
+/ All armed SCC receive vectors share this stub. Save r0-r13 for C;
+/ sccrxdrn drains each channel's data register, clearing receive level.
+/ Entry FCW disables interrupts, preventing nesting.
 / long tickget() -- the tick, read in ONE instruction.  A C `long' load
 / is two word loads and ttick_ can land between them; LDL cannot be split,
 / so this is the only sanctioned reader of tickcnt_.
@@ -145,6 +167,8 @@ tickget_:
 	ldl	rr0, tickcnt_
 	ret
 
+/ Enable VI after tick initialization. The SC PSA entry and xfer_
+/ preserve VIE for system-call handling and user-program preemption.
 tickei_:
 	ei	VI
 	ret

@@ -15,6 +15,7 @@ linked on the target against DRI's `STARTUP.O` and `LIBCPM.A` from
 `vendor/`, not against `src/cmd/crt0.s`, so they set no return code and
 `IF ERROR` reads success after them however they ended. See
 `DEVIATIONS.md` §10 in the design notes. The system does
+not use GENCPM. The system banner identifies it as version 3.1.
 
 Passwords are enforced on a drive whose directory label has the
 password-enable bit set, and only there: a medium without that bit behaves
@@ -38,6 +39,7 @@ reproducible byte-for-byte across days.
     make clean
     make help
 
+The build requires a host C compiler, Python 3, `cpp`, and the Commodore 900 Z8001
 toolchain. Set `C900_TOOLCHAIN` to use a local checkout; otherwise the resolver
 searches `deps/` and adjacent checkout directories.
 
@@ -49,7 +51,15 @@ Outputs:
 | `build/cpma.img` | 10 MB development drive A |
 | `build/cpma-rel.img` | release drive A without test programs |
 | `build/cpmb.img` | 8 MB drive B |
+| `build/cpmonly.bin` | bootable release disk, built when kboot is available |
 
+The filesystem images are sparse files. Set `KBOOT` to a built loader to
+produce `cpmonly.bin`; without it, `make` produces the standalone images.
+
+Build rules live in `mk/config.mk` (settings and program lists),
+`mk/system.mk` (resident system), `mk/programs.mk` (transient programs),
+and `mk/images.mk` (release packaging). Test disk recipes are in
+`tests/images.mk`, and runtime checks are in `tests/verify.mk`.
 
 ## A local medium with your own programs
 

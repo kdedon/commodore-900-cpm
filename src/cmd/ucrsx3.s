@@ -1,3 +1,5 @@
+/ ucrsx3.s -- UCASE3.RSX uses a distinct name and function 60/202 to test calls
+/ passing through all three modules of a resident chain.
 
 #define	RSXORG	0xE000
 #define	RSXSUB	0xCA

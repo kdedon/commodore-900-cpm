@@ -1,4 +1,7 @@
 /*
+ * biocost.c - Measure per-character cost through BDOS (A), BIOS (S), ROM
+ * (R), or video RAM (V). Compare equal-length zero/count runs to subtract
+ * load and prompt overhead.
  */
 
 #include "cpm.h"

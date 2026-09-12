@@ -1,3 +1,8 @@
+/* System-mode program loading and launch.
+ * Function 59 uses the BIOS memory-region table; cpy_out writes the base page;
+ * xfer sets NSPSEG/NSPOFF and IRETs into the program.
+ * Cold and warm boots load the requested program, or A:CCP.Z8K when none
+ * is pending. The BDOS cache buffers repeated CCP reads. */
 
 #include "stdio.h"		/* Standard declarations for BDOS, BIOS */
 

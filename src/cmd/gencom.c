@@ -1,4 +1,24 @@
 /*
+ * gencom.c - Bind Resident System Extensions to a program.
+ *
+ *   GENCOM prog.Z8K mod.RSX [mod.RSX ...]  bind or replace modules
+ *   GENCOM prog.Z8K                         restore the plain program
+ *
+ * Modules are absolute images whose prefix fixes their TPA address. GENCOM
+ * validates that the requested modules stack without overlap before writing
+ * the container. [NULL], [SCB] and [LOAD] are unsupported.
+ *
+ * Container layout:
+ *   records 0-1  256-byte header, magic 0xEE05
+ *   offset 2     module count, 1..15
+ *   offset 16    16-byte descriptors: record offset, byte length, non-banked
+ *                flag, reserved byte, eight-byte name, and TPA origin
+ *   records 2..  record-padded module images in attachment order
+ *   final records the original x.out program
+ *
+ * Prefix chain links are cleared. A non-banked module is marked temporary.
+ * Rebinding replaces an equal module name in place; new names append. All
+ * output is built in TEMP.$$$ before replacement of the target program.
  */
 
 #include "cpm.h"

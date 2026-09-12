@@ -1,3 +1,6 @@
+/* Shared CP/M-80 decoder, executor, loader, and BDOS bridge interfaces.
+ * Guest memory is one 64 KB host segment. Cast effective addresses to z16
+ * for wraparound and access words bytewise in little-endian order. */
 
 #define z8	unsigned char		/* a guest byte			*/
 #define z16	unsigned short		/* a guest word; 16 bits both ways */
@@ -174,6 +177,8 @@ struct z80 {
 #define Z_IXCB		47	/* DD/FD CB d xx			*/
 #define Z_HOOK		48	/* ED FE nn: OUR escape, see below	*/
 
+/* ED FE nn is the shim's three-byte hook encoding: one dispatch path
+ * serves BDOS, BIOS vectors, and exit. Z80 prefixes remain decodable. */
 #define HOOK_BDOS	0	/* the CALL 5 bridge			*/
 #define HOOK_BIOS	1	/* .. through 17: BIOS vectors 1-17	*/
 #define HOOK_EXIT	31	/* the guest returned to the CCP	*/
@@ -246,6 +251,8 @@ extern int z80ww();		/* (m, addr, v)				*/
 /* ------------------------------------------------------------------ */
 /* .COM loader							       */
 
+/* The loader places a .COM at 0x100, builds page zero and hook stubs,
+ * and identifies/refuses GENCOM RSX headers (leading 0xc9). */
 
 #define COM_ORG		0x0100	/* where a .COM loads and starts	*/
 #define COM_REC		128	/* a CP/M record; .COM files are padded	*/
@@ -300,6 +307,10 @@ extern char *z80lerr();		/* the refusal text for a CL_* code	*/
 extern int z80tail();		/* build the tail and the two FCBs	*/
 extern int z80furn();		/* plant the fake BDOS/BIOS and page zero */
 
+/* GENCOM header layout follows cpm8000/ref/cpm3/loader3.asm:
+ * program size at 1, SCB setup at 3, descriptors at 0x10 with 0x10 stride.
+ * A zero descriptor offset ends the list; RET at image offset 0x100
+ * identifies an RSX-only file. */
 #define RSX_NDESC	8
 #define RSX_HDRLEN	0x100	/* the header record, file 0x000-0x0FF	*/
 #define RSX_DESC0	0x010	/* first descriptor, file offset	*/

@@ -7,6 +7,8 @@
  * else; src/bdos/proc.c is the part that moves a process.
  */
 
+/* SC/timer frame layout, shared with bdosglue.s and trap.s.
+   r0-r13 precede the hardware frame; NSPSEG/NSPOFF are saved separately. */
 
 struct pframe {
 	short	pf_reg[14];	/*  0..27  r0-r13			*/
@@ -18,6 +20,8 @@ struct pframe {
 	short	pf_nspoff;	/*  38	   NSPOFF			*/
 };
 
+/* Loader context consumed by xfer_ and converted to pframe by proc.c.
+   Assembly layout: regs 0..30, ignore 32, FCW 34, PC 36. */
 
 struct context {
 	short	regs[16];
@@ -60,6 +64,7 @@ struct context {
 
 #define	PNPROC		6
 
+/* Ask the BIOS for the runtime console count when validating console numbers. */
 
 #define	PNCON		bconcnt()
 /*  Process states.  PS_FREE is zero so that a bss-cleared table is a
@@ -78,6 +83,8 @@ struct context {
 #define	PS_LIVE		1
 #define	PS_RSVD		2
 
+/* Wait reasons: flag/queue/lock/ownership changes signal waiters; console
+ * input and tick deadlines are polled by the scheduler. */
 
 #define	PW_RUN		0	/* runnable				*/
 #define	PW_TICK		1	/* until tickget() reaches pd_wtick	*/
@@ -110,10 +117,12 @@ struct pdesc {
 				   process 0 has no file to be named after
 				   and carries eight blanks, which is a
 				   name a caller can still ask for.	*/
+	short	pd_sess;	/* session: reload the CCP at warm boot instead of freeing this process */
 	short	pd_prio;	/* MP/M's priority byte.  Recorded, not yet
 				   consulted: the ready list is round robin
 				   and stays that way until preemption (S5)
 				   makes priority mean something.	*/
+	XADDR	pd_dma0;	/* basepage.buff address restored by function 13 */
 	struct pframe pd_f;	/* where it was, and what it was doing	*/
 	struct stvars pd_gbl;	/* the BDOS's per-process state.  DRI factored
 				   it out and said so (bdosdef.h:205-241,
@@ -172,6 +181,9 @@ struct pdesc {
 
 	short	pd_quant;	/* how many ticks a slice of THIS process is
 				   worth.  pqfor(pd_prio), proc.c.	*/
+	/* Ownership is a bitmask because selecting another console does not
+ * release earlier attachments. The descriptor table is the ownership map. */
+	short	pd_chome;	/* home console retained across session warm boots */
 };
 
 /* PNPROC 8 KB supervisor stacks occupy segment 3F from its top downwards
@@ -182,6 +194,8 @@ struct pdesc {
 #define	PSTKSZ		0x2000
 #define	PSTKOF(i)	((short)(PSTKTOP - (i) * PSTKSZ))
 
+/* Priority selects slice length in four bands; runnable order stays
+ * round robin. PQBASE is the priority-zero slice length in ticks. */
 
 #define	PQBASE		5
 

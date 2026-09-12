@@ -1,3 +1,6 @@
+/* BDOS function 59 loads from an open FCB and fills the LPB base page,
+ * stack and mode flags. pgldaddr returns the actual code entry address.
+ * Copyright (c) 1982 Zilog Incorporated */
 
 #include "stdio.h"		/* Standard declarations for BDOS, BIOS */
 
@@ -40,6 +43,8 @@ extern int pspother();		/* C900: proc.c -- is a split-I/D program
 #define DEFSTACK 0x100		/* Default stack length			*/
 #define NREGIONS 2		/* Number of regions in the MRT		*/
 
+/* GENCOM containers begin with a two-record header: magic and module count
+ * occupy the first x_hdr fields. Record-aligned RSX images precede the program. */
 
 #define X_GC_MAGIC 0xEE05	/* GENCOM'd: modules, then the program	*/
 #define GCHDRLEN   256		/* the GENCOM header: two records	*/
@@ -364,6 +369,7 @@ XADDR xlpbp;
 
 	setbase(setaddr(&mylpb));		/* Set addresses in LPB,*/
 						/* Set up base page	*/
+	/* Record basepage.buff as the default DMA restored by function 13. */
 	cpy_out((XADDR) &mylpb, xlpbp, sizeof mylpb);
 	return (GOOD);
 }
@@ -423,6 +429,8 @@ register UWORD l;
 }
 
 
+/* Load record-aligned RSX images before the program. Each prefix supplies
+ * its fixed link origin and length; GENCOM descriptors are skipped. */
 
 MLOCAL int ldrsx(n)
 register int n;

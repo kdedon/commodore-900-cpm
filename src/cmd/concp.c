@@ -1,4 +1,5 @@
 /*
+ * concp.c - Exercise process creation and termination.
  */
 
 #include "cpm.h"

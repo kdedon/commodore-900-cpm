@@ -1,4 +1,6 @@
 /*
+ * xdosm.c - Exercise XDOS queues, flags, console assignment, and page
+ * allocation in one process.
  */
 
 #include "cpm.h"

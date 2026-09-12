@@ -1,4 +1,5 @@
 /*
+ * conn.c - Exercise concurrent console ownership.
  */
 
 #include "cpm.h"

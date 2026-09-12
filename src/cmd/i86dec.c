@@ -1,3 +1,6 @@
+/* 8086 decoder shared by execution and instruction inspection.
+ * Decode register-independent operands and lengths; effective addresses
+ * are resolved by the executor. Guest instruction fetch wraps at 16 bits. */
 
 #include "i86.h"
 

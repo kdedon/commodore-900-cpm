@@ -1,4 +1,5 @@
 
+/* BDOS initialization, warm boot, error handling and memory interfaces. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -7,6 +8,8 @@
 #include "biosdef.h"		/* BIOS definitions, needed for bios wboot */
 #include "boottrace.h"		/* opt-in cold-boot markers (src/bios) */
 
+/* Generated banner strings are complete dollar-terminated literals;
+ * the K&R compiler does not concatenate adjacent string literals. */
 #include "cpmver.h"
 
 
@@ -52,6 +55,8 @@ EXTERN  VOID	ccpabort();		/* sys/ccprun.c: cancel the CCP's
 GLOBAL UBYTE serial[6] = { 'C', '9', '0', '0', '0', '1' };
 
 
+/* CP/M 3 error codes index this table from one. Keep NULL entries for
+ * unsupported MP/M errors so subsequent codes retain their positions. */
 
 MLOCAL BYTE *errmsg[9] =
 {
@@ -93,6 +98,8 @@ bdosinit()
     GBL.errmode = 0;
     GBL.conmode = 0;
     GBL.retcode = 0;
+    /* A zero page length disables the BDOS pager. Keep PM_ON as the published
+ * default for utilities that implement their own paging. */
     GBL.conpage = 0;		/* not configured: the BDOS pager is off */
     GBL.conline = 0;
     GBL.pmdefault = PM_ON;	/* v3's default, for the utilities	*/
@@ -265,11 +272,16 @@ REG struct fcb *fcbp;
 			   left the tag on the same record and still written
 			   it, and another process may have written it too */
 			return(rtn);
+	    /* The attribute scan may replace the directory buffer. Reload the outer
+ * callback's record so its dirp still addresses the intended entry,
+ * including the updated read/write attribute. */
 	}
     }   while (TRUE);
 }
 
 
+/* Function 45 returns disk errors without an operator prompt. Unless
+ * silent mode is selected, print the drive, function and file name. */
 
 seterr(code, dsk)
 /*  record an error for the program to collect, and show it -- in the CP/M 3

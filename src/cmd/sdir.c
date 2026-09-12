@@ -3,6 +3,10 @@
  *
  *	SDIR [options] [afn ...]
  *
+ * The CCP supplies the plain built-in DIR; this transient adds sized,
+ * attributed, and dated listings. [DATE] requires a stamping-enabled label
+ * and SFCBs, which are read directly from directory entries. [SHORT] uses the
+ * same collected and sorted file table as the other display modes.
  */
 
 #include "cpm.h"

@@ -1,3 +1,9 @@
+/ sysmode.s -- Run a counted register-only loop in segmented System mode via BDOS 62.
+/ LDCTL verifies System mode and supplies the returned FCW. rr14 switches
+/ to the supervisor stack, so the loop must not use C frames or push:
+/ System-mode preemption requires an empty supervisor stack.
+/ IRET restores Normal mode using {identifier, FCW, PCseg, PCoff}; the
+/ hardware restores the banked Normal stack. Preserve callee-saved r6/r7.
 
 	.globl	sysspin_
 	.shri

@@ -1,4 +1,5 @@
 
+/* Translate BDOS I/O packets into BIOS calls under the filesystem lock. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -64,6 +65,9 @@ REG struct iopb *iop;		/* iop is a pointer to a i/o parameter block */
 }
 
 
+/* Function 50 accepts disk, clock, page-allocation and device-control BIOS
+ * calls listed below. Other codes return FFFFFFFFh. This is an interface
+ * policy, not a protection boundary: SC 3 exposes the raw BIOS dispatcher. */
 
 LONG bioscl(code, p1, p2)
 

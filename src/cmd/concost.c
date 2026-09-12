@@ -1,4 +1,7 @@
 /*
+ * concost.c - Measure console output cost by subtracting equal-length
+ * zero/count runs. Keep banners out of the measured output to avoid
+ * scrolling differences.
  */
 
 #include "cpm.h"

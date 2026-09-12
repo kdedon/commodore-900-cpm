@@ -1,4 +1,6 @@
 /*
+ * truncb.c - Exercise truncation across extent and allocation-block
+ * boundaries.
  */
 
 #include "cpm.h"

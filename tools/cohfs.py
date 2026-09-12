@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
+"""Write the small COHERENT filesystems read by the ROM and kboot.
 
+Only the on-disk boot interface is implemented: a flat directory, regular
+files, and the V7 allocation structures required by those readers.
 
 Structures per COHERENT's include/sys/filsys.h, fblk.h, ino.h, all values
 native Z8001 canonical -- shorts little-endian, longs PDP order (high word
@@ -22,6 +25,10 @@ BADFIN, ROOTIN = 1, 2
 # the clock would differ from itself between two builds of the same input.
 STAMP = 1784736000
 
+# The ROM starts with drive type 2 (4 heads, 17 sectors) and addresses the
+# loader by linear block before kboot installs the medium's true geometry.
+# Keep all boot files below 4*17 blocks so both geometries address the same
+# cylinder-zero sectors.  This value comes from the ROM dparam table.
 ROM_MIN_HEADS = 4
 
 # Blocks of kboot.cfg the loader reads; must match CFGBLK in kboot's

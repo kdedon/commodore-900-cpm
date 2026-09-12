@@ -1,7 +1,18 @@
 /*
+ * cpmio.c - CP/M-8000 platform layer and driver for E-Kermit 1.8.
  *
+ *   KERMIT R          receive
+ *   KERMIT S FILE.EXT send one file
+ *   KERMIT RT / ST    receive or send in text mode
  *
+ * Data uses the auxiliary serial port through BIOS PUNCH, READER, AUXIST and
+ * AUXDEV. Console 1 is temporarily unbound from that port so BDOS console
+ * polling cannot consume protocol bytes; bye() restores the prior binding.
+ * BIOS TICK supplies the 100 Hz timeout clock.
  *
+ * CP/M records no byte length within its final 128-byte record. Binary sends
+ * therefore include the complete final record; text sends stop at ^Z.
+ * Received partial records are padded with ^Z.
  */
 #include "cpm.h"
 #include "cdefs.h"
@@ -123,6 +134,8 @@ struct k_data *kp;
 	return (biosfn(BIOS_AUXIST, 0, 0) == 1L ? 1 : 0);
 }
 
+/* Use the peer's negotiated timeout when it is sane. Before negotiation, or
+   for an invalid value, use the two-second default. */
 static long rxtmo(kp)
 struct k_data *kp;
 {

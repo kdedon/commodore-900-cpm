@@ -1,4 +1,5 @@
 
+/* Drive login, directory operations, passwords, timestamps and allocation. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -154,10 +155,13 @@ REG UBYTE dsknum;		/* disk number to select */
 	} while ( ! error(3) );
 
 	if (GBL.dphp == NULL)
+	{	/* A continued select error provides no geometry. Poison curdsk so the
+ * next selection retries instead of treating the failed drive as current. */
 	    GBL.curdsk = 0xff;
 	    return;
 	}
 	GBL.dirbufp = &GBL.pdirbuf[0];
+			/* The directory buffer and its record tag travel together in stvars. */
 			/* set up GBL copies of dir_buf and dpb ptrs */
 	GBL.parmp = (GBL.dphp)->dpbp;
 	dirdrop();	/* the directory buffer now belongs to this disk */
@@ -239,6 +243,9 @@ BOOLEAN  chk_ext;
 }
 
 
+/* SFCBs hold create/access and update stamps for three directory entries.
+ * The label enables each stamp; dates are little-endian days since
+ * 1977-12-31 followed by BCD hour and minute. */
 
 /************************************************
 *  bdostime -- BIOS function 23 against @DATE	*
@@ -304,6 +311,8 @@ REG WORD off;			/* SF_CREATE, SF_UPDATE or SF_PWMODE */
 *  stampfld -- stamp4			*
 ****************************************/
 
+/* Update a stamp only when its value changes. An unknown date (FFFFh)
+ * leaves the field untouched. */
 
 MLOCAL BOOLEAN stampfld(p)
 
@@ -366,6 +375,8 @@ REG struct dirent *dirp;
 *  update$stamp				*
 ****************************************/
 
+/* Stamp the first directory entry once per open file, even when the FCB
+ * points at a later extent. UPDSTAMPED is set before the data write. */
 
 MLOCAL BOOLEAN ustamp(fcbp, dirp, dirindx)
 
@@ -402,6 +413,9 @@ REG struct fcb *fcbp;		/* the FCB function 21/34/40 is writing */
 *  function 102 -- read file stamps	*
 ****************************************/
 
+/* Function 102 returns eight timestamp bytes at DMA and password mode
+ * in the FCB extent. If no SFCB supplies a mode, consult the XFCB.
+ * Wildcards return error 9. */
 
 MLOCAL BOOLEAN rdstamp(fcbp, dirp, dirindx)
 
@@ -476,6 +490,9 @@ REG WORD dirindx;
 }
 
 
+/* Function 100 creates or updates the label. Stamping requires SFCBs.
+ * Authenticate its existing password from DMA; extent bit 0 requests a
+ * new password from DMA+8. Stored bit 0 instead means label present. */
 
 UWORD set_label(fcbp)
 
@@ -527,6 +544,7 @@ REG struct fcb *fcbp;
 *  function 101 -- get label mode	*
 ****************************************/
 
+/* Return the selected drive's label mode, including the password-enable bit. */
 
 UWORD get_label(dsknum)
 
@@ -540,6 +558,8 @@ REG UWORD dsknum;		/* drive 0..15, anything else = default */
 }
 
 
+/* Password enforcement is enabled by the directory label's DL_PASSWD bit.
+ * The caller supplies eight password bytes at DMA. */
 
 /*  The mode byte of the XFCB that last refused a call.  Only meaningful
     immediately after ckpass() returned non-zero, and only open() cares:
@@ -555,6 +575,8 @@ GLOBAL UWORD pwmode = 0;
 *  function 106 -- set default password	*
 ****************************************/
 
+/* Function 106 copies eight bytes from its parameter address. pwcmp uses
+ * this shared default password after the DMA password fails. */
 
 MLOCAL UBYTE dfltpw[PASSLEN];		/* all NULs until 106 is called	*/
 
@@ -568,6 +590,8 @@ XADDR src;			/* eight bytes in the caller's space	*/
 }
 
 
+/* Accept an empty stored password, the caller's DMA password, or the
+ * shared default. Decode stored bytes in reverse order with XF_KEY. */
 
 MLOCAL BOOLEAN pwcmp(e)
 
@@ -598,6 +622,8 @@ REG UBYTE *e;			/* the XFCB or label directory entry	*/
 }
 
 
+/* Store eight password bytes reversed and XORed with their byte sum.
+ * Return false for a blank/NUL password so the caller can remove its mode. */
 
 MLOCAL BOOLEAN setpw(e, src)
 
@@ -625,6 +651,8 @@ XADDR	   src;			/* eight bytes in the caller's space	*/
 }
 
 
+/* Stop on the first matching XFCB whose password is rejected. Wildcard
+ * deletion must authenticate every matching file before changing any. */
 
 MLOCAL BOOLEAN pwscan(fcbp, dirp, dirindx)	/* ARGSUSED */
 
@@ -805,6 +833,8 @@ REG struct fcb *fcbp;
 }
 
 
+/* Function 22 password creation uses eight DMA bytes and the mode at DMA+8.
+ * With no explicit mode bits, default to read protection. */
 
 MLOCAL BOOLEAN xmake(fcbp, dirp, dirindx)
 
@@ -852,6 +882,9 @@ REG struct fcb *fcbp;
 *  function 103 -- write file XFCB	*
 ****************************************/
 
+/* Function 103 requires an existing file and password-enabled drive.
+ * Authenticate its XFCB, then assign password/mode and synchronize SFCB
+ * metadata. A blank new password removes the protection mode. */
 
 MLOCAL UWORD xpwmode;		/* v3's pw$mode, for the callback below	*/
 
@@ -1159,6 +1192,8 @@ UBYTE	*p;			/* pointer to pass through to tmp_sel	*/
     if (fcbp->drvcode == '?')
     {
 	rtn = dirscan(alltrue, fcbp, dsparm | 8);
+			/* Raw directory search includes entries past the last file, including
+ * labels and SFCBs. */
     }
     else
     {
@@ -1171,6 +1206,8 @@ UBYTE	*p;			/* pointer to pass through to tmp_sel	*/
 }
 
 
+/* Check whether the proposed name already exists before create/rename.
+ * off=0 selects the original name; off=16 selects the rename destination. */
 
 UWORD fexists(fcbp, off)
 
@@ -1494,6 +1531,8 @@ REG struct fcb *fcbp;		/* pointer to fcb to get file size for */
 }
 
 
+/* Keep records through the requested random record, inclusive. Free later
+ * blocks and directory entries directly: ordinary close only grows files. */
 
 MLOCAL UWORD	tr_ent;		/* index of the entry the cut falls in	*/
 MLOCAL UWORD	tr_nblk;	/* disk map entries it keeps		*/
@@ -1561,6 +1600,8 @@ REG WORD dirindx;
     }
     if (et == tr_ent)
     {
+	/* For sparse files, derive the last extent from retained allocation slots.
+ * No blocks means RC=0; data ending before the requested cut means RC=128. */
 	REG UWORD off;
 
 	for (i = nmap; i; i--)		/* get$dir$ext: scan backwards	*/
@@ -1684,4 +1725,6 @@ UBYTE dsknum;		/* disk number to get free space of */
 	    records += (LONG)( ((GBL.parmp)->blm) + 1 );
 	bitmask >>= 1;
     }
+    /* Function 46 returns three little-endian count bytes and a zero fourth
+ * byte, independent of the CPU's native byte order. */
 }

@@ -1,3 +1,6 @@
+/* C-side cold entry from crt.s: initialize BIOS and the split module,
+ * then reset the stack and enter the transient CCP through ccpentry().
+ * M12_HARNESS selects the standalone disk read/write diagnostic instead. */
 #include "romabi.h"
 #include "biosdef.h"
 #include "c900cfg.h"
@@ -14,6 +17,8 @@ extern int mem_cpy(), mem_clr();
 extern char	splitimg[];
 extern short	spimglen, spbssoff, spbsslen;
 
+/* Initialize the split module's image and BSS in the mapping from crt.s.
+ * Check its magic after BIOS initialization so a bad image can be reported. */
 static spminit()
 {
 	mem_cpy((long)splitimg, SPLITMBASE, (long)spimglen);

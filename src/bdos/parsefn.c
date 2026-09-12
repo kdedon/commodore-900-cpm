@@ -1,3 +1,6 @@
+/* Parse [drive:]name[.type][;password] using CP/M 3 rules. The parameter
+ * block contains two 32-bit addresses. Return the delimiter offset,
+ * zero at NUL/CR, or FFFFh for an invalid name. Source: cpmbdos2.asm PARSE. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 

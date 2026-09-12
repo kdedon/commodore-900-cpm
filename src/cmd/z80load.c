@@ -1,3 +1,6 @@
+/* CP/M-80 .COM loader and guest environment. Load the image at 0x100,
+ * build page zero and the fake BDOS/BIOS tables, and initialize registers.
+ * GENCOM-bound images are identified by their 0xc9 header and refused. */
 
 #include "z80.h"
 
@@ -43,6 +46,8 @@ int a, no;
 /* ------------------------------------------------------------------ */
 /* the furniture						       */
 
+/* Plant page-zero JMP vectors, BDOS and exit hooks, and 17 BIOS JMPs.
+ * BIOS table index k targets hook HOOK_BIOS+k; index 1 is warm boot. */
 int z80furn(m)
 struct z80 *m;
 {
@@ -312,10 +317,13 @@ long n;
 	if (n <= 0)
 		return (CL_EMPTY);
 	if ((img[0] & 0xff) == 0xc9) {
+		/* Parse the GENCOM header for diagnostics; RSX relocation, chaining,
+		 * and lifecycle support are not implemented. */
 		z80rsxhdr(img, n, &r);
 		return (CL_RSX);
 	}
 	if ((img[0] & 0xff) == 0x00 || (img[0] & 0xff) == 0xff) {
+		/* Refuse leading 0x00/0xff as an unwritten-image heuristic. */
 		return (CL_NOTCOM);
 	}
 	if (n > (long)(GUESTTOP - COM_ORG))

@@ -1,3 +1,6 @@
+/* Function 49 is the SCB access path for transients. Refresh mirrored
+ * state before each access and push writable fields back after a set.
+ * Other fields are stored in the shared image. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -81,6 +84,8 @@ MLOCAL UBYTE scbimg[SCBLEN] =
 };
 
 
+/* Return the date/time bytes shared with directory stamping. Date words
+ * are little-endian; scbsync leaves this clock-owned group untouched. */
 
 UBYTE *scbstampa()
 {
@@ -88,6 +93,7 @@ UBYTE *scbstampa()
 }
 
 
+/* OR chain-to-program flags into the image-only CCP flags field. */
 
 scbccpflg(bits)
 
@@ -130,6 +136,8 @@ REG UWORD info;			/* the parameter word of this call	*/
 {
     BSETUP
 
+    /* Publish zero for the SCB address: a transient cannot address its
+ * supervisor segment. Function 49 remains the supported access path. */
     scbputw(SCB_CRDMA, (UWORD)(GBL.dmaadr & 0xffffL));
     scbimg[SCB_CRDSK] = GBL.curdsk;
     scbputw(SCB_VINFO, info);
@@ -164,6 +172,8 @@ REG UWORD info;			/* the parameter word of this call	*/
 }
 
 
+/* Push writable mirrors back into BDOS state. Writes to read-only mirrors
+ * disappear at the next scbsync. */
 
 MLOCAL scbpost()
 {
@@ -199,6 +209,8 @@ MLOCAL scbpost()
 }
 
 
+/* Function 49 parameter bytes: offset, set flag, value low, value high.
+ * FF sets a byte, FE sets a word, other flags read a word. Offset <99. */
 
 UWORD scb_fn(pbp, info)
 

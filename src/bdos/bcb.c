@@ -1,4 +1,6 @@
 
+/* BDOS physical-sector cache in BUFSEG. Directory writes are write-through;
+ * data writes remain dirty until eviction or flush. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -8,6 +10,8 @@
 
 EXTERN WORD	wdsec();	/* one physical sector transfer	*/
 
+/* Serialize cache replacement and flushes with the recursive filesystem lock.
+ * do_phio already holds it during ordinary sector transfers. */
 EXTERN VOID	plock();
 EXTERN VOID	punlock();
 EXTERN		mem_clr();	/* far zero fill		*/
@@ -15,6 +19,8 @@ EXTERN		mem_clr();	/* far zero fill		*/
 #define WDREAD	0x08
 #define WDWRITE	0x0A
 
+/* Each set has NWAY buffers, with lru[] ordered MRU first. Low block bits
+ * select the set; its final LRU entry is the replacement victim. */
 #define NWAY	4
 #define NSET	(NBCB / NWAY)
 

@@ -1,3 +1,6 @@
+/ prsx.s -- PROT.RSX refuses deletes and counts successful/failed opens after
+/ passing them down the chain. Function 60/201 reports the three counts
+/ as hexadecimal nibbles. Entry uses the UCASE.RSX calling convention.
 
 #ifndef	PROTORG
 #define	PROTORG	0xE800

@@ -1,4 +1,6 @@
 /*
+ * passt.c - Exercise read, write, and delete passwords on armed and unarmed
+ * drives.
  */
 
 #include "cpm.h"

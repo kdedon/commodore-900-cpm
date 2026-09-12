@@ -1,4 +1,6 @@
 
+/* BDOS dispatcher. tmp_sel copies caller FCBs into supervisor memory;
+ * modified FCBs are copied back before returning. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -119,6 +121,8 @@ struct tempstr
 					/* be directly accessible	*/
 };
 
+/* With function 45 error handling enabled, check drive availability and
+ * write protection before entering disk operations. */
 
 MLOCAL BOOLEAN drv_ok(dsk)	/* can this drive be selected? */
 
@@ -157,12 +161,23 @@ REG UWORD dsk;
 		     || (f) == 30 || (f) == 34 || (f) == 40 \
 		     || (f) == 99 || (f) == 100 || (f) == 103 )
 
+/* Function 15 falls back to user 0 SYS files. FCB name byte 8 bit 7 records
+ * that origin across calls; keephi selects operations that preserve it. */
 
 #define keephi(f) ( (f) == 16 || (f) == 20 || (f) == 21 \
 		    || (f) == 33 || (f) == 34 || (f) == 40 )
 
 MLOCAL UBYTE hi_ext;		/* v3's high$ext, for the call in progress */
 
+/* FCB name byte 7 bit 7 preserves an open without its write password.
+ * keephi operations restore it into xfcb_ro for write checks. */
+
+MLOCAL UBYTE xfcb_ro;		/* FCB name byte 7 bit 7 preserves an open without its write password.
+ * keephi operations restore it into xfcb_ro for write checks. */
+
+
+/* xbdos receives the function number and both word and segmented forms
+ * of its parameter. The SC gate returns the word result in r7. */
 
 
 UWORD xbdos(func,info,infop)	/* C900: renamed from _bdos -- `bdos' is the
@@ -193,6 +208,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	if (GBL.errmode && fcbfunc(func))
 	{			/* the drive this FCB names */
 	    dsk = UBWORD(cpy_bi(func == 18 ? GBL.srchp : infop));
+			/* Search-next uses the FCB saved by search-first; its parameter is unused. */
 	    dsk = (dsk == '?' || dsk == 0) ? UBWORD(GBL.dfltdsk) : dsk - 1;
 	    if ( ! drv_ok(dsk) )
 	    {
@@ -361,6 +377,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			break;
 		    }
 		    if ( UBWORD(temp.fptr->fname[5]) & 0x80 )
+		    {	/* XFCB-only deletion removes password metadata and leaves file data intact. */
 			del_xfcb(temp.fptr, 0);
 			rtnval = 0;
 			break;
@@ -395,6 +412,8 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 
 	  case 22:  tmp_sel(&temp);		/* create file */
 		    newpw = (temp.fptr->fname[5]) & 0x80;
+			/* Capture the password assignment request before clearing interface flags.
+ * The DMA supplies eight password bytes followed by the protection mode. */
 		    temp.fptr->extent = 0;
 		    temp.fptr->s1 = 0;
 		    temp.fptr->s2 = 0;
@@ -483,6 +502,8 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    rtnval = dirscan(set_attr, temp.fptr, 2);
 		    break;
 
+		  /* Copy the DPB into caller memory and return its offset; a transient
+ * cannot dereference the supervisor DPB directly. */
 	  case 31:  if (GBL.curdsk != GBL.dfltdsk) seldsk(GBL.dfltdsk);
 		    cpy_out( (GBL.parmp), infop, sizeof *(GBL.parmp) );
 
@@ -613,6 +634,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 59:  rtnval = pgmld(infop);	/* program load */
 		    break;
 
+	  case 60:  rtnval = rsxfn(info, infop);/* unclaimed RSX service (rsx.c) */
 		    break;
 
 	  case 61:  return(setexc(infop));	/* set exception vector */
@@ -652,6 +674,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    GBL.curdsk = 0xff;
 		    break;
 
+		  /* Date stamps and password metadata are maintained by fileio.c. */
 
 	  case 100: tmp_sel(&temp);		/* set directory label	*/
 		    rtnval = set_label(temp.fptr);
@@ -721,12 +744,18 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 112: prt_blk(infop, func == 111);/* print block to list	*/
 		    break;
 
+		  /* Function 144 takes a 165-byte {FCB, tail length, tail} request.
+ * Function 145 reports the number of live processes. */
 	  case 144: return(pcreate(infop));	/* create process	*/
 		    /* break; */
 
+		/* Start a CCP on the requested console, in the corresponding user area.
+ * Sessions reload their CCP after a transient warm boot. */
 	  case 145: return(proccnt());		/* live processes	*/
 		    /* break; */
 
+		  /* MP/M-style services are implemented in xdos.c. Function 145 is this
+ * port's process-count query, rather than MP/M Set Priority. */
 
 	  case 128: return(xmemrq(infop, 1));	/* absolute memory req	*/
 	  case 129: return(xmemrq(infop, 0));	/* relocatable mem req	*/
@@ -743,6 +772,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 140: return(xqwrite(infop, 1));	/* conditional write	*/
 	  case 141: return(xdelay(info));	/* delay		*/
 
+		  /* Termination uses the ordinary warm-boot cleanup path. */
 	  case 143: warmboot(0);		/* terminate process	*/
 		    break;		/* warmboot() does not return; this
 					   is here so that if it ever did,
@@ -805,6 +835,10 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 }					/* end xbdos */
 
 
+/* Clear FCB interface flags before persisting a name. Callers must capture
+ * requests such as password assignment before clearing them. */
+/* Reject wildcards for operations requiring a single name. Rename checks
+ * both names. Ignore attribute bits when comparing against question marks. */
 
 MLOCAL UWORD wildname(p)	/* chk$wild (bdos30.asm:1775-1778) */
 

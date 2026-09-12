@@ -1,3 +1,7 @@
+/ ucrsx.s -- UCASE.RSX folds BDOS function 2 output and counts intercepted calls.
+/ Entry uses the caller stack with r5=function and rr6=parameter; ret
+/ returns r7, and sc 2 passes down the chain. Preserve other registers.
+/ The fixed link address, prefix org, and build RSXORG must agree.
 #ifndef	RSXORG
 #define	RSXORG	0xF000
 #endif

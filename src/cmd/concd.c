@@ -1,4 +1,5 @@
 /*
+ * concd.c - Exercise concurrent file I/O with a second process.
  */
 
 #include "cpm.h"

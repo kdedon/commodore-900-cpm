@@ -1,4 +1,6 @@
 /*
+ * rsxt2.c - Inspect the resident chain and exercise console interception,
+ * open post-processing, and delete refusal.
  */
 
 #include "cpm.h"

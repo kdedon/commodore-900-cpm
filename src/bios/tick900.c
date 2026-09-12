@@ -1,3 +1,11 @@
+/* 100 Hz tick from Z-CIO #1 counter/timer 3, continuous at PCLK/2.
+ * Time constants are 20000 at 4 MHz and 30000 at 6 MHz, selected using
+ * ROM rom_ctype. Programming and interrupt dismissal follow COHERENT
+ * os/sys/z8001/src/md.s (clock setup and ISR).
+ * trap.s owns the ISR; crt.s maps CTIV=0 to it. Vectored interrupts
+ * remain enabled in user programs and system-call handlers.
+ * RTC strobes use separate CIO registers, so tick interrupts do not
+ * disturb their levels. Hardware tick rate still needs measurement. */
 #include "stdio.h"
 #include "romabi.h"
 
@@ -28,6 +36,8 @@ extern long	tickget();	/* trap.s: one LDL of tickcnt */
 #define TC4MHZ		20000	/* md.s:57 CLKVAL0			*/
 #define TC6MHZ		30000	/* md.s:58 CLKVAL1			*/
 
+/* ROMCONF_PP holds a CPU far pointer ((seg<<24)|offset), not an laddr.
+ * rom_ctype is byte 14 of the 15-byte ROM configuration block. */
 #define ROMCONF_PP	0x01000000L	/* seg 1:0 -- the ROM's far ptr	*/
 #define RC_CTYPE	14
 

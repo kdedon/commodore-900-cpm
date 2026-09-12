@@ -1,4 +1,6 @@
 /*
+ * lblnew.c - Create a directory label above existing files, verify its
+ * stamps, and reject stamping on a drive without SFCBs.
  */
 
 #include "cpm.h"

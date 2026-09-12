@@ -1,4 +1,6 @@
 /*
+ * mhello.c - Exercise the segmented transient loader, BDOS string/character
+ * output, command arguments, and base page.
  */
 
 #include "cpm.h"

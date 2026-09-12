@@ -1,6 +1,9 @@
+"""Write zero-heavy disk images as sparse files without changing their bytes."""
 
 import os
 
+# Match the usual host filesystem allocation unit so aligned zero chunks can
+# become holes without hiding smaller allocated runs.
 CHUNK = 4096
 
 

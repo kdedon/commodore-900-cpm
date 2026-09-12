@@ -1,3 +1,7 @@
+/* H19/Z19 console escape parser, with ESC '=' as ADM-3A addressing.
+ * Serial output translates recognized sequences to ANSI; LR output writes
+ * character cells and manages scrolling; HR uses the ROM bitmap driver
+ * and supports only home/clear among the cursor operations. */
 #include "romabi.h"
 
 #define ESC	033
@@ -44,6 +48,7 @@
 static int ckind;
 
 /*
+ * Parser state.  Four states, based on the donor handlers (mm.c's mmfunc
  * function-pointer machine, rec/mm.c:214-649), flattened to an int.
  */
 #define ST_GND	0			/* ground				*/
@@ -108,6 +113,7 @@ int off, ch;
 }
 #endif
 
+/* BIOCOST-only direct store to cell (0,0), exposed through BIOS 101. */
 vsettest(ch)
 int ch;
 {
@@ -203,6 +209,8 @@ int top, bot, n;
 	vblank(bot + 1 - n, 0, n * NCOL);
 }
 
+/* Write printable LR runs, splitting at row boundaries and scrolling as
+ * needed. Update the hardware cursor once after the run. */
 static lrput(s, n)
 register char *s;
 register int n;
@@ -384,6 +392,8 @@ int eos;
 
 /* ------------------------------------------------------------ ground state */
 
+/* BEL drives the speaker and reaches the terminal only on serial output.
+ * LR handles CR/LF/BS/FF locally and writes other bytes as character cells. */
 static crput(c)
 int c;
 {
@@ -416,6 +426,8 @@ int c;
 	putchar(c);
 }
 
+/* BIOS 27 bulk output: batch printable LR characters in ground state.
+ * Escapes, controls, and serial/HR output use the ordinary parser. */
 crsrun(s, n)
 register char *s;
 register int n;

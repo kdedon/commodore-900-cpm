@@ -7,6 +7,10 @@
  *	HELP			(then answer the HELP> prompt) the same,
  *				one request per line, empty line to leave
  *
+ * HELP.HLP is plain marked-up text. Lines beginning "///n" introduce a
+ * topic at nesting level n. Requests match names case-insensitively by prefix.
+ * The file is small enough to scan directly, so index-maintenance options are
+ * not implemented. BDOS function 111 supplies console paging.
  */
 
 #include "cpm.h"

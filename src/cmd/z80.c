@@ -1,3 +1,6 @@
+/* Z80 target launcher. Usage: Z80 PROG.COM [tail...].
+ * Allocate a 64 KB guest segment and a separate staging segment so the
+ * loader can clear guest memory before copying the image into it. */
 
 #include "cpm.h"
 #include "z80.h"

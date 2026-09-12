@@ -1,3 +1,8 @@
+/* 8080 interpreter with selected Z80 extensions. Guest memory wraps at
+ * 16 bits; words are little-endian. Lazy flags retain 8080 semantics,
+ * including inverted subtraction auxiliary carry and parity for NEG.
+ * Z80-only block operations use counter-based P/V. Unsupported operations
+ * return X_UNIMP; this is not a complete Z80 implementation. */
 
 #include "z80.h"
 
@@ -364,6 +369,8 @@ int aop, b;
 	return (r);
 }
 
+/* 8080 decimal adjust uses accumulator, auxiliary carry, and carry.
+ * Compute flags explicitly so host and target follow the same rules. */
 static int daa(m)
 struct z80 *m;
 {
@@ -450,6 +457,8 @@ int which;
 /* ------------------------------------------------------------------ */
 /* the CB group: rotates and shifts, and the bit three		       */
 
+/* CB fields select group, register, and rotate operation or bit number.
+ * RES/SET preserve flags; BIT preserves carry and sets auxiliary carry. */
 static int cbop(m, in)
 struct z80 *m;
 struct z80in *in;
@@ -516,6 +525,9 @@ struct z80in *in;
 /* ------------------------------------------------------------------ */
 /* the ED group: the block operations and the 16-bit arithmetic	       */
 
+/* Execute one block iteration per step, backing PC up by two when it
+ * repeats. The outer instruction budget and debugger therefore remain
+ * effective even for BC=0 (65536 iterations). */
 static int edop(m, in)
 struct z80 *m;
 struct z80in *in;

@@ -1,4 +1,5 @@
 
+/* Directory record I/O, scanning, checksums and allocation-vector helpers. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -20,6 +21,9 @@ EXTERN UWORD	ro_dsk;		/* read-only disk vector */
 EXTERN UWORD	crit_dsk;	/* critical disk vector */
 
 
+/* dirsecn describes the per-process directory buffer; -1 means unknown.
+ * Foreign transfers invalidate it because zero-fill borrows this buffer.
+ * dirown distinguishes directory transfers and travels with process state. */
 
 
 /*	THE SHARED DIRECTORY GENERATION, one per drive.

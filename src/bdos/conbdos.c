@@ -1,4 +1,6 @@
 
+/* BDOS console input, editing, cooked output and flow control.
+ * Copyright (c) 1982 Digital Research, Inc. */
 
 #include "stdio.h"
 
@@ -40,6 +42,8 @@ EXTERN	warmboot();		/* External function definition */
 EXTERN UBYTE cpy_bi();		/* copy byte in from user space */
 EXTERN LONG  map_adr();		/* map an address for the BDOS	*/
 
+/* Keep a resident copy of the chained command: reloading the transient CCP
+ * may overwrite the caller's DMA buffer before the next line read. */
 
 #define CHAINMAX 128		/* one record, as function 47 documents	*/
 
@@ -99,6 +103,8 @@ BOOLEAN constat()
 /* used internally  */
 /********************/
 
+/* Poll flow control every CONBRK_POLL output characters. CM_NOSTOP clears
+ * the counter; otherwise a control character waits at most one interval. */
 
 #define CONBRK_POLL 8
 
@@ -115,6 +121,7 @@ conbrk()
 		   ^C included -- CP/M 3 leaves conbrk immediately too */
     if (++brkctr < CONBRK_POLL) return;
     brkctr = 0;
+    /* Output polling must not consume another process's owned console input. */
     stop = FALSE;
     if ( bconstat() ) do
     {
@@ -138,6 +145,9 @@ conbrk()
 /* used internally*/
 /******************/
 
+/* The BDOS pager counts line feeds when conpage is nonzero. The paging
+ * guard prevents recursive paging while printing or waiting at its prompt.
+ * Counts are per process; the recursion guard is shared. */
 
 EXTERN UBYTE getch();		/* defined below; declared because an
 				   implicit declaration would make it int
@@ -158,6 +168,8 @@ MLOCAL pagelf()			/* one line feed is about to be printed	*/
     BSETUP
 
     if (paging) return;			/* our own prompt		*/
+    /* A zero page length disables this pager; PM_ON remains the default
+ * for utilities that page their own output. */
     len = UBWORD(GBL.conpage);
     if (len == 0) return;		/* no page length: pager is off	*/
     GBL.conline += 1;
@@ -225,6 +237,8 @@ BOOLEAN   ctlout;	/* output ^<char> for control chars? */
 }
 
 
+/* Batch printable runs while handling controls through cookdout. Split
+ * each run at the next flow-control poll to preserve the polling interval. */
 
 MLOCAL runout(p, n)		/* n ordinary characters, batched */
 
@@ -295,6 +309,8 @@ REG UWORD n;
 /* console input */
 /*****************/
 
+/* Yield while waiting for console input so other processes can run.
+ * Recheck buffered input after resuming: output polling may have read it. */
 
 UBYTE getch()		/* Get char from buffer or bios */
 			/* For internal use only	*/
@@ -302,6 +318,7 @@ UBYTE getch()		/* Get char from buffer or bios */
     REG UBYTE temp;
     BSETUP
 
+    /* Claim the console before consuming buffered input; attaching may block. */
     for (;;)
     {
 	if (temp = kbchar[concur])
@@ -320,6 +337,7 @@ UBYTE getch()		/* Get char from buffer or bios */
 					   which is what this function has
 					   always done		*/
 	pwait(PW_CON, (WORD)concur, 0L);
+					/* Wait for this console without blocking other consoles in the BIOS. */
 	if ( bconstat() ) break;	/* a character arrived while we were
 					   away, and it is still in the
 					   BIOS -- take it below	*/
@@ -433,6 +451,8 @@ newline()			/* new physical line, indented to the start */
 }
 
 
+/* Line editor with cursor movement, deletion, retyping and previous-line
+ * recall. Repaint only the changed suffix; tabs use the starting column. */
 
 #define	RECALL	128		/* longest line ^W can give back: the
 				   CCP's own buffer size, and no CP/M

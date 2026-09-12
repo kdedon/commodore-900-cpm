@@ -1,3 +1,7 @@
+/* CPM86 target launcher: allocate group and staging segments, load a .CMD,
+ * build its base page, and execute it through the native BDOS bridge.
+ * Usage: CPM86 PROG.CMD [tail...]. Staging is separate because destination
+ * segments must be cleared before copying initialized group data. */
 
 #include "cpm.h"
 #include "i86.h"
@@ -6,6 +10,8 @@ static struct i86	G;
 static struct i86cmd	C;
 static struct fcb	f;
 
+/* Each guest group owns one segment; one additional segment stages the
+ * input file. gseg[i] matches i86spar[i]/i86sbase[i] and group sidx. */
 #define I86MAXG	6			/* 7 pool - 1 staging		*/
 
 static int	gseg[I86MAXG];		/* the segment numbers held	*/

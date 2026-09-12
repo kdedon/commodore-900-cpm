@@ -1,4 +1,5 @@
 /*
+ * scbtest.c - Exercise system-control-block access and filename parsing.
  */
 
 #include "cpm.h"

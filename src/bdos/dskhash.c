@@ -1,4 +1,6 @@
 
+/* Directory signatures filter scans by user, name hash, extent and module.
+ * A candidate must still pass match() against its actual directory entry. */
 
 #include "stdio.h"		/* Standard I/O declarations */
 
@@ -29,6 +31,8 @@ MLOCAL WORD	dhok;		/* table describes drive dhdrv		*/
 MLOCAL WORD	dhbld;		/* rebuild in progress			*/
 MLOCAL UWORD	dhdrv;		/* drive the table describes		*/
 
+/* Per-drive hashing defaults; override HASH_A_DEFAULT/HASH_B_DEFAULT
+ * at build time or patch the initialized hashen array in the system image. */
 #ifndef HASH_A_DEFAULT
 #define HASH_A_DEFAULT	1
 #endif
@@ -96,6 +100,8 @@ REG struct dirent *dirp;
 
 
 dhopen(dsknum, drm)
+/* Rebuild when changing drives. Fixed-media signatures survive logout
+ * because dir_wr updates them; removable media bypasses hashing. */
 
 UWORD	dsknum;
 REG UWORD drm;
@@ -219,6 +225,8 @@ REG UWORD indx;
     REG UWORD	d;
 
     if ( ! dhok || dhdrv != q->drv ) return(1);
+			/* Another login can repoint the shared table while this scan is parked.
+ * Fall back to reading entries when its drive no longer matches. */
     if (q->mode == 2) return( UBWORD(DHUSR[indx]) == 0xe5 );
 
     if (DHNAM[indx] != q->nam) return(0);

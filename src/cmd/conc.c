@@ -1,4 +1,6 @@
 /*
+ * conc.c - Run a CPU workload alongside a second process to exercise
+ * scheduling.
  */
 
 #include "cpm.h"

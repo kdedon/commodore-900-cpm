@@ -8,8 +8,11 @@
 *							*
 ********************************************************/
 
+/* gbls holds the running process's BDOS state. proc.c copies it at
+   context switches; shared filesystem state is protected by LOCK/UNLOCK. */
 
 #define snglthrd TRUE
+/* Keep GBL as direct access to gbls; proc.c saves and restores it per process. */
 			/* TRUE for single-thread environment
 			undefined to create based structure for re-entrant model */
 #ifdef snglthrd
@@ -30,6 +33,12 @@
 #endif
 
 
+
+
+
+
+/* The filesystem lock is recursive: do_phio() can acquire it under log_in().
+   A competing owner yields; only the outermost UNLOCK releases the lock. */
 #define LOCK    plock();
 #define UNLOCK  punlock();
 EXTERN VOID plock();
@@ -54,11 +63,14 @@ EXTERN VOID punlock();
 EXTERN UBYTE	kbchar[CONBUFS];
 
  
+/* Function 12 encodes Portable CP/M as 0x20 and level 3.1 as 0x31.
+   DRI utilities use this value to enable SCB, XFCB and multi-sector calls. */
 #define robit 0			/* read-only bit in file type field of fcb */
 #define arbit 2			/* archive bit in file type field of fcb   */
 #define SECLEN 128		/* length of a CP/M sector		   */
 
 
+/* CP/M 3 on-disk directory types and label modes. Source: xfcb.lit, dirlbl.asm. */
 
 /* directory entry type byte (byte 0) */
 #define DE_XFCB	  0x10		/* 0x10 + user: password XFCB		*/
@@ -78,6 +90,9 @@ EXTERN UBYTE	kbchar[CONBUFS];
 #define DL_CRSTAMP 24		/* label created			*/
 #define DL_UPSTAMP 28		/* label updated			*/
 
+/* XFCBs carry the file name, mode and an eight-byte password stored
+ * reversed and XORed with its byte sum. Read protection includes write
+ * and delete; write includes delete. Source: ref/cpm3/xfcb.lit. */
 
 #define XF_MODE	  12		/* the password mode byte		*/
 #define XF_KEY	  13		/* checksum of the password = XOR key	*/

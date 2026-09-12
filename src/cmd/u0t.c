@@ -1,4 +1,6 @@
 /*
+ * u0t.c - Exercise read-only user-0 SYS-file fallback without exposing
+ * ordinary files across user areas.
  */
 
 #include "cpm.h"

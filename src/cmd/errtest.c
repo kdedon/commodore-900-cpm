@@ -1,4 +1,6 @@
 /*
+ * errtest.c - Exercise silent and display-and-return BDOS error modes, then
+ * restore normal file I/O.
  */
 
 #include "cpm.h"

@@ -1,4 +1,8 @@
 #!/bin/sh
+# Usage: sh tools/tcstamp.sh TOOLCHAIN
+# Emit the source identity followed by a digest of the five compiler passes.
+# Make preserves the stamp's mtime unless these change, invalidating objects
+# when a compiler is replaced even within the same checkout.
 set -e
 # Called with nothing at all -- no toolchain resolved -- this still prints a
 # line and still succeeds.  It is a record, and a build with no compiler has

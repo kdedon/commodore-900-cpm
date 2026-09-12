@@ -11,6 +11,7 @@
  * control lines and port C carries the Centronics strobe, so MCCR and
  * PBDD are read-modify-written and the pattern registers, MICR, the
  * interrupt vector and port C are left alone.  No counter here enables
+ * an interrupt; duration is polled.
  *
  * Port B has to be enabled in MCCR for a C/T waveform to leave the
  * chip, and the boot ROM leaves U66 unprogrammed -- port B disabled,
@@ -23,6 +24,7 @@
  * PB0 is claimed.
  *
  * The tone length is timed by CT1, programmed one-shot and polled --
+ * CT1 is independent of the system tick.  CT1's output pin is
  * PB4, an IEEE-488 control line, so CT1 runs with External Output
  * Enable CLEAR: it counts without touching any pin.  Its external gate,
  * trigger and count inputs (PB7/PB6/PB5) are likewise left disabled.
@@ -147,6 +149,8 @@ unsigned ms;
 	outb(CT1CS, CTCS_RUN);
 }
 
+/* Wait for CT1 to finish, bounded by 250 ms when the tick runs and by
+ * SNDPOLLS otherwise. The caller must call sndquiet() to stop the tone. */
 #define SNDWAIT		25L		/* ticks (100 Hz) -- 250 ms	*/
 
 sndwait()
@@ -163,6 +167,7 @@ sndwait()
 	}
 }
 
+/* Blocking console bell: 440 Hz for 125 ms. */
 sndbeep()
 {
 	sndtone(SNDPITCH, (unsigned)SNDLEN);

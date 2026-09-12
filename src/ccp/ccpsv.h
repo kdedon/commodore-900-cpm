@@ -1,4 +1,7 @@
+/* CCP state preserved across transient reloads.
+ *
  * It holds every value that must survive __LOAD: program-launch data,
+ * chained-command and SUBMIT state, CCP.CFG state, and pointers into its own
  * buffers. Scratch parse and DMA buffers remain in transient BSS because each
  * CCP invocation initializes them before use.
  *
@@ -14,6 +17,7 @@
  * The exchange is per process by construction: both calls act on the
  * descriptor of the process that makes them, so two sessions never share one.
  */
+
 #define	CCPSVLEN	0x0600		/* the size this must not exceed */
 
 #define	CCPSVMAGIC	0x4343		/* 'CC': the state is initialised */
@@ -89,6 +93,8 @@ struct ccpsv {
     char	*sv_glb_index;		/*  sv_usercmd or sv_subcom	*/
     char	*sv_tail;
 
+    /* CCP.CFG is read once per session. The flow stack survives warm boots
+	within a submit-file branch. */
 
     char	sv_cfg_done;
     char	sv_flow_en;
@@ -103,6 +109,7 @@ struct ccpsv {
     char	sv_fstk[SV_IFMAX];
     unsigned int sv_fdep;
 
+    /* PROFILE.SUB has been checked for this session. */
 
     char	sv_profile;
 };
@@ -120,6 +127,8 @@ extern struct ccpsv	ccpsv_buf;	/* src/ccp/ccpgo.c		*/
 
 #define	CCPSV		(&ccpsv_buf)
 
+/* cc0 compares only the first eight identifier characters. Keep every macro
+   in this block distinct within that prefix. */
 
 #define	profile_done	(CCPSV->sv_profile)
 #define	load_try	(CCPSV->sv_load_try)

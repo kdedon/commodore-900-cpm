@@ -1,3 +1,9 @@
+/* MP/M-style memory, polling, flag, queue, delay and console calls.
+ * pwait() parks a process with a wait reason; the scheduler makes it ready
+ * when that condition holds. Flag and queue operations fail with 0xFF if
+ * no other live process can satisfy them. Timer and console waits can
+ * complete with a single process.
+ * Function 145 is this port's process-count query, not MP/M Set Priority. */
 
 #include "stdio.h"
 #include "bdosdef.h"
@@ -5,8 +11,10 @@
 #include "proc.h"
 
 EXTERN	WORD	pyield();	/* proc.c: give the machine away, come back */
+EXTERN	WORD	pwait();	/* proc.c: wait on a scheduler event */
 EXTERN	VOID	pwake();	/* proc.c: put the waiters for one event
 				   back in the rotation			*/
+EXTERN	WORD	proccnt();	/* proc.c: live process count */
 EXTERN	WORD	pconget();	/* proc.c: the running process's console    */
 EXTERN	WORD	pconset();	/*   and setting it				*/
 EXTERN	WORD	pconname();	/* proc.c: set a NAMED process's console    */
@@ -35,6 +43,8 @@ EXTERN	WORD	pconname();	/* proc.c: set a NAMED process's console    */
     machine it is running on, which is what a compiled-in number could
     only manage on one machine.  */
 
+/* Delay in 100 Hz ticks. Subtract the deadline to tolerate counter wrap.
+ * Zero ticks or an unavailable time base return immediately. */
 
 GLOBAL WORD xdelay(ticks)
 UWORD	ticks;
@@ -50,10 +60,12 @@ UWORD	ticks;
 
 	while ((bios(BTICK, 0L, 0L) - dl) < 0L)
 		pwait(PW_TICK, 0, dl);
+			/* Wait for the deadline; an otherwise idle system polls until it expires. */
 	return (XOK);
 }
 
 
+/* Device poll: console input waits; console/list output are always ready. */
 
 GLOBAL WORD xpoll(dev)
 UWORD	dev;
@@ -76,6 +88,8 @@ UWORD	dev;
 }
 
 
+/* Eight flags with one waiter per flag. Waiting consumes a set flag;
+ * a second waiter or an unconsumed repeated set is refused. */
 
 #define	XNFLAG	8
 
@@ -100,6 +114,8 @@ UWORD	n;
 
 	xfwait[n] = 1;
 	while (xflag[n] != FL_SET) {
+		/* Refuse when nobody else can run. This also refuses a wait that could
+ * eventually be satisfied by a peer currently blocked on external input. */
 			xfwait[n] = 0;
 		}
 	}
@@ -123,6 +139,9 @@ UWORD	n;
 }
 
 
+/* Queues reside in supervisor memory because process TPA addresses alias.
+ * Requests resolve names to integer IDs. Each queue has bounded message
+ * size/depth; conditional reads and writes never wait. */
 
 #define	XNQ	4			/* queues in the system		*/
 #define	XQNAME	8			/* MP/M's name length		*/
@@ -340,6 +359,8 @@ WORD	cond;
 }
 
 
+/* Map MP/M-style memory requests onto BIOS 64 KB page allocation.
+ * md_base is a logical segment number; only one-page requests are supported. */
 
 struct xmd {
 	WORD	md_base;		/* logical segment number	*/
@@ -400,6 +421,8 @@ XADDR	infop;
 }
 
 
+/* Select/query a process's console; assignment resolves an eight-byte name.
+ * Validate console numbers against the BIOS runtime count. */
 
 /*  Function 149's parameter: TH.ASM:243-247's nine bytes, a console
     number and an 8-character name.  */
@@ -438,3 +461,5 @@ XADDR	infop;
 		return (XFAIL);
 	return (pconname(a.xa_name, n) ? XOK : XFAIL);
 }
+/* Attach/detach the selected console. Attach blocks behind another owner;
+ * detach fails if the caller did not own it. */

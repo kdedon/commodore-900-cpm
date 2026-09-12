@@ -1,4 +1,6 @@
 /*
+ * cpm3fn.c - Exercise CP/M 3 functions 42/43, 98, and 107-112. Function 98
+ * must reclaim the allocation left by an unclosed file.
  */
 
 #include "cpm.h"

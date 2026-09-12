@@ -1,3 +1,6 @@
+/* CP/M-80 CALL 5 and BIOS-hook bridge. C selects the function, DE is the
+ * parameter; results use A/HL and B=H. Translate guest pointers, FCB
+ * random-record byte order, and character-control blocks for native BDOS. */
 
 #include "z80.h"
 
@@ -23,6 +26,8 @@ static int	z80mult = 1;
 
 #define Z80SCBMLT 0x4a		/* SCB_MLTIO -- src/bdos/scb.h:60	*/
 
+/* Collect consecutive function-2 output into native function 111 blocks.
+ * Flush before other calls, BIOS hooks, refusals, and execution-loop exit. */
 #define Z80OBUF	128		/* pending function 2 characters	*/
 
 static char	obuf[Z80OBUF];
@@ -32,6 +37,7 @@ static struct {			/* the native CCB for the batch		*/
 	z16	n;
 } octl;
 
+/* Report CP/M 3.1 with the 8080 machine byte for CP/M 3 guest utilities. */
 z16	z80ver = 0x0031;
 
 /* ------------------------------------------------------------------ */
@@ -53,6 +59,9 @@ z16	z80ver = 0x0031;
 #define Z80REN	52		/* fn 23: old FCB at 0, new at 16	*/
 #define Z80DMA	128		/* one CP/M record			*/
 
+/* Parameter classes for supported calls through 112. Functions returning
+ * native system pointers and nested pointer APIs without translation are
+ * refused. SCB address fields are filtered; CCB pointers are rebuilt. */
 static z8 pmap[113] = {
 	P_NONE,		/*  0 system reset -- handled before this table	*/
 	P_NONE,		/*  1 console input				*/
@@ -314,6 +323,9 @@ struct z80 *m;
 
 /* ------------------------------------------------------------------ */
 
+/* Map character BIOS vectors onto native BDOS character calls.
+ * Disk BIOS vectors are refused because their DPH/translation pointers
+ * would require a guest representation of native disk structures. */
 static int biosv(m, v)
 struct z80 *m;
 int v;
@@ -365,6 +377,9 @@ int v;
  * three-byte hook, and the byte after it is a RET, so a resumed guest
  * returns to its own CALL site with no further help.
  */
+/* Guest FCB random records are little-endian; native BDOS uses big-endian
+ * bytes at offsets 33..35. Swap around relevant calls, excluding rename
+ * because those bytes belong to its second name. */
 static ranswap(p, fn)
 char *p;
 int fn;
@@ -611,6 +626,8 @@ struct z80 *m;
 		}
 		break;
 	case P_CCB:
+		/* Translate the guest's little-endian {address, length} words into
+		 * a native CCB with a far pointer, validating the complete buffer. */
 		p = z80addr(m, de, 4L);
 		if (p == (char *)0) {
 			breason = BR_ADDR;

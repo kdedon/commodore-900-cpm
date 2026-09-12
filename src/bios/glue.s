@@ -11,8 +11,11 @@
 #ifdef BOOT_TRACE
 	.globl	bt4_			/ opt-in cold-boot marker (cmain.c)
 #endif
+	.globl	sysstk_		/ current process's system-stack top
 	.shri
 
+/ Reset this process's system stack and enter the transient loader.
+/ Cold and warm boot share this entry; ccprun does not return.
 ccpentry_:
 	ld	r14, $0x3f00		/ SP segment = 0x3F (<<8 form, VKERN)
 	ld	r15, sysstk_		/ SP offset: THIS process's stack top,
@@ -84,6 +87,10 @@ mem_clr_:
 1:
 	ret
 
+/ xfer(ctxaddr): launch context {regs[16], id, FCW, PC} with IRET.
+/ Set the user stack, reset the system stack, and load r0-r13.
+/ Keep VI disabled between resetting SP and consuming the shared context:
+/ a scheduler switch there could let another launch overwrite the context.
 xfer_:
 	di	VI
 	ldl	rr2, rr14(4)		/ far pointer to the context block
@@ -91,10 +98,13 @@ xfer_:
 	ldctl	NSPSEG, r0
 	ld	r0, rr2(30)		/ regs[15] -> user initial SP
 	ldctl	NSPOFF, r0
+	ld	r14, $0x3f00		/ reset the current system stack
+	ld	r15, sysstk_
 	ld	r0, rr2(38)		/ PC offset
 	push	(rr14), r0
 	ld	r0, rr2(36)		/ PC segment word (XADDR high = 0xSS00)
 	push	(rr14), r0
+	ld	r0, rr2(34)		/ caller FCW: retain VIE for preemption
 	and	r0, $0xB7FF		/ NVI is unsupported; clear NVIE -- and
 					/   clear FCW_SN (0x4000) as well, so a
 					/   launch is ALWAYS into Normal mode,

@@ -9,6 +9,9 @@
  *	SHOW [DIR]		directory-entry usage
  *	SHOW [LABEL]		the directory label
  *
+ * Free space comes from function 46 as a four-byte native record count.
+ * Function 31 copies the DPB to the caller; this DPB has no physical-record
+ * fields. Directory labels are read directly from type-20h entries.
  */
 
 #include "cpm.h"

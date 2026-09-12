@@ -1,4 +1,6 @@
 /*
+ * xdose.c - Child workload for XDOS queue, event-flag, and termination
+ * tests.
  */
 
 #include "cpm.h"

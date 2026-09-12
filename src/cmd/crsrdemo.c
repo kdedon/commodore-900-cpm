@@ -1,4 +1,6 @@
 /*
+ * crsrdemo.c - Exercise cursor addressing, movement, erasure, and escape-
+ * sequence cancellation.
  */
 
 #include "cpm.h"
