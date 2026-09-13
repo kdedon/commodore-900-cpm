@@ -86,6 +86,32 @@
   A line beginning < is console INPUT for the program the previous line
   started, not a command.
 
+  ///2ReturnCodes
+
+  A program's exit status reaches the CCP as BDOS function 108's program
+  return code, and IF ERROR tests it, so a .SUB file can branch on a
+  command that failed:
+
+        MYCMD FOO.DAT
+        IF ERROR
+        TYPE OOPS.TXT
+        ELSE
+        TYPE FINE.TXT
+        FI
+
+  The CCP clears the code before every command it runs, so a program
+  that sets none is read as having SUCCEEDED.  Each command this port
+  builds sets it -- its C runtime publishes whatever main returned --
+  and so do the CCP's own failures, an unresolvable command name or a
+  missing .SUB among them.
+
+  FIVE PROGRAMS DO NOT SET IT.  SDB, SORTFL, KILLDU, TOHEX and FROMHEX
+  were compiled and linked on this machine against the runtime that came
+  with the C compiler, which carries no return code, so IF ERROR reads
+  success after them however they ended -- including when they refuse
+  malformed input.  Do not branch on those five; test their work
+  instead, with IF EXIST on an output file, or by reading it.
+
   ///1PAGING
 
   The console pauses at the foot of every page of output and waits for a
@@ -161,6 +187,15 @@
   [CREATE=ON|OFF]  stamp file creation
   [UPDATE=ON|OFF]  stamp file update
   [ACCESS=ON|OFF]  stamp file access
+  [PROTECT=ON|OFF] on a DRIVE: enforce passwords on it
+  [PASSWORD=xxx]   the drive's own password, or a file's
+  [PROTECT=READ|WRITE|DELETE]   on a FILE: what its password guards
+  [DEFAULT=xxx]    the password programs open protected files with
+
+  Nothing is protected until [PROTECT=ON] on the drive: a medium
+  without that bit behaves as it always did.  A file needs a password
+  before it can be given a protection mode, and an empty [PASSWORD=]
+  or [PROTECT=OFF] takes both away again.
 
   ///1INITDIR
 

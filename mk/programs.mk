@@ -244,6 +244,9 @@ $(UOBJDIR)/XFCBT.Z8K: $(UOBJDIR)/xfcbt.lout $(LOUT2CPM)
 $(UOBJDIR)/U0T.Z8K: $(UOBJDIR)/u0t.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/ROT.Z8K: $(UOBJDIR)/rot.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/V3RET.Z8K: $(UOBJDIR)/v3ret.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

@@ -54,14 +54,26 @@ EXTERN UWORD	rd_stamps();	/* read file date stamps    (fcn 102)	*/
 EXTERN UWORD	trunf();	/* truncate file	    (fcn 99)	*/
 EXTERN UWORD	fexists();	/* file$exists: is the name taken?	*/
 EXTERN UWORD	ckwild();	/* check$wild: is there a `?' in it?	*/
+EXTERN UWORD	ckpass();	/* chk$password: may this caller do it?	*/
+EXTERN UWORD	wr_xfcb();	/* fn 103: write or update a file's XFCB */
+EXTERN UWORD	set_dfltpw();	/* fn 106: the default password		*/
+EXTERN UWORD	mk_xfcb();	/* write a password XFCB for a new file	*/
+EXTERN		del_xfcb();	/* erase a name's password XFCBs	*/
+EXTERN		ren_xfcb();	/* carry them across a rename		*/
+EXTERN UWORD	pwmode;		/* the mode of the XFCB that refused	*/
 EXTERN		upd_stamp();	/* write a file's update stamp		*/
 EXTERN UBYTE	*scbstampa();	/* address of the SCB @DATE group	*/
+EXTERN		scbccpflg();	/* OR bits into the SCB ccp$flgs (fcn 47) */
 
 
 /*  Declare "true" global variables; i.e., those which will pertain to the
     entire file system and thus will remain global even when this becomes
     a multi-tasking file system */
 
+GLOBAL UBYTE	kbchar[CONBUFS];/* one byte of type-ahead PER CONSOLE,
+				   indexed by concur (bdosdef.h).  bss-zero
+				   is "nothing buffered" on every console,
+				   so nothing has to initialise it	*/
 GLOBAL UWORD	log_dsk = 0;	/* 16-bit vector of logged in drives */
 GLOBAL UWORD	ro_dsk = 0;	/* 16-bit vector of read-only drives */
 GLOBAL UWORD	crit_dsk = 0;	/* 16-bit vector of drives in "critical"
@@ -109,10 +121,22 @@ REG UWORD dsk;
 
 /*  the functions that take an FCB, and the subset of those that write */
 
+/*  Function 103 belongs in both groups: it takes an FCB through
+    tmp_sel() and it WRITES a directory entry.  Left out of them it was
+    the one directory write with no read-only-drive check in front of
+    it, and nothing deeper stops one -- dskutil.c calls error(4) on a
+    read-only drive and then does the write anyway, which only the
+    default error mode survives, because there error(4) aborts and never
+    returns.  So in function 45 modes 0FEh and 0FFh function 103 wrote
+    an XFCB onto a drive the program itself had marked read-only.	*/
+
 #define fcbfunc(f) ( ((f) >= 15 && (f) <= 23) || (f) == 30 \
 		     || ((f) >= 33 && (f) <= 36) || (f) == 40 \
+		     || (f) == 99 || (f) == 100 || (f) == 102 \
+		     || (f) == 103 )
 #define wrtfunc(f) ( (f) == 16 || (f) == 19 || ((f) >= 21 && (f) <= 23) \
 		     || (f) == 30 || (f) == 34 || (f) == 40 \
+		     || (f) == 99 || (f) == 100 || (f) == 103 )
 
 
 #define keephi(f) ( (f) == 16 || (f) == 20 || (f) == 21 \
@@ -132,6 +156,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 {
     REG UWORD rtnval;
     REG UWORD dsk;
+    REG UWORD newpw;		/* fn 22: f6', assign a password	*/
     LOCAL struct tempstr temp;
     BSETUP
 
@@ -144,6 +169,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	GBL.errcode = 0;
 	hi_ext = 0;			/* v3's reselectx (bdos30.asm:2975);
 					   keephi() functions put it back  */
+	xfcb_ro = 0;			/* and :2978, the line after	*/
 
 	if (GBL.errmode && fcbfunc(func))
 	{			/* the drive this FCB names */
@@ -225,6 +251,23 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    if ( ckpass(temp.fptr, 0) )
+			/*  bdos30.asm:4026-4057.  The three modes are not
+			    three refusals: READ protection refuses the
+			    open, WRITE protection lets it through and
+			    makes the file read-only, and DELETE
+			    protection -- the weakest -- does not concern
+			    an open at all.  v3 tests the same two bits
+			    of pw$mode in the same order (:4054-4057). */
+		    {
+			if (pwmode & XP_READ)
+			{
+			    seterr(7, UBWORD(GBL.curdsk));
+			    rtnval = 0xff;
+			    break;
+			}
+			if (pwmode & XP_WRITE) xfcb_ro = 0x80;
+		    }
 		    temp.fptr->extent = 0;
 		    temp.fptr->s2 = 0;
 		    rtnval = dirscan(openfile, temp.fptr, 0);
@@ -233,6 +276,28 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			temp.fptr->drvcode = 0;
 			temp.fptr->extent = 0;
 			temp.fptr->s2 = 0;
+			if ( ckpass(temp.fptr, 0) )
+			{   /*  the SECOND check, and it has to be a second
+				one: an XFCB belongs to a user area (its
+				entry type is 10h + the user number), so
+				the check above probed the CALLER's area
+				and found nothing there.  Without this a
+				read-protected user-0 SYS file opened from
+				every other user area with no password --
+				the first P2 item of the first-release
+				review.  Ordered before the scan so a
+				refusal writes nothing, not even an access
+				stamp, and read the same way as above:
+				READ refuses, WRITE opens read-only,
+				DELETE does not concern an open.	*/
+			    if (pwmode & XP_READ)
+			    {
+				seterr(7, UBWORD(GBL.curdsk));
+				rtnval = 0xff;
+				break;
+			    }
+			    if (pwmode & XP_WRITE) xfcb_ro = 0x80;
+			}
 			rtnval = dirscan(openfile, temp.fptr, 0);
 			if (rtnval != 255)
 			{	/* only a SYS file is shared out of user 0
@@ -263,7 +328,29 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    break;
 
 	  case 19:  tmp_sel(&temp);		/* delete file */
+		    if ( ckpass(temp.fptr, 0) )
+			/*  bdos30.asm:1638-1650.  ANY password protects a
+			    file from erasure -- delete protection is the
+			    weakest of the three and the other two include
+			    it -- so unlike open there is no mode to look
+			    at, only a yes or a no.  A wildcarded erase is
+			    refused if any one of the files it names is
+			    protected: ckpass() scans them all.	*/
+		    {
+			seterr(7, UBWORD(GBL.curdsk));
+			rtnval = 0xff;
+			break;
+		    }
+		    if ( UBWORD(temp.fptr->fname[5]) & 0x80 )
+			del_xfcb(temp.fptr, 0);
+			rtnval = 0;
+			break;
+		    }
 		    rtnval = dirscan(delete, temp.fptr, 2);
+		    if (rtnval != 255) del_xfcb(temp.fptr, 0);
+			/* the XFCB goes with the file it named (:1690):
+			   left behind it would hand its password to the
+			   NEXT file created under that name	*/
 		    break;
 
 	  case 20:  tmp_sel(&temp);		/* read sequential */
@@ -271,12 +358,24 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    break;
 
 	  case 21:  tmp_sel(&temp);		/* write sequential */
+		    if (hi_ext || xfcb_ro)
 			/* a file reached through the user-0 fallback is
+			   read-only, error 3 through set$aret -> 03FFh
+			   plus the "Read/Only File" message
+			   (bdos30.asm:2485-2494) -- and so is one opened
+			   without the password its XFCB wanted for
+			   writing, which is the same test one line above
+			   at :2481	*/
+		    {
+			seterr(3, UBWORD(GBL.curdsk));
+			break;
+		    }
 		    upd_stamp(temp.fptr);
 		    rtnval = multio(temp.fptr, FALSE, 0);
 		    break;
 
 	  case 22:  tmp_sel(&temp);		/* create file */
+		    newpw = (temp.fptr->fname[5]) & 0x80;
 		    temp.fptr->extent = 0;
 		    temp.fptr->s1 = 0;
 		    temp.fptr->s2 = 0;
@@ -292,6 +391,15 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			break;
 		    }
 		    rtnval = dirscan(create, temp.fptr, 8);
+		    if (rtnval != 255 && newpw && mk_xfcb(temp.fptr))
+			/* the XFCB would not fit.  v3 undoes the make it
+			   just did and answers 0FFh (:4324-4329): a file
+			   that was asked to be protected and is not must
+			   not be left lying there unprotected	*/
+		    {
+			dirscan(delete, temp.fptr, 2);
+			rtnval = 0xff;
+		    }
 		    break;
 
 	  case 23:  tmp_sel(&temp);		/* rename file */
@@ -304,7 +412,20 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    if ( ckpass(temp.fptr, 0) )
+			/* chk$password on the name being renamed
+			   (bdos30.asm:1806-1807).  A rename is a delete
+			   and a make of the name, so any password
+			   protects it	*/
+		    {
+			seterr(7, UBWORD(GBL.curdsk));
+			rtnval = 0xff;
+			break;
+		    }
 		    rtnval = dirscan(rename, temp.fptr, 2);
+		    if (rtnval != 255) ren_xfcb(temp.fptr);
+			/* :1825 and :1855-1860: the new name's own XFCB
+			   goes, and the old name's XFCB comes along	*/
 		    break;
 
 	  case 24:  return(log_dsk);		/* return login vector */
@@ -330,12 +451,28 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    if ( ckpass(temp.fptr, 0) )
+			/* `indicators' checks the password before it
+			   changes a single attribute (:1866-1868).  A
+			   file's R/O, SYS and archive bits are as much
+			   the owner's business as its contents	*/
+		    {
+			seterr(7, UBWORD(GBL.curdsk));
+			rtnval = 0xff;
+			break;
+		    }
 		    rtnval = dirscan(set_attr, temp.fptr, 2);
 		    break;
 
 	  case 31:  if (GBL.curdsk != GBL.dfltdsk) seldsk(GBL.dfltdsk);
 		    cpy_out( (GBL.parmp), infop, sizeof *(GBL.parmp) );
 
+	  case 32:  /* get/set user number.  E = 0FFh interrogates; anything
+		       else is masked ani 0fh and SET, and the call
+		       returns 0 (bdos30.asm:4458-4472)	*/
+		    if ( (info & 0xff) == 0xff ) return(UBWORD(GBL.user));
+		    GBL.user = (UBYTE)(info & 0x0f);
+		    return(0);
 		    /* break; */
 
 	  case 33:  tmp_sel(&temp);		/* random read */
@@ -343,7 +480,18 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    break;
 
 	  case 34:  tmp_sel(&temp);		/* random write */
+		    if (hi_ext || xfcb_ro)
 			/* a file reached through the user-0 fallback is
+			   read-only, error 3 through set$aret -> 03FFh
+			   plus the "Read/Only File" message
+			   (bdos30.asm:2485-2494) -- and so is one opened
+			   without the password its XFCB wanted for
+			   writing, which is the same test one line above
+			   at :2481	*/
+		    {
+			seterr(3, UBWORD(GBL.curdsk));
+			break;
+		    }
 		    upd_stamp(temp.fptr);
 		    rtnval = multio(temp.fptr, FALSE, 1);
 		    break;
@@ -362,8 +510,36 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    crit_dsk&= info;
 		    break;
 
+	  /* Functions 38 and 39 are MP/M-only (get/set the process's own
+	     descriptor address, and get/set the caller's process
+	     priority).  Outside MP/M, v3's table entry for both is
+	     func$ret -- the call succeeds and returns 0
+	     (bdos30.asm:4578-4579) -- rather than an unimplemented-
+	     function refusal.	*/
+	  case 38:
+	  case 39: return(0);
+		    /* break; */
+
+	  /* Function 41 (get/set outer environment) is likewise not a
+	     CP/M 3 BDOS call outside MP/M; its table slot is
+	     lret$eq$ff, so the answer is 00FFh, not the unimplemented-
+	     function 0FFFFh (cpmbdos1.asm:322).	*/
+	  case 41: return(0x00ff);
+		    /* break; */
+
 	  case 40:  tmp_sel(&temp);		/* write random with 0 fill */
+		    if (hi_ext || xfcb_ro)
 			/* a file reached through the user-0 fallback is
+			   read-only, error 3 through set$aret -> 03FFh
+			   plus the "Read/Only File" message
+			   (bdos30.asm:2485-2494) -- and so is one opened
+			   without the password its XFCB wanted for
+			   writing, which is the same test one line above
+			   at :2481	*/
+		    {
+			seterr(3, UBWORD(GBL.curdsk));
+			break;
+		    }
 		    upd_stamp(temp.fptr);
 		    rtnval = multio(temp.fptr, FALSE, 2);
 		    break;
@@ -393,6 +569,12 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    free_sp(info);
 		    break;
 
+	  case 47:  if ( (info & 0xff) == 0xff )
+			/* E = 0FFh additionally asks for the current
+			   environment: set bit 40h of ccp$flgs
+			   (bdos30.asm:4665-4670)	*/
+			scbccpflg(0x40);
+		    GBL.chainp = setchain(GBL.dmaadr);
 					/* chain to program: the line is
 					   COPIED, not pointed at -- see
 					   setchain() in conbdos.c */
@@ -428,6 +610,17 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		      in this BDOS can shrink a file: close() writes an FCB
 		      back only when it describes a LARGER one.	*/
 	  case 99:  tmp_sel(&temp);		/* truncate file	*/
+		    if ( ckpass(temp.fptr, 0) )
+		    {	/*  the same rule as erase (case 19): truncation
+			    destroys records, delete protection is the
+			    weakest of the three modes and the other two
+			    include it, so ANY password protects a file
+			    from function 99.  It had none, which meant a
+			    protected file could be truncated by anyone. */
+			seterr(7, UBWORD(GBL.curdsk));
+			rtnval = 0xff;
+			break;
+		    }
 		    rtnval = trunf(temp.fptr);
 		    break;
 
@@ -452,6 +645,19 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    rtnval = rd_stamps(temp.fptr);
 		    break;
 
+	  case 103: tmp_sel(&temp);		/* write file XFCB	*/
+		    rtnval = wr_xfcb(temp.fptr);
+		    break;
+
+		  /*  Fn 106's eight bytes are at the PARAMETER address,
+		      not the DMA -- the one call in this group that does
+		      not go through the DMA (bdos30.asm:5066-5076,
+		      set.plm:1014).  It is what lets a program open a
+		      password-protected file without carrying the
+		      password itself, which is the only reason function
+		      103 is usable from the console at all.	*/
+	  case 106: rtnval = set_dfltpw(infop);	/* set default password	*/
+		    break;
 
 		  /*  Fn 104 stores the caller's four bytes in @DATE and
 		      pushes them down to the clock, zeroing @SEC on the
@@ -499,6 +705,18 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 152: return(parsefn(infop));	/* parse filename	*/
 		    /* break; */
 
+	  /*  v3's function table does not stop at the highest number it
+	      implements: cpmbdos1.asm:255-262 fills 51-97 and 113-127
+	      with lret$eq$ff (00FFh) and, at :348-349, everything from
+	      128 up with func$ret (0) -- the CP/M-8000 MP/M/XDOS range,
+	      which answers "not present" rather than "bad function
+	      number" so a program can probe it.  Only what is truly
+	      outside the v3 table (fn 27, structural, G5) keeps the
+	      0FFFFh bad-function-number answer.		*/
+	  default:  if (func >= 128) return(0);
+		    if ( (func >= 51 && func <= 97) ||
+			 (func >= 113 && func <= 127) ) return(0x00ff);
+		    return(-1);			/* bad function number */
 		    /* break; */
 
 	};					/* end of switch statement */
@@ -506,7 +724,12 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	if (temp.reselect){          /* if reselected disk, restore it now */
 		temp.fptr->drvcode = temp.tempdisk;
 		temp.fptr->fname[7] |= hi_ext;
+		temp.fptr->fname[6] |= xfcb_ro;
 			/* v3's goback: fcb(8) = fcb(8) | high$ext
+			   (bdos30.asm:5124-5131) and fcb(7) = fcb(7) |
+			   xfcb$read$only (:5112-5113) -- the user-0 flag
+			   and the password-read-only flag both go home
+			   with the caller's FCB	*/
 		cpy_out(temp.fptr, infop, sizeof *temp.fptr);
 	}
 
@@ -587,6 +810,8 @@ REG struct tempstr *temptr;
 				   of the name and work without it	*/
 	    hi_ext = (fcbp->fname[7]) & 0x80;
 	    fcbp->fname[7] &= 0x7f;
+	    xfcb_ro = (fcbp->fname[6]) & 0x80;	/* :2989-2990	*/
+	    fcbp->fname[6] &= 0x7f;
 	}
 	fcbp->drvcode = hi_ext ? 0 : GBL.user;
 	temptr->reselect = TRUE;

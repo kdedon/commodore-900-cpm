@@ -2373,6 +2373,42 @@ static void sbump(char *f)
 }
 
 /*
+ * The random record field, read the way OUR BDOS reads it -- ran0
+ * (fcb+33) is the HIGH byte, matching sranset() above.  A guest's own
+ * bytes are in the OTHER order (fcb+33 low); z80bdos.c's ranswap() is
+ * what makes that true by the time this stub ever sees the FCB, for the
+ * same reason DUMP.COM's function 35 needed it
+ * (src/bdos/fileio.c setran/fsize).
+ */
+static long srrec(const char *f)
+{
+	return (((long)(f[33] & 0xff) << 16)
+	      | ((long)(f[34] & 0xff) << 8)
+	      | (long)(f[35] & 0xff));
+}
+
+/*
+ * Advance the random record field by one, in the SAME (post-ranswap)
+ * byte order srrec() reads -- src/bdos/bdosrw.c incr_rr() to the
+ * letter: ran2 (here fcb+35, the low byte) carries into ran1, then
+ * ran0.
+ */
+static void srincr(char *f)
+{
+	int t;
+
+	t = (f[35] & 0xff) + 1;
+	f[35] = (char)(t & 0xff);
+	if (t <= 0xff)
+		return;
+	t = (f[34] & 0xff) + 1;
+	f[34] = (char)(t & 0xff);
+	if (t <= 0xff)
+		return;
+	f[33] = (char)((f[33] & 0xff) + 1);
+}
+
+/*
  * Not a filesystem: the smallest thing that answers the calls a copy
  * and a dump make, so that the ANSWER can be checked.  Everything it
  * does not implement returns 0xFF and is counted, and the counts are
@@ -2413,6 +2449,57 @@ static int srw1(int fn, char *addr)
 }
 
 /*
+ * One record, RANDOM, at the record the FCB's own random-record field
+ * names -- src/bdos/bdosrw.c bdosrw()'s random arm, flattened the same
+ * way srw1() flattens the sequential one: no extents, no blocks, just
+ * an absolute record number into the stub's flat file.
+ *
+ * fn 40, write random WITH ZERO FILL, is the one place this stub's
+ * flat model has to say something the real BDOS says at a different
+ * layer.  On the real machine the zero-fill is a per-BLOCK guarantee
+ * (bdosrw.c: a newly allocated block is zeroed through the directory
+ * buffer before the caller's record is written into it), so records
+ * inside the same block that the caller never writes read back as
+ * zero rather than as leftover disk content.  This stub has no block
+ * layer -- the file is a flat array -- so the equivalent guarantee is
+ * made at the RECORD level: writing past the current end of file zeros
+ * the gap in the array first.  That is a smaller promise than the real
+ * BDOS makes (it zeros to the next block boundary, not just to the
+ * record being written) but it is the same promise on every case this
+ * project's tests can observe -- a read of any record between the old
+ * EOF and the new one -- and it is why fn 40 is the one of the three
+ * that needs its own branch below rather than sharing fn 34's.
+ */
+static int ranw1(int fn, char *addr)
+{
+	struct sfile *f;
+	long r, n;
+
+	f = sfind(addr + 1);
+	if (!f)
+		return (9);
+	r = srrec(addr);
+	if (fn == 33) {				/* read random		*/
+		if (r * 128L >= f->len)
+			return (1);
+		n = f->len - r * 128L;
+		if (n > 128)
+			n = 128;
+		memset(sdma, 0x1a, 128);
+		memcpy(sdma, f->d + r * 128L, (size_t)n);
+	} else {				/* write random, 34 or 40 */
+		if ((r + 1) * 128L > (long)SF_CAP)
+			return (2);
+		if (fn == 40 && r * 128L > f->len)
+			memset(f->d + f->len, 0, (size_t)(r * 128L - f->len));
+		memcpy(f->d + r * 128L, sdma, 128);
+		if ((r + 1) * 128L > f->len)
+			f->len = (r + 1) * 128L;
+	}
+	return (0);
+}
+
+/*
  * MULTI-SECTOR I/O, and it is here because the machine said so.
  *
  * PIP.COM ran on the emulator through the real BDOS and copied its
@@ -2430,22 +2517,49 @@ static int srw1(int fn, char *addr)
  * it does on an error: the caller's DMA address is restored, and the
  * high byte of the return value is the number of records transferred
  * before the failure (except for a physical error, code 255, whose high
+ * byte already carries the extended code).  It now covers all five
+ * functions the real multio() shells -- 20 and 21 sequential, 33/34/40
+ * random -- and for the random three it also advances and restores the
+ * FCB's own random-record field exactly as incr_rr() and multio() do:
+ * one step per record transferred, the whole field put back to the
+ * caller's value before returning.  Sequential I/O advances the FCB's
+ * CURRENT-RECORD byte instead (sbump(), inside srw1()), which is why
+ * only the random arm below touches the record field itself.
  */
 static int smultio(int fn, char *addr)
 {
 	char *sav_dma;
+	char sav33, sav34, sav35;
+	int done, rtn, isran;
+
+	isran = (fn == 33 || fn == 34 || fn == 40);
 
 	if (smultcnt <= 1)
+		return (isran ? ranw1(fn, addr) : srw1(fn, addr));
 
 	sav_dma = sdma;
+	if (isran) {
+		sav33 = addr[33];
+		sav34 = addr[34];
+		sav35 = addr[35];
+	}
 	done = 0;
 	rtn = 0;
 	while (done < smultcnt) {
+		rtn = isran ? ranw1(fn, addr) : srw1(fn, addr);
+		if (rtn != 0)
 			break;
 		done++;
+		if (isran)
+			srincr(addr);
 		sdma += 128;
 	}
 	sdma = sav_dma;
+	if (isran) {
+		addr[33] = sav33;
+		addr[34] = sav34;
+		addr[35] = sav35;
+	}
 	if (rtn == 0)
 		return (0);
 	if ((rtn & 0xff) == 0xff)
@@ -2584,6 +2698,9 @@ static int stub(int fn, z16 val, char *addr)
 		return (0xff);
 	case 20:				/* read sequential	*/
 	case 21:				/* write sequential	*/
+	case 33:				/* read random		*/
+	case 34:				/* write random		*/
+	case 40:				/* write random, 0 fill	*/
 		return (smultio(fn, addr));
 	case 46:				/* get disk free space	*/
 		if (sdma)
@@ -3104,6 +3221,130 @@ static void t_pip(const char *dir)
 	}
 }
 
+/*
+ * RANDOM RECORD, fns 33/34/40, and their multi-sector shell.
+ *
+ * Neither DUMP nor PIP calls any of the three -- Z80-STAGE-ONE.md §0.2
+ * says so and names t_pip()'s census as the thing that would notice if
+ * that ever stopped being true.  It cannot notice a function nothing
+ * calls, so this is that call, made directly through z80bdos() the way
+ * t_seam() drives the seam -- no guest program needed, because a random
+ * read or write is fully described by an FCB and a DMA address, both of
+ * which this test can place in gmem[] itself.
+ *
+ * z80bdos.c's ranswap() sits between every call here and the stub: the
+ * FCB is built and read back in the GUEST's little-endian order (r0 at
+ * +33 is the low byte), and it is the seam, not this test, that flips
+ * it to the order srrec()/srincr() use.  A byte-order mistake on either
+ * side would show up here as the wrong record read back, which is
+ * exactly the class of bug §0.2 found from DUMP's "No Records Exist".
+ */
+static void t_random(void)
+{
+	struct sfile *f;
+	long k;
+
+	sreset();
+	sysmode = SYS_CPM;
+
+	f = &sdisk[0];
+	smkname(f->name, "RANDOM.DAT");
+	f->used = 1;
+	f->len = 4L * 128L;
+	for (k = 0; k < f->len; k++)
+		f->d[k] = (char)(k / 128);	/* record N is N in every byte */
+
+	/* byte 0 of a CP/M FCB is the drive, the name starts at byte 1 --
+	 * sfind(addr + 1) below is the stub's own reminder of that. */
+	memset(gmem + 0x0100, 0, 36);
+	smkname(gmem + 0x0100 + 1, "RANDOM.DAT");
+
+	z80hookno = HOOK_BDOS;			/* as if a CALL 5 just landed */
+
+	z80setr(&G, R_C, 26);			/* set DMA to 0x2000	*/
+	G.rp[P_DE] = 0x2000;
+	chk("fn 26 sets the DMA the random tests use", z80bdos(&G), B_RUN);
+
+	/* ---- read random, three records in one multi-sector call ---- */
+
+	z80setr(&G, R_C, 44);			/* multi-sector count = 3 */
+	G.rp[P_DE] = 3;
+	chk("fn 44 accepts a multi-sector count", z80bdos(&G), B_RUN);
+
+	gmem[0x0100 + 33] = 1;			/* record 1, guest order:  */
+	gmem[0x0100 + 34] = 0;			/* r0 (low) = 1, r1 = r2 = 0 */
+	gmem[0x0100 + 35] = 0;
+	z80setr(&G, R_C, 33);
+	G.rp[P_DE] = 0x0100;
+	chk("fn 33 multi-sector random read runs", z80bdos(&G), B_RUN);
+	chk("... in one guest-visible BDOS call", sfncount[33], 1L);
+	chk("... record 1 first", (long)(gmem[0x2000] & 0xff), 1L);
+	chk("... record 2 next", (long)(gmem[0x2000 + 128] & 0xff), 2L);
+	chk("... record 3 last", (long)(gmem[0x2000 + 256] & 0xff), 3L);
+	/* multio() restores the caller's random-record field exactly;
+	 * these three bytes are still in the GUEST's order because
+	 * z80bdos.c un-swaps them again before returning. */
+	chk("fn 33 restores the guest's r0", (long)(gmem[0x0100 + 33] & 0xff), 1L);
+	chk("fn 33 restores the guest's r1", (long)(gmem[0x0100 + 34] & 0xff), 0L);
+	chk("fn 33 restores the guest's r2", (long)(gmem[0x0100 + 35] & 0xff), 0L);
+
+	/* ---- write random, single record, well within the file ---- */
+
+	z80setr(&G, R_C, 44);			/* back to one record/call */
+	G.rp[P_DE] = 1;
+	z80bdos(&G);
+
+	memset(gmem + 0x2000, (char)0xbb, 128);
+	gmem[0x0100 + 33] = 2;			/* record 2		*/
+	gmem[0x0100 + 34] = 0;
+	gmem[0x0100 + 35] = 0;
+	z80setr(&G, R_C, 34);
+	G.rp[P_DE] = 0x0100;
+	chk("fn 34 random write runs", z80bdos(&G), B_RUN);
+	chk("... counted", sfncount[34], 1L);
+	chk("... record 2 now holds the new pattern",
+		(long)(f->d[2 * 128] & 0xff), 0xbbL);
+	chk("... record 1 is untouched",
+		(long)(f->d[1 * 128] & 0xff), 1L);
+
+	/* ---- write random with zero fill, two records past EOF ---- */
+
+	z80setr(&G, R_C, 44);			/* multi-sector count = 2 */
+	G.rp[P_DE] = 2;
+	z80bdos(&G);
+
+	memset(gmem + 0x2000, (char)0xcc, 128);
+	memset(gmem + 0x2000 + 128, (char)0xdd, 128);
+	gmem[0x0100 + 33] = 10;		/* record 10, six past the	*/
+	gmem[0x0100 + 34] = 0;		/* 4-record file's old EOF	*/
+	gmem[0x0100 + 35] = 0;
+	z80setr(&G, R_C, 40);
+	G.rp[P_DE] = 0x0100;
+	chk("fn 40 write-random-with-zero-fill runs", z80bdos(&G), B_RUN);
+	chk("... in one guest-visible BDOS call", sfncount[40], 1L);
+	chk("... record 10 holds the first write", (long)(f->d[10 * 128] & 0xff), 0xccL);
+	chk("... record 11 holds the second write", (long)(f->d[11 * 128] & 0xff), 0xddL);
+	/* the gap between the old 4-record EOF and record 10 reads back
+	 * zero, not leftover disk content -- the promise fn 40 makes */
+	chk("... the gap (record 5) is zero-filled",
+		(long)(f->d[5 * 128] & 0xff), 0L);
+	chk("... the gap (record 9) is zero-filled",
+		(long)(f->d[9 * 128] & 0xff), 0L);
+
+	/* ---- a random read past end of file is still an error ---- */
+
+	z80setr(&G, R_C, 44);
+	G.rp[P_DE] = 1;
+	z80bdos(&G);
+	gmem[0x0100 + 33] = 99;
+	gmem[0x0100 + 34] = 0;
+	gmem[0x0100 + 35] = 0;
+	z80setr(&G, R_C, 33);
+	G.rp[P_DE] = 0x0100;
+	z80bdos(&G);
+	chk("fn 33 past EOF answers error 1", (long)G.a, 1L);
+}
+
 /* ==================================================================
  * THE DMA WINDOW A MULTI-SECTOR TRANSFER ACTUALLY USES, and the
  * length z80rsxhdr() is given.
@@ -3389,6 +3630,7 @@ char **argv;
 	t_seam();
 	t_dump(argv[1]);
 	t_pip(argv[1]);
+	t_random();
 	t_dmabound();
 
 	printf("z80test: %d checks, %d failures\n", ntest, nfail);

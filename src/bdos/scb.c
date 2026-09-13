@@ -88,6 +88,15 @@ UBYTE *scbstampa()
 }
 
 
+
+scbccpflg(bits)
+
+REG UBYTE bits;
+{
+    scbimg[SCB_CCPFLGS] |= bits;
+}
+
+
 /*  word access to the image: low byte first, as on the 8080  */
 
 MLOCAL UWORD scbword(off)

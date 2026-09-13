@@ -1,0 +1,2 @@
+RCC3: STAT _exit(1) TOOK THE ELSE BRANCH
+

@@ -176,12 +176,30 @@ them: see the `$(CPMAIMG)` rule, which stages `src/dist/disk-a/`, runs
 ## mkcpmdisk.py — the CP/M-only bootable medium
 
 ```
+mkcpmdisk.py [--kboot=FILE] [--mutate=cfg|kernel|base] [--cpmb-base=BLK]
 ```
 
 Builds a whole disk image containing only what CP/M needs: a boot partition
 holding kboot and a generated `kboot.cfg`, `cpmboot` holding `cpm.sys`, and the
+raw `cpma`/`cpmb` drive regions.  By default it keeps the same block offsets as
+the dual-boot 42 MB COHERENT+CP/M medium (`hd42-cpm.media`), so that a
 CP/M-only image and the dual-boot image built from the same inputs agree on
 where drive A: and B: start.
+
+The generated `kboot.cfg` now says where those drives are, in `part` lines,
+and the `os` line asks kboot for the handoff that carries them: slots 8..14 are
+CP/M drives A: through G: in letter order, slot 15 is the whole device.  The
+CP/M BIOS builds its drive table from that block (`src/bios/bios900.c`,
+`src/bios/bootinfo.h`) instead of from compiled constants, so the offsets above
+are a default this file records rather than a number in C source.
+
+* `--cpmb-base=BLK` puts drive B: somewhere else -- in the cfg and in the
+  image, because those are the same fact.  `verify-bipart` uses it to show that
+  the running system follows the medium.
+* `--no-bootinfo` writes the cfg this builder wrote before any of that: no
+  `part` lines, no `part` keyword, nothing handed over, so `cpm.sys` falls back
+  to its compiled A: and B:.  That is what a medium built for an older kboot
+  looks like, and `verify-bifallback` boots one.
 
 Every `verify-*` target builds its medium with this, so none of them needs a
 built COHERENT distribution — only the `kboot` binary, which the Makefile names

@@ -55,6 +55,7 @@ GLOBAL UBYTE serial[6] = { 'C', '9', '0', '0', '0', '1' };
 MLOCAL BYTE *errmsg[9] =
 {
     "Disk I/O$", "Read/Only Disk$", "Read/Only File$", "Invalid Drive$",
+    (BYTE *)NULL, (BYTE *)NULL, "Password Error$", "File Exists$",
     "? in Filename$"
 };
 
@@ -72,12 +73,16 @@ bdosinit()
 	XADDR	low;
 	LONG	length;
     } *segp;
+    REG WORD	i;		/* console index for the type-ahead table */
     BSETUP
 
     BTRACE("<6>");		/* bdosinit entered */
     bsetvec(trap2v, map_adr((long)traphnd, 257)); /* set up trap vector */
 						   /* (inst. space addr) */
     BTRACE("<7>");		/* trap-2 vector set (I-space map_adr) */
+    for (i = 0; i < CONBUFS; i++)
+	kbchar[i] = 0;		/* every console's type-ahead is empty */
+				/* initialize the "global" variables */
     GBL.delim  = '$';
     GBL.lstecho = FALSE;
     GBL.echodel = TRUE;

@@ -58,6 +58,7 @@ struct finfo {
 	long		recs;		/* 128-byte records		*/
 	char		usr;
 	char		hasts;
+	char		hasx;		/* a password XFCB names it	*/
 	char		ts[10];		/* create(4) update(4) passmode	*/
 };
 
@@ -613,6 +614,7 @@ int u;
 	fi[i].name[11] = 0;
 	fi[i].usr = (char) u;
 	fi[i].hasts = 0;
+	fi[i].hasx = 0;
 	fi[i].onek = 0;
 	fi[i].kbytes = 0;
 	fi[i].recs = 0L;
@@ -691,6 +693,74 @@ static VOID getfiles()
 		brk();
 		rc = __bdos(BDOS_SNEXT, 0L) & 0xff;
 	}
+}
+
+/*
+ * [XFCB] and [NONXFCB]: select on whether a file has a password XFCB.
+ *
+ * A second directory pass, because an XFCB (type 10h+user) can sit
+ * anywhere in the directory relative to the file it names -- the first
+ * pass would have to remember every XFCB it walked past, and this
+ * remembers none.  It runs only when one of the two options was given,
+ * so an ordinary SDIR reads the directory exactly once, as before.
+ *
+ * The XFCB's eleven name bytes are the file's, so the comparison is the
+ * sort key's comparison with the attribute bits masked off (an XFCB's
+ * name bytes carry none, and a file's may).
+ */
+static int samename(a, b)
+register char *a;
+register char *b;
+{
+	register int	i;
+
+	for (i = 0; i < 11; i++)
+		if (((a[i] ^ b[i]) & 0x7f) != 0)
+			return (0);
+	return (1);
+}
+
+static VOID markxfcbs()
+{
+	register int	rc, k, i;
+	char		*e;
+
+	setdma(dbuf);
+	qfcb.drvcode = '?';
+	rc = __bdos(BDOS_SFIRST, (long) &qfcb) & 0xff;
+	while (rc != 0xff) {
+		k = rc & 3;
+		e = &dbuf[k << 5];
+		if (((e[0] & 0xff) & 0xf0) == 0x10)
+			for (i = 0; i < nfiles; i++)
+				if (fi[i].usr == (char) (e[0] & 0x0f)
+				    && samename(fi[i].name, &e[1]))
+					fi[i].hasx = 1;
+		brk();
+		rc = __bdos(BDOS_SNEXT, 0L) & 0xff;
+	}
+}
+
+static VOID xfcbfilter()
+{
+	register int	i, j;
+	int		n;
+	char		*p, *q;
+
+	markxfcbs();
+	n = 0;
+	for (i = 0; i < nfiles; i++) {
+		if (f_xfcb ? !fi[i].hasx : fi[i].hasx)
+			continue;
+		if (n != i) {
+			p = (char *) &fi[n];
+			q = (char *) &fi[i];
+			for (j = 0; j < (int) sizeof (struct finfo); j++)
+				p[j] = q[j];
+		}
+		n++;
+	}
+	nfiles = n;
 }
 
 /* sort.plm:35-45 -- name and type only, attribute bits masked off */
@@ -1000,6 +1070,7 @@ static VOID setdefaults()
 	if (!(f_ro || f_rw))
 		f_ro = f_rw = 1;
 
+	if (f_xfcb && f_nonxfcb)	/* both is neither, as DIR+SYS is */
 		f_xfcb = f_nonxfcb = 0;
 
 	if (nspec == 0) {
@@ -1064,6 +1135,8 @@ char *argv[];
 		__bdos(BDOS_GETDPB, (long) &dpb);
 		usrvec = saveu;
 		getfiles();
+		if (f_xfcb || f_nonxfcb)
+			xfcbfilter();
 		sortfiles();
 		for (n = 0; n < 16; n++) {
 			if ((usrvec & ((unsigned) 1 << n)) == 0)

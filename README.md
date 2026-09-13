@@ -4,6 +4,26 @@ CP/M-8000 for the Zilog Z8001-based Commodore 900: the machine BIOS, the
 BDOS, the CCP and the utilities. The BDOS implements the CP/M 3 function
 set -- function 12 answers `0x2031`, and functions 44, 45, 49, 60, 98-105
 107-112 and 152 are there, with SFCB date stamps, directory labels, chained
+RSX modules, extended error returns, multi-sector I/O and XFCB file
+passwords. The CCP loads from `A:CCP.Z8K` on cold and warm boots.
+
+Every command built from `src/cmd` publishes `main`'s status as the
+function 108 program return code, so the CCP's `IF ERROR` can branch on it
+in a SUBMIT file. The five `src/app` applications -- `SDB`, `SORTFL`,
+`KILLDU`, `TOHEX`, `FROMHEX` -- are the exception: they are compiled and
+linked on the target against DRI's `STARTUP.O` and `LIBCPM.A` from
+`vendor/`, not against `src/cmd/crt0.s`, so they set no return code and
+`IF ERROR` reads success after them however they ended. See
+`DEVIATIONS.md` §10 in the design notes. The system does
+
+Passwords are enforced on a drive whose directory label has the
+password-enable bit set, and only there: a medium without that bit behaves
+exactly as it did before they existed. `SET [PROTECT=ON]` sets the bit and
+`SET [PASSWORD=]` gives the label its own password. The *file* forms of
+`[PASSWORD=]` and `[PROTECT=READ|WRITE|DELETE]` are BDOS function 103, and
+`SET [DEFAULT=]` is function 106; both are implemented, and together they
+are the round trip -- lock a file, and supply its password once so that
+every program on the disk can open it, since no CCP prompts for one.
 
 The system banner carries the date the system was BUILT: `CPMDATE` and
 `COPYYEAR` in the Makefile come from `date` on the build host. This is

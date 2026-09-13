@@ -29,7 +29,17 @@ char *argv[];
 
 	if (argc > 1 && (argv[1][0] & 0x5f) == 'P') {
 		/* ---- a label THIS BDOS did not write ----
+		   The password-enable bit reaches drvlbl[] through the
 		   login scan, which copies byte 12 of the type-20h entry
+		   out of the directory verbatim, and function 101 must
+		   report it: it is the switch the BDOS arms every
+		   password check off, so a program that asks whether this
+		   drive requires passwords has to be told the truth.
+		   v3 answers through get$dir$mode, which masks the bit
+		   off ONLY in the build that has no password support
+		   (bdos30.asm:3119-3126, `if not BANKED / ani 7fh').  We
+		   used to be that build and are not any more.
+
 		   The image this runs on is labelled by
 		   tools/mkcpmfs.py --label-mode ...,password, and the
 		   Makefile proves host-side that the bit really is on
@@ -40,6 +50,8 @@ char *argv[];
 		if (!(r & DL_EXISTS)) {
 			cputs("  BAD -- no label on this image");
 			bad++;
+		} else if (!(r & DL_PASSWD)) {
+			cputs("  BAD -- want the password bit reported");
 			bad++;
 		}
 		cputs("\r\n");
@@ -117,6 +129,10 @@ char *argv[];
 	r = getlabel();
 	cputs("  fn 101 now ");
 	puthex(r);
+	/* every bit asked for comes back, the password bit included: it is
+	   stored now, not dropped, and DL_EXISTS is added by the BDOS */
+	if (r != (DL_PASSWD | DL_ACCESS | DL_UPDATE | DL_CREATE | DL_EXISTS)) {
+		cputs("  BAD -- want f1");
 		bad++;
 	}
 	cputs("\r\n");

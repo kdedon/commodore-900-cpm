@@ -29,6 +29,8 @@ EMUSTAT = echo $$? > $(abspath $(EMUSTATUS))
 EMUOK = test "`cat $(EMUSTATUS)`" = 0 \
 	|| { echo "*** the emulator exited `cat $(EMUSTATUS)`: what is above is not a session"; exit 1; }
 
+# ---- the gate that says the loader broke ----
+# The $(CPMDISK) rule is in the Makefile: `all' builds the release medium.
 # verify-boot: does this medium still boot CP/M?  Nothing else in the suite
 # asks that question directly -- every other target boots in order to test
 # something else, so a loader or boot-partition regression surfaced as
@@ -117,6 +119,7 @@ REVERIFYIN = $(OSSEL)DIR *.TXT\rTYPE COPY2.TXT\rMHELLO AGAIN\r$(ENDIN)
 # (make would treat a literal one as a comment).  Session: create
 # TEST.TXT with three lines, e(xit), TYPE it, re-enter, \043a = #a
 # (append all source lines), -b (bottom), insert one more, e, TYPE.
+EDVERIFYFMT = $(OSSEL)ED TEST.TXT\r\\gi\rhello from ED on the C900\rsecond line of text\rthird line 42\r\032e\rTYPE TEST.TXT\rED TEST.TXT\r\043a\r-b\ri\rappended fourth line\r\032e\rTYPE TEST.TXT\rDIR *.TXT\r$(ENDIN)
 # Split-tool execution session (verify-arx): assemble two staged .8KN
 # sources with ASZ8K (Unidot .OBJ out), convert both with XCON to x.out,
 # structure-dump one with XDUMP, archive both with AR8K, list, copy the
@@ -144,6 +147,7 @@ TRUNCBMAX ?= 1500000000
 # put the buffer right (^A ^H, ^B ^F insert, ^W recall, ^K).
 V1IMG	= build/v1test.bin
 V1LOG	= build/verify-v1.log
+V1EDITFMT = $(OSSEL)XDIR M*.*\001\001\001\001\001\001\001\001\010\rDR M*.*\002\006I\r\027\rTYPE HELLO.TXTJUNK\001\001\001\001\013\r$(ENDIN)
 .PHONY: verify-v1
 verify-v1: all
 	$(MKDISK) $(V1IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
@@ -204,6 +208,7 @@ verify-v1: all
 #
 #               the widening could have introduced silently: the widened
 CBRKTOKENS = 0200
+CBRKFMT       = $(OSSEL)CONBRK P $(CBRKTOKENS)\rCONBRK R\r$(ENDIN)
 .PHONY: verify-conbrk
 verify-conbrk: all
 	@$(EMUOK)
@@ -838,9 +843,22 @@ verify-driveb: all
 	@$(EMUOK)
 	@# --- the drive table, as the two drives describe themselves ---
 	@# A: MUST still be the drive it was at HEAD: same capacity, same
+	@# directory.  B: is not carved out of it.
 	@grep -q '81,920: 128 Byte Record Capacity' $(DBLOG) \
 		|| { echo "verify-driveb: FAIL -- A: is no longer 10 MB"; exit 1; }
 	@grep -q '65,536: 128 Byte Record Capacity' $(DBLOG) \
+		|| { echo "verify-driveb: FAIL -- B: is not the 8 MB drive its own dpb declares"; exit 1; }
+	@# BOTH drives report no reserved tracks, and that is the K1 change,
+	@# not a regression: a drive's position on the device used to live in
+	@# dpb.trk_off (B: reported 1,312 here) and now lives in the BIOS's
+	@# per-drive base, selected by SELDSK, so a slot need not start on an
+	@# 8 KB track boundary of one fixed origin.  What says the BDOS got
+	@# B:'s OWN dpb and not A:'s is the capacity line above -- 65,536
+	@# records against A:'s 81,920 -- which is the check that was always
+	@# doing that work.  Where the bytes really are is driveb-check.py,
+	@# at the end of this target, and that is the aliasing test proper.
+	@test "`grep -c '        0: Reserved  Tracks' $(DBLOG)`" = 2 \
+		|| { echo "verify-driveb: FAIL -- a drive does not start at track 0 of itself"; exit 1; }
 	@# --- cross-visibility, from the running system ---
 	@grep -q 'B: BONLY    TXT' $(DBLOG) \
 		|| { echo "verify-driveb: FAIL -- the packed B: image is not readable"; exit 1; }
@@ -891,9 +909,117 @@ verify-driveb: all
 		|| { echo "verify-driveb: FAIL -- an A: file is in B:'s region on disk"; exit 1; }
 	@echo "verify-driveb: PASS -- B: is its own region (block $(CPMB_BASEBLK)), A: unchanged, P: refused"
 
+# ---- the drive table comes from the MEDIUM (verify-bipart) ----
+# verify-driveb proves B: is its own region of the disk.  It cannot prove
+# that the BIOS learned WHERE that region is from the medium, because the
+# medium puts B: exactly where the old compiled constant did -- both
+# answers agree, so the test passes either way.
+#
+# So this target moves it.  The same medium is built with `--cpmb-base',
+# which writes a different `part 9' into kboot.cfg AND blits drive B:'s
+# bytes there, and then runs the session verify-driveb's own
+# driveb-check.py judges -- against the NEW base.  Nothing in cpm.sys is
+# rebuilt or patched: the only difference between this medium and
+# verify-driveb's is four digits in a config file on the boot partition.
+# If the BIOS were still using BTRKOFF, B: would be 8 MB of zeros at the
+# old address and the first `PIP B:' would fail; if it read the table but
+# ignored the base, the files would land in the old region and
+# driveb-check.py's "appears NOWHERE else on the disk" half would fail.
+#
+# 67392 is the last 16384 blocks of the 83776-block device, so B: ends
+# exactly at the end of the disk -- as far from 59136 as this geometry
+# allows, and clear of boot, cpma and cpmboot (mkcpmdisk.py checks).
+BPIMG	= build/biptest.bin
+BPLOG	= build/verify-bipart.log
+BPBASE	= 67392
+# The names driveb-check.py looks for: AONLY.TXT written on A:, BNEW.TXT
+# written on B: (from A:PIP, so the CCP finds the command on A: while B:
+# is the drive it acts on), BONLY.TXT put there by the packer.
 BPVERIFYIN = $(OSSEL)SHOW B:[DRIVE]\rPIP AONLY.TXT=HELLO.C\rB:\rA:PIP BNEW.TXT=BONLY.TXT\rDIR\rA:\r$(ENDIN)
+.PHONY: verify-bipart
+verify-bipart: all
+	$(MKDISK) --cpmb-base=$(BPBASE) $(BPIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(BPIMG)) \
+		--input="$(BPVERIFYIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(BPLOG))
+	@$(EMUOK)
+	@# B: is the drive it always was -- the same 8 MB dpb, at a new base.
+	@grep -q '65,536: 128 Byte Record Capacity' $(BPLOG) \
+		|| { echo "verify-bipart: FAIL -- B: is not the 8 MB drive; the moved slot did not become a drive"; exit 1; }
+	@grep -q 'B: BONLY    TXT' $(BPLOG) \
+		|| { echo "verify-bipart: FAIL -- the packed B: image does not read at block $(BPBASE)"; exit 1; }
+	@# ...and the bytes are there, and NOWHERE else on the disk.
+	python3 tests/driveb-check.py $(BPIMG) $(CPMA_BASEBLK) $(CPMA_BLOCKS) \
+		$(BPBASE) $(CPMB_BLOCKS) $(CPMBIMG)
+	@# The old address must be untouched: a BIOS still using BTRKOFF would
+	@# have put B:'s directory at block $(CPMB_BASEBLK), and this is the
+	@# check that names which table the running system used.  Only as far
+	@# as the new drive's base, because the two regions overlap from there
+	@# on -- B: moved 8256 blocks, not clear of itself -- and the first 32
+	@# blocks of the old address, where a directory would be, are well
+	@# inside that.
+	@dd if=$(BPIMG) bs=512 skip=$(CPMB_BASEBLK) \
+		count=`expr $(BPBASE) - $(CPMB_BASEBLK)` \
+		status=none | tr -d '\0' | wc -c | grep -qx 0 \
+		|| { echo "verify-bipart: FAIL -- something was written at the OLD drive-B: base $(CPMB_BASEBLK): the BIOS is still using its compiled table"; exit 1; }
+	@echo "verify-bipart: PASS -- B: moved to block $(BPBASE) by kboot.cfg alone"
+
+# ---- and the medium that hands over NOTHING (verify-bifallback) ----
+# The drive table comes from the loader when there is one.  When there is
+# not -- an older kboot, a kboot that does not fill bi_part[], an `os'
+# line that asks for no handoff -- cpm.sys must come up on the A: and B:
+# it was built with, because that is every medium made before this
+# change.  `mkcpmdisk.py --no-bootinfo' writes exactly the kboot.cfg this
+# builder wrote then, so the medium under test is the old medium and not
+# a simulation of one.
+#
+# Two runs on two media, and the second is what makes the first mean
+# something:
+#
+#   1. B: at its usual base, nothing handed over.  The system must be
+#      indistinguishable from today: B: is the 8 MB drive, its packed
+#      files read, and a file written on it lands in its region.
+#   2. B: MOVED, and still nothing handed over.  The system must NOT
+#      follow it -- it has not been told, so it must read the compiled
+#      base and find the empty region there.  Without this half, run 1
+#      passes for a BIOS that ignores the handoff entirely, and so does
+#      verify-bipart's medium for a BIOS that got lucky.
+BFIMG	= build/biftest.bin
+BFLOG	= build/verify-bifallback.log
+BFMOVIMG = build/bifmove.bin
+BFMOVLOG = build/verify-bifallback-moved.log
 BFVERIFYIN = $(OSSEL)SHOW B:[DRIVE]\rPIP B:FROMA.TXT=HELLO.C\rDIR B:\r$(ENDIN)
+.PHONY: verify-bifallback
+verify-bifallback: all
+	$(MKDISK) --no-bootinfo $(BFIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(BFIMG)) \
+		--input="$(BFVERIFYIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(BFLOG))
+	@$(EMUOK)
+	@grep -q '65,536: 128 Byte Record Capacity' $(BFLOG) \
+		|| { echo "verify-bifallback: FAIL -- with no handoff, B: is not the 8 MB drive cpm.sys was built with"; exit 1; }
+	@grep -q 'B: BONLY    TXT' $(BFLOG) \
+		|| { echo "verify-bifallback: FAIL -- with no handoff, the packed B: image does not read: an existing medium would not come up"; exit 1; }
+	@tr -d '\r' < $(BFLOG) | grep -Eq "(^B: |: )FROMA +TXT( :| *$$)" \
+		|| { echo "verify-bifallback: FAIL -- with no handoff, a write to B: did not take"; exit 1; }
+	@# ...and it landed in B:'s COMPILED region, which is the statement
+	@# about addresses that the transcript cannot make.
+	@dd if=$(BFIMG) bs=512 skip=$(CPMB_BASEBLK) count=$(CPMB_BLOCKS) \
+		status=none | grep -qa 'FROMA   TXT' \
+		|| { echo "verify-bifallback: FAIL -- the file written on B: is not at the compiled base $(CPMB_BASEBLK)"; exit 1; }
+	@# ---- the half that says it is the HANDOFF doing the work ----
+	$(MKDISK) --no-bootinfo --cpmb-base=$(BPBASE) $(BFMOVIMG) $(CPMSYS) \
+		$(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(BFMOVIMG)) \
 		--input="$(OSSEL)DIR B:\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(BFMOVLOG))
+	@$(EMUOK)
+	@grep -q 'BONLY' $(BFMOVLOG) \
+		&& { echo "verify-bifallback: FAIL -- B: followed the medium with NO handoff to tell it: verify-bipart proves nothing"; exit 1; }; \
+		true
+	@echo "verify-bifallback: PASS -- with nothing handed over, A:/B: are the"
+	@echo "                   compiled ones, and a moved B: is not followed"
+
 # ---- INITDIR + BDOS function 50 (verify-initdir) ----
 # INITDIR rewrites a LIVE directory: a partial or wrong run destroys
 # files, so almost none of this target is a transcript grep.  The three
@@ -928,11 +1054,13 @@ IDORACLE = build/initdir-oracle.img
 # reports it missing on a disk where it is present.
 # \g turns the input gate off after INITDIR's own CR, because INITDIR's
 # "(Y/N)?  " prompt is not a character the gate latches on.
+IDIN1FMT = $(OSSEL)SHOW B:[DRIVE]\rDIR B:\rTYPE B:ID3.TXT\rINITDIR B:\r\\gY\rDIR B:\rTYPE B:ID3.TXT\rTYPE B:ID5.TXT\rDIR B:ID4.TXT\r$(ENDIN)
 # Boot 2: the two refusals.  With no drive on the command line INITDIR
 # asks (INITDIR.PLI:288-321) instead of guessing -- answering that
 # prompt needs the gate off too.  B: is now formatted, so the second run
 # must stop at "Directory already re-formatted."; A: is then answered N,
 # which must leave it alone.
+IDIN2FMT = $(OSSEL)INITDIR\r\\gB\rY\rINITDIR A:\rN\r$(ENDIN)
 .PHONY: verify-initdir
 verify-initdir: all
 	@# ---- the fixture, and the independent oracle for its result ----
@@ -1009,6 +1137,14 @@ verify-initdir: all
 		|| { echo "verify-initdir: FAIL -- INITDIR did not report B:'s directory size"; exit 1; }
 	@grep -q 'disk blocks: 2048' $(IDLOG) \
 		|| { echo "verify-initdir: FAIL -- INITDIR got a dpb that is not B:'s (B: is 2048 blocks, A: is 2560)"; exit 1; }
+	@# Track offset 0, and it is B:'s own dpb saying so: since K1 the
+	@# drive's position on the device is the BIOS's per-drive base, not
+	@# dpb.trk_off, so INITDIR's raw SETTRK numbers are drive-relative
+	@# and its writes land on B: because SELDSK put the base there.  The
+	@# proof that they did is the byte-for-byte oracle comparison above,
+	@# taken from B:'s slice of the medium.
+	@grep -q 'track offset: 0' $(IDLOG) \
+		|| { echo "verify-initdir: FAIL -- B:'s dpb no longer reports a drive-relative track offset"; exit 1; }
 	@grep -q 'Entries to relocate: 2' $(IDLOG) \
 		|| { echo "verify-initdir: FAIL -- pass 1 did not find the two occupied fourth slots"; exit 1; }
 	@grep -q 'Entries relocated: 2' $(IDLOG) \
@@ -1305,6 +1441,19 @@ verify-rtc: all
 		|| { echo "verify-rtc: FAIL -- fn 23 set did not report the missing clock"; exit 1; }
 	@echo "verify-rtc: PASS -- live clock read, set round-tripped, carry straddle recovered, absent clock reported"
 
+#
+# Deliberately named without a `verify-' prefix: verify-all enumerates
+# targets by matching `^verify-[a-z0-9-]*:' against this file, and a sweep
+# is not a pass/fail test -- it has no verdict to fail the build on, and at
+# 14-plus emulator boots for stage 1 alone (more for stage 2) it is far too
+# slow to sit in the suite. `make all' does not reach it either: nothing in
+# `all's dependency graph names it. Reached only by `make rtc-race-sweep'.
+#
+.PHONY: rtc-race-sweep
+rtc-race-sweep: all
+	$(MKDISK) $(RTCIMG) $(CPMSYS) $(CPMAIMG)
+	@sh tools/deps.sh -n emu '$(EMU)'
+
 # ---- the clock, on the host ----
 # tests/rtctest.c runs the REAL src/bios/rtc900.c and src/cmd/date.c, compiled
 # verbatim with the host cc, against the software MSM58321 in
@@ -1443,7 +1592,32 @@ verify-v2: all
 		|| { echo "verify-v2: FAIL -- SCBTEST did not finish"; exit 1; }
 	@echo "verify-v2: PASS"
 
+# ---- CP/M 3 V3 wave: the return-value shapes fixed by G7-G12 ----
+# (CPM3-V3-DELTA.md section 2).  V3RET does everything in one cold boot:
+# it checks fn 32/38/39/41 and the default arm directly, builds and
+# reopens its own user-0 fallback file for G12, then chains to itself
+# (fn 47, E=0FFh) to check ccp$flgs bit 40h (G8) from the next program,
+# since fn 47 never returns to its caller.  Two console lines therefore
+# appear -- "V3RET" typed by us, "V3RET PHASE2" supplied by the chain,
+# never typed -- and the run ends with one PASS/FAIL line from phase 2
+# folding in phase 1's tally (parked across the warm boot in fn 108).
+V3IMG	= build/v3rettest.bin
+V3LOG	= build/verify-v3ret.log
+.PHONY: verify-v3ret
+verify-v3ret: all
+	$(MKDISK) $(V3IMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(V3IMG)) \
 		--input="$(OSSEL)V3RET\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(V3LOG))
+	@$(EMUOK)
+	@test "`grep -c ' BAD' $(V3LOG)`" = 0 \
+		|| { echo "verify-v3ret: FAIL -- see the BAD lines above"; exit 1; }
+	@grep -q 'phase 2 (chained by fn 47)' $(V3LOG) \
+		|| { echo "verify-v3ret: FAIL -- fn 47 did not chain to phase 2"; exit 1; }
+	@grep -q 'V3RET: PASS' $(V3LOG) \
+		|| { echo "verify-v3ret: FAIL -- V3RET did not finish"; exit 1; }
+	@echo "verify-v3ret: PASS"
+
 # SDIR, SHOW, SUBMIT: CCP releases one line at a time, so one cold boot per session.
 # SDIR pages by default (SCB page-length 0 = 24-line v3 fallback); [NOPAGE] overrides.
 # SUBMIT is A:SUBMIT (resident builtin shadows bare name).
@@ -1637,6 +1811,14 @@ verify-set: all
 	@test "`grep -c 'HELLO    C .*07/31/26 14:3' $(SETLOG)-3.log`" = 1 \
 		|| { echo "verify-set: FAIL -- the access stamp is missing, or was there before the file was opened"; exit 1; }
 	@# ---- 4: the refusals
+	@# SETIN4's [PASSWORD=SECRET] names a FILE, which is BDOS function
+	@# 103 -- and this drive's label does not arm passwords, so the
+	@# BDOS refuses it (bdos30.asm:4975-4976) and SET says which of the
+	@# two reasons it can be.  On an ARMED drive the same command works:
+	@# verify-passfile is where that is shown, with the identical image
+	@# one label bit apart as the control.
+	@grep -q 'or protection not enabled for disk' $(SETLOG)-4.log \
+		|| { echo "verify-set: FAIL -- [PASSWORD=] on a file of an unarmed drive was not refused"; exit 1; }
 	@grep -q 'Cannot have both create and access time stamps.' $(SETLOG)-4.log \
 		|| { echo "verify-set: FAIL -- ACCESS+CREATE was not refused"; exit 1; }
 	@grep -q 'Cannot set RO and RW.' $(SETLOG)-4.log \
@@ -2217,6 +2399,7 @@ verify-lblnew: all
 	@$(EMUOK)
 	@grep -q 'LBLNEW: PASS' $(LBLLOG)-1.log \
 		|| { echo "verify-lblnew: FAIL -- see the BAD lines above"; exit 1; }
+	@grep -q 'LBLNEW: fn 100 made a label -> 00  fn 101 now f1' $(LBLLOG)-1.log \
 		|| { echo "verify-lblnew: FAIL -- fn 100 did not make the label"; exit 1; }
 	@grep -q 'Label for drive A:' $(LBLLOG)-2.log \
 		|| { echo "verify-lblnew: FAIL -- the new label is invisible after a cold boot"; exit 1; }
@@ -2226,6 +2409,8 @@ verify-lblnew: all
 		|| { echo "verify-lblnew: FAIL -- SDIR [DATE] did not list the stamped file"; exit 1; }
 	@grep -q 'LBLNEW: PASS' $(LBLLOG)-3.log \
 		|| { echo "verify-lblnew: FAIL -- the no-SFCB image, see the BAD lines above"; exit 1; }
+	@grep -q 'LBLNEW: fn 101 on a password-labelled drive -> b1' $(LBLLOG)-4.log \
+		|| { echo "verify-lblnew: FAIL -- fn 101 hid the password bit of a label it did not write"; exit 1; }
 	@grep -q 'LBLNEW: PASS' $(LBLLOG)-4.log \
 		|| { echo "verify-lblnew: FAIL -- the password-label image, see the BAD lines above"; exit 1; }
 	dd if=$(NOLBLIMG) of=build/lblnew-cpma.img bs=512 \
@@ -2360,6 +2545,273 @@ verify-truncs: all
 	@test "`grep -c 'file  TRUNCS1 ' build/truncs-after.txt`" = 1 \
 		|| { echo "verify-truncs: FAIL -- TRUNCS1 has the wrong number of entries"; exit 1; }
 	@echo "verify-truncs: PASS -- fn 99 takes the surviving extent from the disk map, not the record number"
+
+# ---- passwords: enforced, and not enforced ----
+#
+# THE FAILURE THIS TARGET EXISTS TO CATCH is a password check that fires
+# on a medium nobody armed, which would turn every disk this project has
+# ever built unreadable.  So the two sessions below run the same program
+# over the same three password XFCBs, the same three passwords and the
+# same three files, and differ in ONE BIT: 80h of byte 12 of the
+# directory label.  Everything the armed run is refused, the unarmed run
+# must be allowed -- that is what PASST's `report' does, and it is why
+# the control is not a formality.
+#
+# Three sessions, because mkcpmfs.py can put an XFCB on a finished image
+# but cannot put a FILE on one:
+#   1  PASST MAKE on a plain image, to create the three files
+#   2  the same image, extracted, given a password label and three XFCBs
+#   3  the same image again, given a label WITHOUT the password bit and
+#      the identical three XFCBs
+#
+# The modes are one each so that all three are covered: 80h read, 40h
+# write, 20h delete.  The passwords are ordinary words -- unlike
+# verify-xfcb's, which is chosen for what its bytes decode to as block
+# numbers, these are never read as anything but a password.
+PASSMKCPMA = build/cpma-passmk.img
+PASSMKIMG = build/passmk.bin
+PASSARMCPMA = build/cpma-passarm.img
+PASSCTLCPMA = build/cpma-passctl.img
+PASSARMIMG = build/passarm.bin
+PASSCTLIMG = build/passctl.bin
+PASSLOG = build/verify-pass
+PASSXFCB = --xfcb PASSR.TXT:0x80:RSECRET \
+	   --xfcb PASSW.TXT:0x40:WSECRET \
+	   --xfcb PASSD.TXT:0x20:DSECRET
+.PHONY: verify-pass
+verify-pass: all
+	cp $(CPMAIMG) $(PASSMKCPMA)
+	$(MKDISK) $(PASSMKIMG) $(CPMSYS) $(PASSMKCPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PASSMKIMG)) \
+		--input="$(OSSEL)PASST MAKE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PASSLOG)-0.log)
+	@$(EMUOK)
+	@grep -q 'PASST: made' $(PASSLOG)-0.log \
+		|| { echo "verify-pass: FAIL -- the three test files were not created"; exit 1; }
+	dd if=$(PASSMKIMG) of=$(PASSARMCPMA) bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	cp $(PASSARMCPMA) $(PASSCTLCPMA)
+	python3 tools/mkcpmfs.py --label C900P \
+		--label-mode create,update,password $(PASSXFCB) $(PASSARMCPMA)
+	python3 tools/mkcpmfs.py --label C900P \
+		--label-mode create,update $(PASSXFCB) $(PASSCTLCPMA)
+	@# the one bit really is the only difference, and it really is set:
+	@# without this the armed run could pass by not being armed
+	@python3 tools/mkcpmfs.py --entries $(PASSARMCPMA) \
+		| grep -q 'label C900P .*mode 0xb1 \[password,update,create,exists\]' \
+		|| { echo "verify-pass: FAIL -- the armed image has no password bit"; exit 1; }
+	@python3 tools/mkcpmfs.py --entries $(PASSCTLCPMA) \
+		| grep -q 'label C900P .*mode 0x31 \[update,create,exists\]' \
+		|| { echo "verify-pass: FAIL -- the control image IS armed"; exit 1; }
+	@test "`python3 tools/mkcpmfs.py --entries $(PASSARMCPMA) | grep -c ' xfcb '`" = 3 \
+		|| { echo "verify-pass: FAIL -- the armed image does not carry three XFCBs"; exit 1; }
+	@test "`python3 tools/mkcpmfs.py --entries $(PASSARMCPMA) | grep ' xfcb '`" \
+	    = "`python3 tools/mkcpmfs.py --entries $(PASSCTLCPMA) | grep ' xfcb '`" \
+		|| { echo "verify-pass: FAIL -- the two images' XFCBs differ"; exit 1; }
+	$(MKDISK) $(PASSARMIMG) $(CPMSYS) $(PASSARMCPMA)
+	$(MKDISK) $(PASSCTLIMG) $(CPMSYS) $(PASSCTLCPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PASSARMIMG)) \
+		--input="$(OSSEL)PASST\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PASSLOG)-1.log)
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PASSCTLIMG)) \
+		--input="$(OSSEL)PASST NONE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PASSLOG)-2.log)
+	@$(EMUOK)
+	@grep -q 'PASST: PASS' $(PASSLOG)-1.log \
+		|| { echo "verify-pass: FAIL -- the armed run, see the BAD lines above"; exit 1; }
+	@grep -q 'PASST: PASS' $(PASSLOG)-2.log \
+		|| { echo "verify-pass: FAIL -- THE UNARMED RUN.  A password check is firing on a medium nobody armed; see the BAD lines above"; exit 1; }
+	@# the other half of error mode 0FEh: the console gets DRI's own
+	@# wording (bdos30.asm:24-32) and the caller gets the code
+	@grep -q 'Password Error' $(PASSLOG)-1.log \
+		|| { echo "verify-pass: FAIL -- no 'Password Error' on the console"; exit 1; }
+	@grep -q 'Password Error' $(PASSLOG)-2.log \
+		&& { echo "verify-pass: FAIL -- the unarmed run reported a password error"; exit 1; } || true
+	@echo "verify-pass: PASS -- three modes enforced on an armed drive,"
+	@echo "        and the identical directory unenforced on an unarmed one"
+
+# ---- SET's drive PASSWORD and PROTECT, which are function 100 ----
+#
+# The two forms this port can build.  [PROTECT=ON] is the label's
+# password-enable bit -- the switch every check in verify-pass hangs off,
+# reached through set$extent and wrlbl (set.plm:1149-1151, 332-333) -- and
+# [PASSWORD=xxx] is the label's own password, bit 0 of the mode byte
+# handed to function 100 plus the new password in the SECOND eight bytes
+# of the DMA (:1035-1048, bdos30.asm:4918-4922).
+#
+# The second command is the interesting one.  Once the label has a
+# password, function 100 refuses a label write that does not produce it,
+# so `SET [UPDATE=OFF]' -- an option with nothing to do with passwords --
+# is refused with error 7 and SET asks `Password ? '.  That prompt is
+# answered by the next line of the script.  If it were not asked, the
+# word SESAME would land at the A> prompt as an unknown command instead,
+# and the [UPDATE=OFF] assertion below would fail.
+#
+# The FILE forms are function 103 and stay refused; verify-set greps for
+# that message.
+PASSSETCPMA = build/cpma-passset.img
+PASSSETIMG = build/passset.bin
+PASSSETLOG = build/verify-passset
+# \g turns the input gate off before the answer, for the reason
+# verify-initdir needs it (IDIN1FMT above): SET's "Password ? " is not a
+# character the gate latches on, so without it the answer is never
+# released and the session ends on idle at the prompt.
+PASSSETIN = $(OSSEL)SET [PROTECT=ON,PASSWORD=SESAME]\rSET [UPDATE=OFF]\r\\gSESAME\r$(ENDIN)
+.PHONY: verify-passset
+verify-passset: all
+	cp $(CPMAIMG) $(PASSSETCPMA)
+	@python3 tools/mkcpmfs.py --entries $(PASSSETCPMA) \
+		| grep -q 'label C900A .*mode 0x31 \[update,create,exists\]' \
+		|| { echo "verify-passset: FAIL -- the image does not start unarmed"; exit 1; }
+	$(MKDISK) $(PASSSETIMG) $(CPMSYS) $(PASSSETCPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PASSSETIMG)) \
+		--input="$(PASSSETIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PASSSETLOG).log)
+	@$(EMUOK)
+	@grep -q 'Passwds' $(PASSSETLOG).log \
+		|| { echo "verify-passset: FAIL -- SET printed no label table"; exit 1; }
+	@grep -q 'Password ? ' $(PASSSETLOG).log \
+		|| { echo "verify-passset: FAIL -- a label write did not ask for the label's password"; exit 1; }
+	@grep -q 'Wrong Password' $(PASSSETLOG).log \
+		&& { echo "verify-passset: FAIL -- the password SET had just set was not accepted back"; exit 1; } || true
+	@# the disk is the witness that does not share a BDOS with SET
+	dd if=$(PASSSETIMG) of=build/passset-cpma.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	@python3 tools/mkcpmfs.py --entries build/passset-cpma.img | grep ' label '
+	@python3 tools/mkcpmfs.py --entries build/passset-cpma.img \
+		| grep -q 'label C900A .*mode 0x91 \[password,create,exists\]' \
+		|| { echo "verify-passset: FAIL -- the label did not end up armed with update stamping off"; exit 1; }
+	@# 0x91: the image starts 0x31 (update, create, exists), the first
+	@# command adds 0x80 and the second clears 0x20.  The `exists' bit
+	@# surviving is the point of set.c's `mode &= 0xf0': in the byte
+	@# handed to function 100 that bit means "assign a new password",
+	@# so a label write that carried it back in from the label it read
+	@# would silently re-assign the password every time.
+	@echo "verify-passset: PASS -- [PROTECT=ON] armed the drive, [PASSWORD=] took,"
+	@echo "        and the next label write had to produce it"
+
+# ---- SET's FILE password: functions 103 and 106, there and back ----
+#
+# The round trip this pair of functions exists for, in four commands:
+#
+#	SET HELLO.TXT [PASSWORD=OPENUP,PROTECT=READ]	function 103
+#	TYPE HELLO.TXT					refused
+#	SET [DEFAULT=OPENUP]				function 106
+#	TYPE HELLO.TXT					allowed
+#
+# The second and fourth commands are the same command, run by the same
+# program on the same file, and the only thing between them is eight
+# bytes in the BDOS.  TYPE is the witness on purpose: it is a CCP
+# built-in that knows nothing about passwords and puts nothing at its DMA
+# address, which is every program on this disk except PIP.  If the
+# default password did not work, function 103 would be a way to lock a
+# file that nothing could then open -- which is why 106 was built first.
+#
+# The control is verify-pass's control: the same commands on an image
+# whose label differs in ONE BIT.  There function 103 refuses (the drive
+# does not arm passwords, bdos30.asm:4975-4976), no XFCB is written, and
+# both TYPEs print the file.  That is also the check that this target
+# cannot pass by accident: if the armed run's refusal came from something
+# other than the password, the control run would refuse too.
+#
+# The disk is the third witness, and it is the only one that does not
+# share a BDOS with the program under test: the armed image ends with an
+# XFCB for HELLO.TXT that it did not start with, and the control image
+# ends with none.
+PFCPMA	 = build/cpma-passfile.img
+PFCTLCPMA = build/cpma-passfilectl.img
+PFIMG	 = build/passfile.bin
+PFCTLIMG = build/passfilectl.bin
+PFLOG	 = build/verify-passfile
+PFIN	 = $(OSSEL)SET HELLO.TXT [PASSWORD=OPENUP,PROTECT=READ]\rTYPE HELLO.TXT\rSET [DEFAULT=OPENUP]\rTYPE HELLO.TXT\rSET HELLO.C [PASSWORD=OPENUP,PROTECT=DELETE]\rSET HELLO.C [PROTECT=OFF]\rTYPE HELLO.C\rSDIR HELLO.*[XFCB]\rSDIR HELLO.*[NONXFCB]\r$(ENDIN)
+.PHONY: verify-passfile
+verify-passfile: all
+	cp $(CPMAIMG) $(PFCPMA)
+	cp $(CPMAIMG) $(PFCTLCPMA)
+	python3 tools/mkcpmfs.py --label C900PF \
+		--label-mode create,update,password $(PFCPMA)
+	python3 tools/mkcpmfs.py --label C900PF \
+		--label-mode create,update $(PFCTLCPMA)
+	@python3 tools/mkcpmfs.py --entries $(PFCPMA) \
+		| grep -q 'label C900PF .*mode 0xb1 \[password,update,create,exists\]' \
+		|| { echo "verify-passfile: FAIL -- the armed image has no password bit"; exit 1; }
+	@python3 tools/mkcpmfs.py --entries $(PFCTLCPMA) \
+		| grep -q 'label C900PF .*mode 0x31 \[update,create,exists\]' \
+		|| { echo "verify-passfile: FAIL -- the control image IS armed"; exit 1; }
+	@test "`python3 tools/mkcpmfs.py --entries $(PFCPMA) | grep -c ' xfcb '`" = 0 \
+		|| { echo "verify-passfile: FAIL -- the image already carries an XFCB"; exit 1; }
+	$(MKDISK) $(PFIMG) $(CPMSYS) $(PFCPMA)
+	$(MKDISK) $(PFCTLIMG) $(CPMSYS) $(PFCTLCPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PFIMG)) \
+		--input="$(PFIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PFLOG)-1.log)
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PFCTLIMG)) \
+		--input="$(PFIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PFLOG)-2.log)
+	@$(EMUOK)
+	@# ---- the armed run: SET took it, the first TYPE was refused and
+	@# the second one, after [DEFAULT=], was not
+	@grep -q 'Protection = READ, Password = OPENUP' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- SET did not report the file protected"; exit 1; }
+	@grep -q 'Password Error' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- a protected file was TYPEd with no password"; exit 1; }
+	@grep -q 'Default password = OPENUP' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- [DEFAULT=] was not accepted"; exit 1; }
+	@test "`tr -d '\r' < $(PFLOG)-1.log | grep -c 'If you can TYPE this'`" = 1 \
+		|| { echo "verify-passfile: FAIL -- the two TYPEs did not answer differently: exactly one of them must print the file"; exit 1; }
+	@# ---- and back out again, on a second file.  Removing a password
+	@# is an empty function-103 write followed by an XFCB-ONLY delete
+	@# (f5', bdos30.asm:1602-1607); without that bit the same command
+	@# would erase HELLO.C, so TYPEing it afterwards is the check that
+	@# it did not.
+	@grep -q 'Protection = DELETE, Password = OPENUP' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- [PROTECT=DELETE] did not take"; exit 1; }
+	@grep -q 'Protection = NONE' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- [PROTECT=OFF] did not remove the protection"; exit 1; }
+	@grep -q 'Hello from zcc' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- HELLO.C did not survive having its password removed"; exit 1; }
+	@# ---- SDIR's [XFCB] and [NONXFCB], which became implementable when
+	@# the directory started carrying XFCBs anyone could write.  The two
+	@# listings partition the two files, and the Prot column -- driven
+	@# by the SFCB byte function 103 maintains -- says READ for the one
+	@# that has a password and None for the one that no longer does.
+	@grep -q 'HELLO    TXT .*Read' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- SDIR [XFCB] did not list the protected file with its mode"; exit 1; }
+	@grep -q 'HELLO    C .*None' $(PFLOG)-1.log \
+		|| { echo "verify-passfile: FAIL -- SDIR [NONXFCB] did not list the unprotected file"; exit 1; }
+	@test "`tr -d '\r' < $(PFLOG)-1.log | grep -c 'HELLO    TXT'`" = 1 \
+		|| { echo "verify-passfile: FAIL -- SDIR [NONXFCB] listed the file that HAS an XFCB"; exit 1; }
+	@# ---- the control run: one bit less, and nothing is refused
+	@grep -q 'protection not enabled for disk' $(PFLOG)-2.log \
+		|| { echo "verify-passfile: FAIL -- function 103 wrote an XFCB on a drive that arms nothing"; exit 1; }
+	@grep -q 'Password Error' $(PFLOG)-2.log \
+		&& { echo "verify-passfile: FAIL -- THE UNARMED RUN refused a TYPE"; exit 1; } || true
+	@test "`tr -d '\r' < $(PFLOG)-2.log | grep -c 'If you can TYPE this'`" = 2 \
+		|| { echo "verify-passfile: FAIL -- the unarmed run did not TYPE the file both times"; exit 1; }
+	@grep -q 'Hello from zcc' $(PFLOG)-2.log \
+		|| { echo "verify-passfile: FAIL -- the unarmed run lost HELLO.C"; exit 1; }
+	@grep -q 'No File' $(PFLOG)-2.log \
+		|| { echo "verify-passfile: FAIL -- SDIR [XFCB] found an XFCB on a disk that has none"; exit 1; }
+	@# ---- and the disk
+	dd if=$(PFIMG) of=build/passfile-cpma.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	dd if=$(PFCTLIMG) of=build/passfilectl-cpma.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	@python3 tools/mkcpmfs.py --entries build/passfile-cpma.img | grep ' xfcb '
+	@python3 tools/mkcpmfs.py --entries build/passfile-cpma.img \
+		| grep -q 'xfcb  *HELLO *\.TXT .*mode 0x80' \
+		|| { echo "verify-passfile: FAIL -- no XFCB for HELLO.TXT on the armed disk"; exit 1; }
+	@test "`python3 tools/mkcpmfs.py --entries build/passfile-cpma.img | grep -c ' xfcb '`" = 1 \
+		|| { echo "verify-passfile: FAIL -- HELLO.C's XFCB was not erased, or an extra one was written"; exit 1; }
+	@python3 tools/mkcpmfs.py --list build/passfile-cpma.img | grep -q 'HELLO.C ' \
+		|| { echo "verify-passfile: FAIL -- HELLO.C IS GONE: the XFCB-only delete erased the file"; exit 1; }
+	@test "`python3 tools/mkcpmfs.py --entries build/passfilectl-cpma.img | grep -c ' xfcb '`" = 0 \
+		|| { echo "verify-passfile: FAIL -- the unarmed disk grew an XFCB"; exit 1; }
+	@echo "verify-passfile: PASS -- SET locked a file with function 103, TYPE could not"
+	@echo "        open it, [DEFAULT=] supplied the password and the same TYPE could,"
+	@echo "        and one bit less on the label makes all of it inert"
 
 # ---- an XFCB (type 10h..1Fh) actually on the disk ----
 # The login scan must raise the high water mark for one and allocate no
@@ -2548,6 +3000,31 @@ CCPLOG	= build/verify-ccp.log
 # and finally the SUBMIT built-in reached by its bare name, which is the
 # first submit of the session and so the case the built-in used to drop
 # on the floor (see the SUBCMD comment in src/ccp/ccp.c).
+# RCCFAIL/RCCPASS/RCCSTAT are F10's: they test `IF ERROR' against a
+# TRANSIENT PROGRAM'S OWN exit status rather than one of the CCP's own
+# failures, which IFERR/IFOK already cover.  The distinction is the whole
+# of P1 #20: the CCP reaches its own failures through ccp_seterr()
+# (src/ccp/ccpext.c), but a C command's status has to travel main() ->
+# src/cmd/cstart.c _setrc() -> BDOS fn 108 -> ccp_err(), and until F10
+# nothing on that path wrote fn 108 at all.  Three commands, three exit
+# shapes: DATE's `return (1)', MHELLO's `return (0)', and STAT's
+# _exit(1) (src/cmd/pipmain.c), which is the only way out PIP and STAT
+# have.  Each submit file types a DIFFERENT marker file per branch, so
+# the transcript says which branch ran and not merely that one did.
+#
+# RCCSTAT GETS AN EMULATOR RUN OF ITS OWN, and the reason is a property of
+# STAT rather than a convenience: every STAT message goes through print(),
+# which is crlf(), which is new_ln() plus test_kbd_esc() (src/cmd/stat.c
+# 400-425) -- so STAT eats one pending console character and aborts before
+# it prints anything.  In the main session the character waiting is the
+# first byte of the NEXT typed line, so STAT swallowed the `I' of `IFEX'
+# and broke the test after it.  Alone, with its command line fully
+# consumed and nothing else pending, STAT reaches its own invalid-
+# assignment abort, which is the _exit(1) this asserts.  No ENDIN: the run
+# stops on idle at the prompt the submit file leaves behind.
+CCPVERIFYIN = $(OSSEL)U5HELLO PATHOK\rTYPE DEV:U5ONLY.TXT\rDEV:\rTYPE U5ONLY.TXT\rHOME:\rIFERR\rIFOK\rRCCFAIL\rRCCPASS\rIFEX\rBADCMD FOO\rSUBMIT TEST BUILTIN SECOND\r
+CCPRCSTATIN = $(OSSEL)RCCSTAT\r
+CCPRCSTATLOG = build/verify-ccp-rcstat.log
 .PHONY: verify-ccp
 verify-ccp: all
 	rm -rf $(CCPFS)
@@ -2561,6 +3038,10 @@ verify-ccp: all
 		--input="$(CCPVERIFYIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CCPLOG))
 	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CCPTEST)) \
+		--input="$(CCPRCSTATIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CCPRCSTATLOG))
+	@$(EMUOK)
 	@grep -q 'arg 1: PATHOK' $(CCPLOG) \
 		|| { echo "verify-ccp: FAIL -- path did not reach user area 5"; exit 1; }
 	@test "$$(grep -c 'found it through a named directory' $(CCPLOG))" = 2 \
@@ -2571,6 +3052,36 @@ verify-ccp: all
 		|| { echo "verify-ccp: FAIL -- IF ERROR branch not taken"; exit 1; }
 	@grep -q 'Stock DRI utilities' $(CCPLOG) \
 		|| { echo "verify-ccp: FAIL -- ELSE branch not taken"; exit 1; }
+	@# F10: A TRANSIENT PROGRAM'S OWN EXIT STATUS, THROUGH `IF ERROR'.
+	@# Both directions for all three, because the object here IS the
+	@# return code: a test that only checks the IF branch was taken is
+	@# passed by a system whose return code is always nonzero, and one
+	@# that only checks the ELSE branch by a system where it is always
+	@# zero.  Each assertion below names the branch that must NOT have
+	@# run as well as the one that must.
+	@grep -q 'RCC1: FAILING C COMMAND TOOK THE IF BRANCH' $(CCPLOG) \
+		|| { echo "verify-ccp: FAIL -- a C command's own failure (DATE Q, which"; \
+		     echo "              returns 1 from main) did not reach \`IF ERROR'.  Either"; \
+		     echo "              src/cmd/cstart.c is not publishing main's status as BDOS"; \
+		     echo "              function 108 or the CCP is not reading it (P1 #20)"; exit 1; }
+	@grep -q 'RCC1: FAILING C COMMAND TOOK THE ELSE BRANCH' $(CCPLOG) \
+		&& { echo "verify-ccp: FAIL -- the failing C command took the ELSE branch"; \
+		     exit 1; } || true
+	@grep -q 'RCC2: SUCCEEDING C COMMAND TOOK THE ELSE BRANCH' $(CCPLOG) \
+		|| { echo "verify-ccp: FAIL -- a C command that returned 0 (MHELLO) did not"; \
+		     echo "              take the ELSE branch, so the return code is not the"; \
+		     echo "              program's: it is stuck nonzero"; exit 1; }
+	@grep -q 'RCC2: SUCCEEDING C COMMAND TOOK THE IF BRANCH' $(CCPLOG) \
+		&& { echo "verify-ccp: FAIL -- the succeeding C command took the IF branch"; \
+		     exit 1; } || true
+	@grep -q 'RCC3: STAT _exit(1) TOOK THE IF BRANCH' $(CCPRCSTATLOG) \
+		|| { echo "verify-ccp: FAIL -- STAT's _exit(1) did not reach \`IF ERROR'."; \
+		     echo "              _exit() (src/cmd/pipmain.c) is the ONLY exit PIP and"; \
+		     echo "              STAT have; if it does not set fn 108 those two commands"; \
+		     echo "              can never report failure"; exit 1; }
+	@grep -q 'RCC3: STAT _exit(1) TOOK THE ELSE BRANCH' $(CCPRCSTATLOG) \
+		&& { echo "verify-ccp: FAIL -- STAT's _exit(1) took the ELSE branch"; \
+		     exit 1; } || true
 	@grep -q 'arg 1: NESTOK' $(CCPLOG) \
 		|| { echo "verify-ccp: FAIL -- nested IF EXIST / IF ~EXIST"; exit 1; }
 	@grep -q 'CCP ERROR HANDLER: BADCMD IS NOT A COMMAND' $(CCPLOG) \
@@ -3342,6 +3853,7 @@ verify-crsr: all build/crsrtest
 
 build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ tests/crsrtest.c
+		--input="$(OSSEL)CONCD\rCONCE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 # THE LAYOUT IS PART OF THE TEST (H7).  The bug is that filero()'s nested
 # dirscan reads a SECOND directory record into the one directory buffer,
 # leaving the delete() that called error(5) holding a pointer into the wrong
@@ -3352,6 +3864,113 @@ build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 # the count when the image is built; concfree.py refuses to run the session
 # on a disk where the pin did not hold.
 	python3 tests/concfree.py $(CPMACONC)
+		--input="$(OSSEL)CONCF\r\iC$(ENDIN)" --input-mark="CONCG: FLIPPED" \
+
+		--input="$(OSSEL)XDOSM\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+# ---- verify-kbcon: TYPE-AHEAD BELONGS TO ONE CONSOLE (F10) ----
+# The P2 finding on src/bdos/conbdos.c: `kbchar' was ONE byte for the whole
+# machine, so a keystroke typed at one console could be handed to a process
+# reading another.  It is not a narrow race.  Two halves of the BDOS make it
+# a certainty:
+#
+#   - conbrk() (conbdos.c) polls the keyboard of the PRINTING process every
+#     CONBRK_POLL output characters, and parks anything that is not
+#     ^C/^S/^Q/^P.  bconstat()/bconin() pass `concur', so the character
+#     comes off the printing process's console;
+#   - getch() (conbdos.c) hands a parked character to its caller BEFORE it
+#     touches the BIOS, so the console it was typed at never enters into it.
+#
+# WHICH READER TAKES IT, and this is the timing the session has to build.
+# A reader already parked in getch() cannot see a character parked after
+# it got there: PW_CON is a wait the SCHEDULER polls, and what it polls is
+# that console's own BIOS receiver, not this buffer (src/bdos/proc.c).  So
+# the steal happens to a process that ENTERS getch() after the character
+# is parked -- which is every CCP, on every command, since it re-enters
+# getch() for each line it reads.  The session therefore has to make ONE
+# console's reader come back while the OTHER console's program is still
+# printing, and that is what the two token counts below do.
+#
+# THE SESSION, two consoles and one keystroke:
+#
+#   console 1   `CONBRK P 0400' -- the LONG print.  wirecon types the
+#               single byte `M' there as soon as CONBRK-START appears on
+#               the wire, so it arrives while CONBRK is printing and is
+#               taken by a conbrk() poll on console 1 rather than by any
+#               read.  Console 1's own CCP cannot come back for it until
+#               token 0400, long after console 0's reader has had its
+#               chance.
+#   console 0   `CONBRK P 0100' -- the SHORT print, and nothing typed at
+#               all.  It ends first, so console 0's CCP re-enters getch()
+#               with console 1's keystroke sitting in the buffer.  That
+#               is the steal, and console 0 is where it would show.
+#
+# So the two transcripts say which console read a character only one of
+# them was typed at:
+#
+#   kept       console 1's CCP echoes the M at its own prompt after
+#              CONBRK-DONE (`A>M'), and console 0's prompt stays bare;
+#   stolen     console 0's CCP echoes it at its own `A>' after ITS
+#              CONBRK-DONE, and console 1 never sees it.
+#
+# Each grep looks only at what follows that transcript's own CONBRK-DONE,
+# so the command echoes before it cannot be mistaken for the keystroke.
+# `USER 0' first on console 1: a session logs into the user area its
+# console number names (verify-sess), and CONBRK.Z8K is in user 0.
+#
+# Both are asserted, in the transcript each belongs to.  So is the thing
+# that makes the negative one mean something: BOTH programs must print
+# CONBRK-DONE, because that is what says both CCPs really did come back
+# and read.  Without it a run that ended early would pass by having no
+# reader at all.
+KBCONIMG = build/kbcontest.bin
+KBCONC0	= build/verify-kbcon-c0.log
+KBCONC1	= build/verify-kbcon-c1.log
+KBCONC0TOK = 0100
+KBCONC1TOK = 0400
+# No ENDIN and no stop mark: in the correct case nothing is ever typed at
+# console 0 after its own command, so the run ends where it runs out of
+# things to do.
+.PHONY: verify-kbcon
+verify-kbcon: all
+	$(MKDISK) $(KBCONIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(KBCONIMG) \
+		--max=$(EMUMAX) --stop-on=idle \
+		--send-after='1A>' --send='USER 0\r' \
+		--send-after='A>' --send='CONBRK P $(KBCONC1TOK)\r' \
+		--send-after='$(CBRKMARK)' --send='M' \
+		--log $(KBCONC0) --wire-log $(KBCONC1)
+	@tr -d '\r' < $(KBCONC0) > build/kbcon-c0.txt
+	@tr -d '\r' < $(KBCONC1) > build/kbcon-c1.txt
+	@# Console 0's command line, verbatim.  This is where a shared buffer
+	@# shows first and worst: the CCP calls getch() once per CHARACTER, so
+	@# a byte parked by console 1 is spliced into the middle of whatever
+	@# console 0 is typing -- the measured symptom is `CMONBRK P 0100'.
+	@grep -q 'A>CONBRK P $(KBCONC0TOK)' build/kbcon-c0.txt \
+		|| { echo "verify-kbcon: FAIL -- console 0's command line is not what was typed"; \
+		     echo "               at console 0.  A character typed at console 1 was"; \
+		     echo "               spliced into it (src/bdos/conbdos.c's type-ahead is one"; \
+		     echo "               buffer for the machine).  The line it read was:"; \
+		     grep -m1 'A>' build/kbcon-c0.txt | tail -c 40; exit 1; }
+	@grep -q 'CONBRK-DONE' build/kbcon-c0.txt \
+		|| { echo "verify-kbcon: FAIL -- console 0's CONBRK never finished, so its CCP"; \
+		     echo "               never came back to read and nothing was tested"; exit 1; }
+	@grep -q 'CONBRK-DONE' build/kbcon-c1.txt \
+		|| { echo "verify-kbcon: FAIL -- console 1's CONBRK never finished, so its CCP"; \
+		     echo "               never came back to read and nothing was tested"; \
+		     echo "               (raise EMUMAX, or check build/kbcon-c1.txt)"; exit 1; }
+	@sed -n '/CONBRK-DONE/,$$p' build/kbcon-c1.txt | grep -q 'A>M' \
+		|| { echo "verify-kbcon: FAIL -- the character typed at console 1 was never read"; \
+		     echo "               THERE.  Either another console's reader took it --"; \
+		     echo "               src/bdos/conbdos.c's type-ahead is one buffer for the"; \
+		     echo "               machine again -- or it was dropped; build/kbcon-c0.txt"; \
+		     echo "               says which"; exit 1; }
+	@sed -n '/CONBRK-DONE/,$$p' build/kbcon-c0.txt | grep -q 'A>M' \
+		&& { echo "verify-kbcon: FAIL -- console 0's CCP read a character typed at"; \
+		     echo "               console 1 (it echoed it at its own prompt)"; \
+		     exit 1; } || true
+	@echo "verify-kbcon: PASS -- a keystroke typed at console 1 during a process's"
+	@echo "               output was read by console 1's own next reader, and the"
+	@echo "               reader that came back first on console 0 did not take it"
 
 # ---- verify-conn: HOW MANY CONSOLES IS THE LOADER'S ANSWER (C4) ----
 # The console count was the literal 2, in three files.  It is now built at
@@ -3503,8 +4122,31 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 		--log $(XPOLLPLOG) --wire-log $(XPOLLPWLOG)
 	@# ---- phase 3: the same call, woken by a byte sent only after the
 	@#      wire shows the process was already waiting for it ----
+	@# THE SECOND `K' IS A RETRY, AND IT IS WHY THIS TARGET IS NO LONGER
+	@# FLAKY (run/S4.md).  wirecon.py's own header says it: a CP/M console
+	@# driver polls the keyboard while it is PRINTING (conbdos.c conbrk),
+	@# and a byte that lands in that poll is eaten rather than queued.
+	@# After `CATT D' hands console 1 over, the session that gave it up
+	@# still has one thing left to print -- its own `A>' prompt -- and
+	@# whether the first `K' lands before, during or after that print is a
+	@# HOST-scheduling question: wirecon sees `XDOSPOL: waiting' and writes
+	@# the byte while the guest runs on.  On a quiet machine it lands
+	@# clear (10 runs, 10 passes); on a loaded one it lands inside the
+	@# print and is eaten (3 of 4 runs under a 16-way load), and the run
+	@# then coasts to idle with the poller still parked -- the "fn 131
+	@# returned but did not read the byte" failure.
+	@# The second `K' is sent after that prompt is on the wire, so the
+	@# console is quiet when it arrives.  It CANNOT make this target fail
+	@# in a way it would not have failed already: the first byte is still
+	@# sent at exactly the same point, so if the first one wakes the
+	@# poller the second lands on a console nobody is reading and nothing
+	@# asserted below can see it; and if `--send-after' never matches, the
+	@# retry is simply never typed.  What is proved is unchanged -- both
+	@# bytes go out only AFTER the wire has shown `XDOSPOL: waiting', so
+	@# neither could have been sitting there when fn 131 was called.
 	python3 tests/wirecon.py --emu '$(EMU)' --disk $(XDOSPOLLDISK) \
 		--send-after='XDOSPOL: waiting' --send='K' \
+		--send-after='A>' --send='K' \
 		--log $(XPOLLWLOG) --wire-log $(XPOLLWWLOG)
 	@tr -d '\r' < $(XPOLLALOG) > build/xdospoll-alone.txt
 	@tr -d '\r' < $(XPOLLPLOG) > build/xdospoll-poll-c0.txt
@@ -3837,6 +4479,10 @@ open("$(KERMSRC)","wb").write(bytes(random.randrange(256) for _ in range(1024)))
 	@echo "verify-kermit: PASS -- 1024 bytes written to A: over the spare"
 	@echo "               serial port and read back off it, byte for byte,"
 	@echo "               against tests/kermitpeer.py (NOT an interop test)"
+	@# The ALONE leg only: CONCS runs by itself, so when the prompt comes
+	@# back nothing is left running and $(ENDIN) ends the run there.  The
+	@# `C' leg below must NOT have it -- CONCY prints its tick count AFTER
+	@# that prompt, and that count is what this target compares.
 
 # ---- GET and PUT: console I/O redirected through the RSX chain ----
 # src/cmd/get.c + src/cmd/getrsx.s, src/cmd/put.c + src/cmd/putrsx.s.
@@ -4006,6 +4652,171 @@ verify-put: all $(CPMAGP)
 		|| { echo "verify-put: FAIL -- a word PUT does not know was swallowed"; exit 1; }
 	@test "`grep -c 'Putting console output to file' $(GPLOG)-put3.log`" = 0 \
 		|| { echo "verify-put: FAIL -- one of the refused commands attached the module anyway"; exit 1; }
+
+# ---- a refusal that mutates first is not a refusal ----
+# P1 #2 and the password/XFCB P2 items of the first-release review, in one
+# session, because all four are the same mistake: the program is told no
+# and the protected object has already changed.
+#
+# The four legs, and what each of them is allowed to conclude.
+#
+#  (a) The read-only ATTRIBUTE.  error(5) returns whenever function 45
+#      error mode is 0FEh or 0FFh (bdosmisc.c:337), and delete, rename and
+#      truncate went on to erase the entry, overwrite the name, and free
+#      blocks.  In the DEFAULT mode error(5) reaches filero(), where `A'
+#      aborts through warmboot() and `C' clears the read-only bit before
+#      returning -- so the mutation there is the operator's instruction
+#      and this leg cannot be shown in mode 0 at all.  Arming has nothing
+#      to do with this leg, so BOTH runs demand the same three refusals.
+#  (b) Function 15's user-0 SYS fallback re-scanned with drvcode = 0 and no
+#      second chk$password (bdosmain.c:304), and the XFCB it should have
+#      found lives in user 0 -- so from user 3 a read-protected user-0 SYS
+#      file opened with no password.  The positive half matters as much:
+#      with the password (function 106) the same open must still work, and
+#      an unprotected user-0 SYS file must still be shared.
+#  (c) Function 99 asked no password at all, unlike erase and rename.
+#  (d) Function 103 is in neither preflight group (bdosmain.c:146), so on a
+#      drive the program had just marked read-only with function 28 it went
+#      through and wrote an XFCB.  Nothing deeper stops it: dskutil.c:61
+#      calls error(4) on a read-only drive and then writes anyway, which
+#      only mode 0 survives because there error(4) never returns.  This
+#      refusal is the dispatcher's, so it does not depend on the label and
+#      both images must end with no XFCB for ROTX.TXT.
+#
+# Three witnesses, as verify-pass has: the code the call returned, the file
+# as the same program sees it afterwards (function 35's record count,
+# function 15 on both names), and the disk itself, read host-side by a
+# program that does not share a BDOS with the one under test.  The second
+# and third are the point of the row -- a test that checked only the return
+# value would pass against the broken BDOS.
+#
+# The control image differs from the armed one in the label's password bit
+# alone.  There the two password legs are NOT enforced, and ROTP.TXT ends
+# up truncated: that is what makes the armed run's refusals refusals about
+# a password rather than about truncation.
+ROTMKCPMA  = build/cpma-rotmk.img
+ROTMKIMG   = build/rotmk.bin
+ROTARMCPMA = build/cpma-rot.img
+ROTCTLCPMA = build/cpma-rotctl.img
+ROTARMIMG  = build/rot.bin
+ROTCTLIMG  = build/rotctl.bin
+ROTLOG	   = build/verify-refuse
+# R on the three files leg (a) uses, S on the two the user-0 fallback needs
+ROTATTR = ROTD.TXT 0R ROTR.TXT 0R ROTT.TXT 0R ROTS.TXT 0S ROTN.TXT 0S
+ROTXFCB = --xfcb ROTS.TXT:0x80:SSECRET --xfcb ROTP.TXT:0x20:PSECRET \
+	  --xfcb ROTQ.TXT:0x20:QSECRET
+.PHONY: verify-refuse
+verify-refuse: all
+	cp $(CPMAIMG) $(ROTMKCPMA)
+	$(MKDISK) $(ROTMKIMG) $(CPMSYS) $(ROTMKCPMA)
+	@# pass 1, on an ordinary image: mkcpmfs.py can add an XFCB to a
+	@# finished image but not a file, so the files come from a session
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(ROTMKIMG)) \
+		--input="$(OSSEL)ROT MAKE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(ROTLOG)-0.log)
+	@$(EMUOK)
+	@grep -q 'ROT: made' $(ROTLOG)-0.log \
+		|| { echo "verify-refuse: FAIL -- the eight fixture files were not created"; exit 1; }
+	dd if=$(ROTMKIMG) of=$(ROTARMCPMA) bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/ccpuser.py $(ROTARMCPMA) $(ROTATTR)
+	cp $(ROTARMCPMA) $(ROTCTLCPMA)
+	python3 tools/mkcpmfs.py --label C900R \
+		--label-mode create,update,password $(ROTXFCB) $(ROTARMCPMA)
+	python3 tools/mkcpmfs.py --label C900R \
+		--label-mode create,update $(ROTXFCB) $(ROTCTLCPMA)
+	@# the fixture has to BE the fixture, or the refusals below prove
+	@# nothing: one bit of label between the images, R on three files,
+	@# S on two, three XFCBs and none for ROTX.TXT
+	@python3 tools/mkcpmfs.py --entries $(ROTARMCPMA) \
+		| grep -q 'label C900R .*mode 0xb1 \[password,update,create,exists\]' \
+		|| { echo "verify-refuse: FAIL -- the armed image has no password bit"; exit 1; }
+	@python3 tools/mkcpmfs.py --entries $(ROTCTLCPMA) \
+		| grep -q 'label C900R .*mode 0x31 \[update,create,exists\]' \
+		|| { echo "verify-refuse: FAIL -- the control image IS armed"; exit 1; }
+	@python3 tests/dirattr.py $(ROTARMCPMA) --user 0 > build/rot-attr-before.txt
+	@for n in ROTD ROTR ROTT; do grep -qE "^$$n\.TXT +R$$" build/rot-attr-before.txt \
+		|| { echo "verify-refuse: FAIL -- $$n.TXT is not read-only to start with"; exit 1; }; done
+	@for n in ROTS ROTN; do grep -qE "^$$n\.TXT +S$$" build/rot-attr-before.txt \
+		|| { echo "verify-refuse: FAIL -- $$n.TXT is not a SYS file"; exit 1; }; done
+	@test "`python3 tools/mkcpmfs.py --entries $(ROTARMCPMA) | grep -c ' xfcb '`" = 3 \
+		|| { echo "verify-refuse: FAIL -- the armed image does not carry exactly three XFCBs"; exit 1; }
+	@python3 tools/mkcpmfs.py --entries $(ROTARMCPMA) | grep -q 'xfcb  ROTX' \
+		&& { echo "verify-refuse: FAIL -- ROTX.TXT starts with an XFCB"; exit 1; } || true
+	@python3 tools/mkcpmfs.py --list $(ROTARMCPMA) | grep 'ROT' > build/rot-list-before.txt
+	@cat build/rot-list-before.txt
+	$(MKDISK) $(ROTARMIMG) $(CPMSYS) $(ROTARMCPMA)
+	$(MKDISK) $(ROTCTLIMG) $(CPMSYS) $(ROTCTLCPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(ROTARMIMG)) \
+		--input="$(OSSEL)ROT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(ROTLOG)-1.log)
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(ROTCTLIMG)) \
+		--input="$(OSSEL)ROT NONE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(ROTLOG)-2.log)
+	@$(EMUOK)
+	@grep -q 'ROT: PASS' $(ROTLOG)-1.log \
+		|| { echo "verify-refuse: FAIL -- the armed run, see its BAD lines above"; exit 1; }
+	@grep -q 'ROT: PASS' $(ROTLOG)-2.log \
+		|| { echo "verify-refuse: FAIL -- THE CONTROL RUN.  Either a password check fired on a drive nobody armed, or a read-only attribute stopped being enforced; see its BAD lines above"; exit 1; }
+	@# the other half of error mode 0FEh: v3's own wording on the
+	@# console, and the function number that raised it
+	@grep -q 'Read/Only File' $(ROTLOG)-1.log \
+		|| { echo "verify-refuse: FAIL -- no 'Read/Only File' message on the console"; exit 1; }
+	@grep -q 'Password Error' $(ROTLOG)-1.log \
+		|| { echo "verify-refuse: FAIL -- no 'Password Error' message on the console"; exit 1; }
+	@grep -q 'Read/Only Disk' $(ROTLOG)-1.log \
+		|| { echo "verify-refuse: FAIL -- no 'Read/Only Disk' message on the console"; exit 1; }
+	@grep -q 'BDOS Function = 103' $(ROTLOG)-1.log \
+		|| { echo "verify-refuse: FAIL -- the read-only drive refusal did not come from function 103"; exit 1; }
+	@grep -q 'Password Error' $(ROTLOG)-2.log \
+		&& { echo "verify-refuse: FAIL -- the control run reported a password error"; exit 1; } || true
+	@# ---- and now the disk, which shares nothing with the program
+	dd if=$(ROTARMIMG) of=build/rot-arm-after.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	dd if=$(ROTCTLIMG) of=build/rot-ctl-after.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	@python3 tools/mkcpmfs.py --list build/rot-arm-after.img | grep 'ROT' \
+		> build/rot-list-after.txt
+	@cat build/rot-list-after.txt
+	@python3 tests/dirattr.py build/rot-arm-after.img --user 0 \
+		> build/rot-attr-after.txt
+	@# (a) the three read-only files, byte for byte the size they were,
+	@# under the names they had, still read-only
+	@for n in ROTD ROTR; do grep -qE "^ *0 $$n\.TXT +128 bytes" build/rot-list-after.txt \
+		|| { echo "verify-refuse: FAIL -- $$n.TXT was deleted or resized by a call that refused"; exit 1; }; done
+	@grep -qE '^ *0 ROTT\.TXT +25600 bytes' build/rot-list-after.txt \
+		|| { echo "verify-refuse: FAIL -- ROTT.TXT WAS TRUNCATED by the function 99 that refused"; exit 1; }
+	@grep -q 'ROTRX' build/rot-list-after.txt \
+		&& { echo "verify-refuse: FAIL -- ROTRX.TXT exists: the rename that refused renamed the file"; exit 1; } || true
+	@for n in ROTD ROTR ROTT; do grep -qE "^$$n\.TXT +R$$" build/rot-attr-after.txt \
+		|| { echo "verify-refuse: FAIL -- $$n.TXT lost its read-only attribute"; exit 1; }; done
+	@# (c) the protected file kept every record on the armed drive, and
+	@# lost them on the unarmed one -- so the refusal was the password
+	@grep -qE '^ *0 ROTP\.TXT +25600 bytes' build/rot-list-after.txt \
+		|| { echo "verify-refuse: FAIL -- ROTP.TXT WAS TRUNCATED without its password"; exit 1; }
+	@grep -qE '^ *0 ROTQ\.TXT +6400 bytes' build/rot-list-after.txt \
+		|| { echo "verify-refuse: FAIL -- function 99 WITH the password did not truncate ROTQ.TXT"; exit 1; }
+	@python3 tools/mkcpmfs.py --list build/rot-ctl-after.img | grep 'ROT' \
+		> build/rot-ctl-after.txt
+	@grep -qE '^ *0 ROTP\.TXT +6400 bytes' build/rot-ctl-after.txt \
+		|| { echo "verify-refuse: FAIL -- the UNARMED drive also refused the truncate: this target would pass for a BDOS that simply never truncates"; exit 1; }
+	@grep -qE '^ *0 ROTT\.TXT +25600 bytes' build/rot-ctl-after.txt \
+		|| { echo "verify-refuse: FAIL -- the read-only attribute stopped protecting ROTT.TXT on the unarmed drive"; exit 1; }
+	@# (d) neither image may grow an XFCB for the file function 103 was
+	@# pointed at while the drive was read-only
+	@test "`python3 tools/mkcpmfs.py --entries build/rot-arm-after.img | grep -c ' xfcb '`" = 3 \
+		|| { echo "verify-refuse: FAIL -- the armed disk's XFCB count changed: function 103 wrote to a read-only drive"; exit 1; }
+	@python3 tools/mkcpmfs.py --entries build/rot-arm-after.img | grep -q 'xfcb  ROTX' \
+		&& { echo "verify-refuse: FAIL -- function 103 WROTE AN XFCB for ROTX.TXT on a read-only drive"; exit 1; } || true
+	@python3 tools/mkcpmfs.py --entries build/rot-ctl-after.img | grep -q 'xfcb  ROTX' \
+		&& { echo "verify-refuse: FAIL -- the control run's function 103 wrote an XFCB on a read-only drive"; exit 1; } || true
+	@echo "verify-refuse: PASS -- in function 45 return-error mode a read-only file"
+	@echo "        survived erase, rename and truncate; a password-protected file"
+	@echo "        survived function 99 and was truncated once the password was"
+	@echo "        given; a read-protected user-0 SYS file stayed shut from user 3"
+	@echo "        without its password and opened with it; and function 103 wrote"
+	@echo "        nothing onto a read-only drive"
 
 # ======================================================================
 # F6 -- THE COMPATIBILITY LAYERS VALIDATED ONE RECORD AND THEN COPIED

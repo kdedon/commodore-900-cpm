@@ -232,12 +232,40 @@ long p;
 /************************************************************************/
 
 #define ASPT		64		/* 128-byte records per track */
+#define BLSBLKS		8		/* 512-byte blocks per 4096-byte alloc blk */
+#define BIDRV0		8		/* bootinfo slot of drive A: */
+#define NDRIVE		7		/* A: .. G:, slots 8..14 */
 /* SECLEN (128) comes from bdosdef.h */
 
+#define CPMABASE	38144L		/* cpma partition base block */
+#define CPMABLKS	20480L		/* 2560 x 4096 = 10 MB */
+#define BTRKOFF		1312L		/* B:'s old track offset within cpma */
+#define CPMBBASE	(CPMABASE + BTRKOFF * 16L)
+#define CPMBBLKS	16384L		/* 2048 x 4096 = 8 MB */
+
+static struct bipart dflpart[NDRIVE] = {
+	{ CPMABASE, CPMABLKS },		/* A: */
+	{ CPMBBASE, CPMBBLKS },		/* B: */
+	{ 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L }
+};
+
+struct bootinfo bootinf = {
+	BI_MAGIC,
 	BI_ASK,			/* the version asked of the loader		*/
 	(unsigned short)BI_ASKLEN,
+	BI_NPART,
+	0,			/* bi_sum */
+	BI_SRC_KERNEL,		/* until a loader says otherwise */
+	0, 0L, 0L,		/* swapdev/bot/top: CP/M has no swap */
+	{ { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
+	  { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
+	  { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
+	  { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L } },
+	0,			/* bi_flags */
 	BI_CON_ANY,		/* bi_console */
 	0			/* bi_serial: nothing was probed */
+};
+
 /* Deblocking runs over the LRU sector cache (sys/bcb.c), whose buffers sit
  * in the seg-0x33 buffer segment the startup code maps at phys 0x0C0000;
  * the WD controller DMAs straight to their physical addresses. */
@@ -247,16 +275,54 @@ extern ccpentry();		/* glue.s: reset the stack, enter the CCP */
 extern long tickget();		/* src/bios/tick900.c, trap.s	*/
 
 static UBYTE dirbuf[128];
+#define ALVPOOL		1536
+static UBYTE alvpool[ALVPOOL];
 
+/* The table itself.  drvthere[] is the answer seldsk gives; drvbase[] is
+ * the absolute block dskread/dskwrite add to. */
+static struct dpb dpbtab[NDRIVE];
+static struct dph dphtab[NDRIVE];
+static long drvbase[NDRIVE];
+static char drvthere[NDRIVE];
+static long curbase;		/* drvbase[] of the selected drive */
+
+/*
+ * A slot smaller than this cannot be a CP/M drive here: DRM 511 with
+ * dir_al 0xF000 reserves four 4096-byte blocks for the directory, so a
+ * drive needs those plus data.  64 blocks (32 KB) is 8 allocation blocks,
+ * half directory and half data -- useless but coherent, and the point of
+ * the limit is to refuse a slot that would give a NEGATIVE dsm.
+ */
+#define MINBCNT		64L
+/* dsm is a UWORD, so no drive can be longer than 65536 allocation blocks. */
+#define MAXBCNT		524288L
+
+static drvsay(i, why)
+int i;
+char *why;
+{
+	puts("BIOS: drive ");
+	putchar('A' + i);
+	puts(": ignored -- ");
+	puts(why);
+	putchar('\n');
+}
 
 static int bivalid()
+{
+	if (bootinf.bi_src != BI_SRC_KBOOT)
+		return (0);
 	/* ANY version this header knows is a handoff: a block says which
 	 * version it is and how long it is, and bilen() is the agreement
 	 * between the two.  What is not there is decided from the LENGTH,
 	 * below, and never from the number -- kboot's own rule, and the
 	 * reason a v3 loader and a v4 one can both hand this BIOS a table. */
 	if (bilen(bootinf.bi_version) == 0)
+		return (0);
 	if (bootinf.bi_len != bilen(bootinf.bi_version))
+		return (0);
+	if (bisum(&bootinf) != 0)
+		return (0);
 	return (1);
 }
 
@@ -264,6 +330,79 @@ static int bigood()
 {
 	if (!bivalid())
 		return (0);
+	if (bootinf.bi_npart <= BIDRV0)
+		return (0);
+	if (bootinf.bi_part[BIDRV0].bcount == 0L)
+		return (0);
+	return (1);
+}
+
+/*
+ * Build the drive table.  Cold start only: a warm boot does not re-read
+ * the medium's layout, and the BDOS holds pointers into dphtab[].
+ */
+static drvinit()
+{
+	register int i;
+	struct bipart *pp;
+	long start, count, dsm;
+	int alvlen, used;
+	int fromkboot;
+
+	fromkboot = bigood();
+	used = 0;
+	for (i = 0; i < NDRIVE; i++) {
+		drvthere[i] = 0;
+		drvbase[i] = 0L;
+		pp = fromkboot ? &bootinf.bi_part[BIDRV0 + i] : &dflpart[i];
+		start = pp->bstart;
+		count = pp->bcount;
+		if (count == 0L)
+			continue;		/* that letter is not there */
+		if (count < MINBCNT) {
+			drvsay(i, "the slot is too small to hold a directory");
+			continue;
+		}
+		if (count > MAXBCNT)
+			count = MAXBCNT;	/* CP/M cannot address the rest */
+		dsm = count / BLSBLKS - 1L;
+		alvlen = (int)(dsm >> 3) + 1;
+		if (used + alvlen > ALVPOOL) {
+			drvsay(i, "no room left for its allocation vector");
+			continue;
+		}
+		/* BLS 4096 (bsh 5, blm 31), DRM 511 with four directory
+		 * blocks reserved (dir_al 0xF000), fixed disk (CKS 0), no
+		 * system tracks (trk_off 0: the base is kept here).  EXM is
+		 * 1 for BLS 4096 with DSM > 255 and 3 below that, which is
+		 * CP/M's own table and not a choice. */
+		dpbtab[i].spt = ASPT;
+		dpbtab[i].bsh = 5;
+		dpbtab[i].blm = 31;
+		dpbtab[i].exm = (dsm < 256L) ? 3 : 1;
+		dpbtab[i].dpbdum = 0;
+		dpbtab[i].dsm = (UWORD)dsm;
+		dpbtab[i].drm = 511;
+		dpbtab[i].dir_al = 0xF000;
+		dpbtab[i].cks = 0;
+		dpbtab[i].trk_off = 0;
+		dphtab[i].xlt = (UBYTE *)0;
+		dphtab[i].hiwater = 0;
+		dphtab[i].dum1 = 0;
+		dphtab[i].dum2 = 0;
+		dphtab[i].dbufp = dirbuf;
+		dphtab[i].dpbp = &dpbtab[i];
+		dphtab[i].csv = (UBYTE *)0;
+		dphtab[i].alv = &alvpool[used];
+		used += alvlen;
+		drvbase[i] = start;
+		drvthere[i] = 1;
+	}
+	/* Somewhere to point before the first SELDSK.  The BDOS always
+	 * selects before it transfers (iosys.c do_phio), so this is a
+	 * defence against a caller that does not, not a working default. */
+	curbase = drvbase[0];
+}
 
 static int settrk, setsec;	/* selected track / sector (0-based)	*/
 static long setdma;		/* DMA address (XADDR)			*/
@@ -303,6 +442,7 @@ static long dskread()
 
 	dskerr = 0;
 	rec = (long)settrk * ASPT + setsec;
+	if ((ix = getbuf(curbase + (rec >> 2), 1)) < 0) {
 		dskerr = 1;
 		return (1L);
 	}
@@ -326,6 +466,7 @@ int mode;
 
 	dskerr = 0;
 	rec = (long)settrk * ASPT + setsec;
+	ix = getbuf(curbase + (rec >> 2),
 		    (mode == 2 && ((int)rec & 3) == 0) ? 0 : 1);
 	if (ix < 0) {
 		dskerr = 1;
@@ -342,6 +483,17 @@ int mode;
 static long seldsk(dsk)
 int dsk;
 {
+	if (dsk >= 0 && dsk < NDRIVE && drvthere[dsk]) {
+		/* Naming the drive's base here is naming it once per change
+		 * of drive rather than once per record: the BDOS selects
+		 * before it transfers and re-selects whenever the drive
+		 * changes (iosys.c do_phio, whose last_dsk cache is exactly
+		 * that guarantee), so curbase always belongs to the drive
+		 * the next read or write is for. */
+		curbase = drvbase[dsk];
+		return ((long)&dphtab[dsk]);
+	}
+	return (0L);			/* that letter is not on this medium */
 }
 
 /************************************************************************/
@@ -513,6 +665,8 @@ biosinit()
 	extern int mapseg();
 
 	BTRACE("<1>");		/* binit (BIOS fn 0) entered */
+	drvinit();			/* the drive table: the loader bootinfo,
+					 * or the compiled fallback */
 	coninit();			/* the console table: the loader's
 					 * bi_serial, or the known map */
 	iobyte = 0;

@@ -24,3 +24,9 @@ users' group collection: SDB, David Betz's relational database (type
 `help' at its SDB> prompt; it reads SDB.HLP), and Robert Heller's SORTFL,
 KILLDU, TOHEX and FROMHEX.  Their source is on the development disk.
 
+Those five were linked on this machine against the C compiler's own
+runtime, which sets no program return code, so a SUBMIT file's IF ERROR
+reads success after them whatever they did -- even when they refuse bad
+input.  Branch on their output instead.  Every other command here does
+set a return code; see the SUBMIT topic in HELP for IF ERROR.
+

@@ -102,6 +102,19 @@ static char	optmap[NOPT];		/* option seen			*/
 static char	modmap[NOPT];		/* its modifier			*/
 static char	labname[16];		/* [NAME=] argument		*/
 static int	labnlen;
+static char	passname[16];		/* [PASSWORD=] argument		*/
+static int	lenpass;
+static char	defpass[16];		/* [DEFAULT=] argument		*/
+static int	lendef;
+static int	passmsg;		/* "assign a password" said once */
+/*
+ * The DMA buffer function 100 reads a password out of: the FIRST eight
+ * bytes are the label's CURRENT password, which the BDOS checks before
+ * it changes anything, and the second eight are the new one
+ * (bdos30.asm:4917-4922, and set.plm:332-333 which points the DMA at
+ * exactly this buffer before every wrlbl).
+ */
+static char	passwd[16];
 
 static char	names[MAXFILES][11];	/* expanded file names		*/
 static int	nnames;
@@ -268,6 +281,8 @@ int code;
 		cputs("Read Only");
 	else if (code == 4)
 		cputs("Invalid Drive.");
+	else if (code == 7)
+		cputs("Wrong Password");	/* set.plm:737	*/
 	else if (code == 9)
 		cputs("? in filespec.");
 	else {
@@ -522,6 +537,37 @@ int ro;
 /* ---------------- the directory label ---------------- */
 
 /*
+ * set.plm:654-658, getpasswd.  Read the label's CURRENT password into
+ * the first eight bytes of the DMA buffer, so that function 100 can be
+ * tried again.  Console echo is on: v3's own prompt echoes too, and a
+ * password nobody can see themselves typing is a support call.
+ */
+static VOID getpasswd()
+{
+	register int	c;
+	register int	i;
+
+	pr("Password ? ");
+	for (i = 0; i < 8; i++)
+		passwd[i] = ' ';
+	i = 0;
+	while ((c = conin() & 0x7f) != '\r' && c != '\n' && c != 0) {
+		if (c == 8 || c == 0x7f) {	/* backspace	*/
+			if (i > 0)
+				passwd[--i] = ' ';
+			continue;
+		}
+		if (i < 8)
+			passwd[i++] = (char) c;
+	}
+	nl();
+}
+
+/*
+ * set.plm:1200-1241.  The Passwds Reqd column reports the label's own
+ * password-enable bit, which function 101 now answers with: it is the
+ * switch the BDOS arms every password check off (sys/fileio.c ckpass()),
+ * so "on" here means the drive really does enforce them.
  */
 static VOID showlbl(name, mode)
 register char *name;
@@ -535,6 +581,7 @@ int mode;
 	pr("--------------  -------  -------  -------  -------");
 	nl();
 	printfn(name);
+	cputs((mode & DL_PASSWD) ? "    on   " : "    off  ");
 	cputs((mode & DL_CREATE) ? "    on   " : "    off  ");
 	cputs((mode & DL_ACCESS) ? "    on   " : "    off  ");
 	cputs((mode & DL_UPDATE) ? "    on   " : "    off  ");
@@ -569,6 +616,13 @@ static VOID writelabel()
 		name[4] = 'L';
 		mode = 0;
 	}
+	mode &= 0xf0;		/* set.plm:935, `turn off set passwd':
+				   in a STORED mode byte bit 0 means "the
+				   label exists", in the byte handed to
+				   function 100 it means "assign a new
+				   password".  Reading one and writing it
+				   back must not turn the second into the
+				   first, so the low nibble goes.	*/
 
 	/* [ACCESS] and [CREATE] share one field: set.plm:1610-1632 */
 	if (optmap[O_ACCESS]) {
@@ -590,6 +644,28 @@ static VOID writelabel()
 			mode |= DL_UPDATE;
 		else
 			mode &= ~DL_UPDATE;
+	}
+	if (optmap[O_PROT]) {		/* set.plm:1149-1151, protect	*/
+		if (modmap[O_PROT])
+			mode |= DL_PASSWD;
+		else
+			mode &= ~DL_PASSWD;
+	}
+	/*
+	 * [PASSWORD=] on a drive, set.plm:1035-1048.  Bit 0 of the mode
+	 * byte handed to function 100 asks it to take a new password out
+	 * of the second eight bytes of the DMA; the first eight are the
+	 * password the label has now, which the BDOS checks first.  An
+	 * empty [PASSWORD=] clears the label's password, which is v3's
+	 * `if lenpass = 0 then do; passmode = 1; return; end' -- the
+	 * assign bit with eight blanks behind it.
+	 */
+	for (i = 0; i < 16; i++)
+		passwd[i] = ' ';
+	if (optmap[O_PASS]) {
+		mode |= DL_EXISTS;	/* the ASSIGN bit, on the way in */
+		for (i = 0; i < lenpass; i++)
+			passwd[i + 8] = passname[i];
 	}
 
 	if (optmap[O_NAME]) {
@@ -621,7 +697,21 @@ static VOID writelabel()
 		wfcb.ftype[i] = name[i + 8];
 	wfcb.extent = (char) mode;
 
+	setdma(passwd);
 	rc = __bdos(100, (long) &wfcb);
+	if (((rc >> 8) & 0xff) == 7) {
+		/*
+		 * The label already has a password of its own and the
+		 * eight blanks above were not it.  set.plm:654-658 asks
+		 * for one at the console and tries again; this asks once.
+		 * Without this there would be no way to change or remove
+		 * a label password once set, which is a trap rather than
+		 * a protection.
+		 */
+		getpasswd();
+		rc = __bdos(100, (long) &wfcb);
+	}
+	setdma(dirbuf);
 	if ((rc >> 8) & 0xff) {
 		bdoserror((rc >> 8) & 0xff);
 		pr("Directory Label ");
@@ -634,6 +724,197 @@ static VOID writelabel()
 	}
 	mode = __bdos(101, (long) cdisk) & 0xff;
 	showlbl(name, mode);
+}
+
+/* ---------------- the default password, function 106 ---------------- */
+
+/*
+ * set.plm:1005-1020, defaultpass.  Eight blank-padded bytes at the
+ * PARAMETER address -- this is the one password in this program that
+ * does not travel through the DMA (bdos30.asm:5066-5076).
+ *
+ * The BDOS keeps it until something replaces it, so it outlives this
+ * program: it is what the NEXT program opens a password-protected file
+ * with, and with no CCP prompt for a file password it is the only thing
+ * that can be.
+ */
+static char	defbuf[8];
+
+static VOID defaultpass()
+{
+	register int	i;
+
+	for (i = 0; i < 8; i++)
+		defbuf[i] = ' ';
+	for (i = 0; i < lendef; i++)
+		defbuf[i] = defpass[i];
+	__bdos(106, (long) defbuf);
+	pr("Default password = ");
+	for (i = 0; i < 8; i++)
+		conout(defbuf[i]);
+	nl();
+}
+
+/* ---------------- a file's password, functions 102 and 103 ---------------- */
+
+/* set.plm:1244-1263, show$xfcb */
+static VOID showxfcb(pmode)
+int pmode;
+{
+	register int	i;
+
+	cputs("Protection = ");
+	if (pmode & 0x80)
+		cputs("READ");
+	else if (pmode & 0x40)
+		cputs("WRITE");
+	else if (pmode & 0x20)
+		cputs("DELETE");
+	else
+		cputs("NONE");
+	if (pmode & 1) {
+		cputs(", Password = ");
+		for (i = 8; i < 16; i++)
+			conout(passwd[i]);
+	}
+}
+
+/*
+ * One file's XFCB: set$up$xfcb (set.plm:973-993), set$password
+ * (:1022-1049), protect's file arm (:1113-1136) and write$xfcb
+ * (:1362-1410), in that order because that is do$options' order.
+ *
+ * Function 102 first, for the mode the file has NOW.  v3 needs it for
+ * one decision and so do we: a protection mode may only be set on a file
+ * that has a password or is being given one, because a mode with no
+ * password is a lock with no key -- the BDOS refuses to write one
+ * (bdos30.asm:5005-5010) and this says why.
+ *
+ * The DMA buffer is the same 16 bytes function 100 uses, and it means
+ * the same thing: the first eight are the password the file has now,
+ * which the BDOS checks before it changes anything, and the second eight
+ * are the new one.  Function 102 leaves the file's create stamp in the
+ * first eight, so they are blanked -- eight blanks are "no password
+ * offered", which is what a file with no password needs and what makes
+ * a file WITH one ask, through error 7 and pass$check (:1276-1300).
+ */
+static VOID putxfcb(n)
+char *n;
+{
+	register int	i;
+	int		rc, pmode, haspw, newpw, m;
+
+	for (i = 0; i < (int) sizeof (struct fcb); i++)
+		((char *) &wfcb)[i] = 0;
+	wfcb.drvcode = (char) (cdisk + 1);
+	for (i = 0; i < 8; i++)
+		wfcb.fname[i] = (char) (n[i] & 0x7f);
+	for (i = 0; i < 3; i++)
+		wfcb.ftype[i] = (char) (n[i + 8] & 0x7f);
+
+	for (i = 0; i < 16; i++)
+		passwd[i] = ' ';
+	setdma(passwd);
+	rc = __bdos(102, (long) &wfcb);
+	setdma(dirbuf);
+	if ((rc >> 8) & 0xff) {
+		bdoserror((rc >> 8) & 0xff);
+		putfile(n);
+		return;
+	}
+	if ((rc & 0xff) == 0xff) {
+		eprint(" File not found");
+		putfile(n);
+		return;
+	}
+	pmode = wfcb.extent & 0xff;
+	haspw = (pmode != 0);
+	for (i = 0; i < 16; i++)
+		passwd[i] = ' ';
+
+	newpw = 0;
+	if (optmap[O_PASS]) {			/* set$password	*/
+		pmode |= 1;
+		if (lenpass == 0)
+			pmode = 1;		/* an empty [PASSWORD=]
+						   removes the password */
+		else {
+			newpw = 1;
+			for (i = 0; i < lenpass; i++)
+				passwd[i + 8] = passname[i];
+		}
+	}
+	if (optmap[O_PROT]) {			/* protect, file arm	*/
+		m = modmap[O_PROT] & 0xff;
+		if (m == M_READ)
+			pmode = 0x80;
+		else if (m == M_WRITE)
+			pmode = 0x40;
+		else if (m == M_DELETE)
+			pmode = 0x20;
+		else {				/* ON and OFF both mean
+						   "no protection" here	*/
+			pmode = 1;
+			for (i = 8; i < 16; i++)
+				passwd[i] = ' ';
+		}
+		if (newpw)
+			pmode |= 1;
+	}
+
+	if (pmode > 1 && !haspw && !newpw) {	/* write$xfcb :1366-1381 */
+		if (passmsg)
+			return;
+		passmsg = 1;
+		eprint("Assign a password to this file.");
+		putfile(n);
+		return;
+	}
+	if (pmode == 1 && newpw)
+		pmode |= 0x80;			/* read is v3's default	*/
+
+	wfcb.extent = (char) pmode;
+	setdma(passwd);
+	rc = __bdos(103, (long) &wfcb);
+	if (((rc >> 8) & 0xff) == 7) {		/* pass$check(3)	*/
+		putfile(n);
+		getpasswd();
+		rc = __bdos(103, (long) &wfcb);
+	}
+	setdma(dirbuf);
+	if ((rc >> 8) & 0xff) {
+		bdoserror((rc >> 8) & 0xff);
+		putfile(n);
+		return;
+	}
+	if ((rc & 0xff) == 0xff) {
+		eprint(" File not found");
+		pr("       or protection not enabled for disk.");
+		nl();
+		return;
+	}
+	if (pmode == 1) {
+		/*
+		 * The XFCB carries no password and no mode now, so it is
+		 * erased -- set.plm:1404-1407.  Bit 7 of FCB byte 5 is
+		 * f5', v3's XFCB-ONLY delete (bdos30.asm:1602-1607): the
+		 * file itself is not touched, and a delete without it
+		 * would erase the file this command was protecting.
+		 */
+		wfcb.fname[5] |= 0x80;
+		__bdos(BDOS_DELETE, (long) &wfcb);
+		wfcb.fname[5] &= 0x7f;
+	}
+	putfile(n);
+	showxfcb(pmode);
+}
+
+static VOID putxfcbs()
+{
+	register int	k;
+
+	for (k = 0; k < nnames; k++)
+		putxfcb(names[k]);
 }
 
 /* ---------------- the command tail ---------------- */
@@ -764,6 +1045,24 @@ static VOID parseopts()
 					for (i = 0; i < labnlen; i++)
 						labname[i] = tok[i];
 				}
+				if (k == O_PASS) {
+					lenpass = toklen;
+					if (lenpass > 8) {
+						lenpass = 8;
+						eprint("Only first 8 characters of password used.");
+					}
+					for (i = 0; i < lenpass; i++)
+						passname[i] = tok[i];
+				}
+				if (k == O_DEFAULT) {	/* set.plm:485	*/
+					lendef = toklen;
+					if (lendef > 8) {
+						lendef = 8;
+						eprint("Only first 8 characters of default password used.");
+					}
+					for (i = 0; i < lendef; i++)
+						defpass[i] = tok[i];
+				}
 				m = 8;
 			} else {
 				m = lookup(modname, NMOD);
@@ -803,6 +1102,12 @@ static int checkopts()
 	int	ok;
 
 	ok = 1;
+	if (!fileref && optmap[O_PROT] && modmap[O_PROT] > M_ON) {
+		/* set.plm:1143-1147, errDrvProt: a drive is protected or
+		   not; READ/WRITE/DELETE are modes of a FILE's password */
+		eprint("Drive protection must be ON or OFF.");
+		optmap[O_PROT] = 0;
+		ok = 0;
 	}
 
 	if (optmap[O_ACCESS] && optmap[O_CREATE]
@@ -862,6 +1167,9 @@ static int anyattr()
 static int anylabel()
 {
 	return (optmap[O_NAME] || optmap[O_ACCESS] || optmap[O_CREATE]
+		|| optmap[O_UPDATE] || optmap[O_PASS] || optmap[O_PROT]);
+		/* the drive forms of the last two are label writes like
+		   the rest of them: set.plm:1606 and :1149-1151	*/
 }
 
 /* ---------------- main ---------------- */
@@ -910,6 +1218,7 @@ char *argv[];
 {
 	register int	i, c;
 	int		n, k;
+	int		xfcbcmd;
 	char		pat[11];
 
 	n = _base->buff[0] & 0x7f;
@@ -964,7 +1273,13 @@ char *argv[];
 
 	checkopts();
 
+	if (optmap[O_DEFAULT])		/* set.plm:1609, do$options	*/
+		defaultpass();
+
+	xfcbcmd = fileref && (optmap[O_PASS] || optmap[O_PROT]);
+
 	if (fileref) {
+		if (!anyattr() && !xfcbcmd) {
 			crlf2();
 			return (0);
 		}
@@ -980,6 +1295,10 @@ char *argv[];
 				continue;
 			}
 			__bdos(BDOS_ERRMODE, (long) ERRMODE_RETURN);
+			if (anyattr())
+				putattributes();
+			if (xfcbcmd)
+				putxfcbs();
 			__bdos(BDOS_ERRMODE, (long) ERRMODE_DEFAULT);
 		}
 	} else {

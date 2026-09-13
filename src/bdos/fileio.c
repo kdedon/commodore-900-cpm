@@ -27,6 +27,20 @@ EXTERN UWORD	udiv();		/* unsigned divide routine	*/
 
 EXTERN UBYTE	*scbstampa();	/* scb.c: address of the SCB @DATE group */
 
+/*  Defined below, and named above their definitions for two reasons.
+    ren_xfcb() hands rename() to dirscan() as a function POINTER, and an
+    implicit declaration covers a call but not an address.  set_label()
+    calls the two password helpers, which live below it because they are
+    what get_label() and everything after it are about, and BOOLEAN is
+    `char' (stdio.h:19) -- an implicit int return would be the wrong
+    width.	*/
+EXTERN BOOLEAN	rename();	/* the rename dirscan callback	*/
+EXTERN BOOLEAN	matchit();	/* and the search one, which wr_xfcb()
+				   uses below where it is defined	*/
+MLOCAL BOOLEAN	pwcmp();	/* cmp$pw: does the caller's password fit? */
+MLOCAL BOOLEAN	setpw();	/* set$pw: store one				*/
+MLOCAL UWORD	xfmode();	/* the password mode of a name's XFCB	*/
+
 
 /* declare external variables */
 EXTERN UWORD	log_dsk;	/* logged-on disk vector	*/
@@ -403,6 +417,7 @@ REG struct fcb *fcbp;
 {
     REG UBYTE *p;
     REG WORD i;
+    REG UWORD rtn;
     BSETUP
 
     p = &(fcbp->fname[0]);
@@ -414,6 +429,10 @@ REG struct fcb *fcbp;
 	}
     fcbp->extent = 0;
     fcbp->s2 = 0;
+    rtn = dirscan(rdstamp, fcbp, 0);
+    if ( rtn != 255 && UBWORD(fcbp->extent) == 0 )
+	fcbp->extent = (UBYTE)xfmode(fcbp);	/* rxfcb2 (:4956-4962)	*/
+    return(rtn);
 }
 
 
@@ -466,10 +485,19 @@ REG struct fcb *fcbp;
 
     if (made)
 	for (i = 0; i < 32; i++) e[i] = 0;
+    else if ( ! pwcmp(e) )
+    {			/* an existing label with a password of its own
+			   may only be changed by someone who has it	*/
+	seterr(7, UBWORD(GBL.curdsk));
+	return(0xff);
+    }
     e[0] = DE_LABEL;
     move(&fcbp->fname[0], &e[1], 11);
+    e[12] = (UBYTE)( UBWORD(fcbp->extent) | DL_EXISTS );
     if (made) stampfld(&e[DL_CRSTAMP]);
     stampfld(&e[DL_UPSTAMP]);
+    if ( UBWORD(fcbp->extent) & DL_EXISTS )
+	setpw(e, GBL.dmaadr + PASSLEN);		/* sdl2 (:4918-4922)	*/
 
     drvlbl[GBL.curdsk] = e[12];
     if ( (UWORD)idx > (GBL.dphp)->hiwater ) (GBL.dphp)->hiwater = idx;
@@ -492,6 +520,433 @@ REG UWORD dsknum;		/* drive 0..15, anything else = default */
 
     if (dsknum > 15) dsknum = UBWORD(GBL.dfltdsk);
     seldsk((UBYTE)dsknum);
+    return( UBWORD(drvlbl[dsknum]) );
+}
+
+
+
+/*  The mode byte of the XFCB that last refused a call.  Only meaningful
+    immediately after ckpass() returned non-zero, and only open() cares:
+    delete, rename and set-attributes are protected by ANY password, so
+    for them the refusal is the whole answer.  Open has to tell read
+    protection (refuse) from write protection (open, but read-only), and
+    v3 tells them apart the same way, off `pw$mode' (:4054-4056).  */
+
+GLOBAL UWORD pwmode = 0;
+
+
+/****************************************
+*  function 106 -- set default password	*
+****************************************/
+
+
+MLOCAL UBYTE dfltpw[PASSLEN];		/* all NULs until 106 is called	*/
+
+
+UWORD set_dfltpw(src)
+
+XADDR src;			/* eight bytes in the caller's space	*/
+{
+    cpy_in(src, dfltpw, PASSLEN);
+    return(0);
+}
+
+
+
+MLOCAL BOOLEAN pwcmp(e)
+
+REG UBYTE *e;			/* the XFCB or label directory entry	*/
+{
+    UBYTE	dma[PASSLEN];
+    REG UWORD	key;
+    REG WORD	i;
+    BSETUP
+
+    key = UBWORD(e[XF_KEY]);
+    if (key == 0)
+    {
+	for (i = 0; i < PASSLEN; i++)
+	    if ( UBWORD(e[XF_PASS + i]) != 0
+		 && UBWORD(e[XF_PASS + i]) != ' ' ) break;
+	if (i == PASSLEN) return(TRUE);		/* no password here	*/
+    }
+    cpy_in(GBL.dmaadr, dma, PASSLEN);
+    for (i = 0; i < PASSLEN; i++)
+	if ( (UBWORD(e[XF_PASS + PASSLEN - 1 - i]) ^ key)
+	     != UBWORD(dma[i]) ) break;
+    if (i == PASSLEN) return(TRUE);
+    for (i = 0; i < PASSLEN; i++)		/* cmp$pw4 (:3200-3205)	*/
+	if ( (UBWORD(e[XF_PASS + PASSLEN - 1 - i]) ^ key)
+	     != UBWORD(dfltpw[i]) ) return(FALSE);
+    return(TRUE);
+}
+
+
+
+MLOCAL BOOLEAN setpw(e, src)
+
+REG UBYTE *e;			/* the XFCB or label directory entry	*/
+XADDR	   src;			/* eight bytes in the caller's space	*/
+{
+    UBYTE	pw[PASSLEN];
+    REG UWORD	key;
+    REG WORD	i;
+    REG BOOLEAN	real;
+
+    cpy_in(src, pw, PASSLEN);
+    key = 0;
+    real = FALSE;
+    for (i = 0; i < PASSLEN; i++)
+    {
+	key += UBWORD(pw[i]);
+	if ( UBWORD(pw[i]) != 0 && UBWORD(pw[i]) != ' ' ) real = TRUE;
+    }
+    key &= 0xff;
+    e[XF_KEY] = (UBYTE)key;
+    for (i = 0; i < PASSLEN; i++)
+	e[XF_PASS + PASSLEN - 1 - i] = (UBYTE)( UBWORD(pw[i]) ^ key );
+    return( (BOOLEAN)(real || key) );
+}
+
+
+
+MLOCAL BOOLEAN pwscan(fcbp, dirp, dirindx)	/* ARGSUSED */
+
+REG struct fcb *fcbp;
+REG struct dirent *dirp;
+WORD dirindx;
+{
+    if ( ! match(fcbp, dirp, FALSE) ) return(FALSE);
+    if ( pwcmp((UBYTE *)dirp) ) return(FALSE);
+    pwmode = UBWORD( ((UBYTE *)dirp)[XF_MODE] );
+    return(TRUE);
+}
+
+
+/*  Build the probe that finds a name's XFCB: v3's get$xfcb ORs 10h into
+    the FCB's user byte and searches with it (:3244-3247).  `off' picks
+    the name exactly as fexists() does -- 0 for the FCB's own, 16 for
+    rename's second one.  */
+
+MLOCAL xprobe(fcbp, off, probep)
+
+REG struct fcb *fcbp;
+REG WORD off;
+REG struct fcb *probep;
+{
+    REG UBYTE	*p;
+    REG UBYTE	*q;
+    REG WORD	i;
+
+    probep->drvcode = (UBYTE)( UBWORD(fcbp->drvcode) | DE_XFCB );
+    p = off ? (UBYTE *)&(fcbp->dskmap.small[1]) : &(fcbp->fname[0]);
+    q = &(probep->fname[0]);
+    i = 11;
+    do *q++ = (UBYTE)(*p++ & 0x7f); while (--i);
+			/* the attribute bits are not part of the name */
+    probep->extent = 0;
+    probep->s1 = 0;
+    probep->s2 = 0;
+}
+
+
+/*  get$xfcb's own scan (:3244-3248), without the password comparison
+    pwscan puts on top of it: the first XFCB whose twelve bytes match.
+    On a match dirscan leaves the record in the directory buffer and the
+    entry's index in GBL.srchpos, which is how set_label() addresses the
+    label it just found and how the two callers below address this.  */
+
+MLOCAL BOOLEAN xfind(fcbp, dirp, dirindx)	/* ARGSUSED */
+
+REG struct fcb *fcbp;
+REG struct dirent *dirp;
+WORD dirindx;
+{
+    return( match(fcbp, dirp, FALSE) );
+}
+
+
+/*  The address of the XFCB dirscan just found, inside the directory
+    buffer -- set_label()'s two lines, which are the only way to reach a
+    found entry once the scan has returned.		*/
+
+MLOCAL UBYTE *xentry()
+{
+    BSETUP
+
+    return( (UBYTE *)(GBL.dirbufp) + ((GBL.srchpos & 3) << 5) );
+}
+
+
+/*  The password mode byte of a name's XFCB, or 0 if it has none.  This
+    is what function 102 answers with when the file has no SFCB.	*/
+
+MLOCAL UWORD xfmode(fcbp)
+
+REG struct fcb *fcbp;
+{
+    struct fcb	probe;
+    BSETUP
+
+    if ( ! (UBWORD(drvlbl[GBL.curdsk]) & DL_PASSWD) ) return(0);
+    xprobe(fcbp, 0, &probe);
+    if ( dirscan(xfind, &probe, 0) == 255 ) return(0);
+    return( UBWORD( (xentry())[XF_MODE] ) );
+}
+
+
+/*  chk$password (bdos30.asm:3130-3135), the gate every enforcing call
+    site goes through.  Returns 0 to proceed and 1 to refuse, leaving the
+    offending mode in pwmode.  It does NOT raise the error: open wants to
+    look at pwmode first, and only the caller knows its own function
+    number for the message.  */
+
+UWORD ckpass(fcbp, off)
+
+REG struct fcb *fcbp;		/* the caller's FCB		*/
+REG WORD off;			/* 0 = first name, 16 = second	*/
+{
+    struct fcb	probe;
+    BSETUP
+
+    pwmode = 0;
+    if ( ! (UBWORD(drvlbl[GBL.curdsk]) & DL_PASSWD) ) return(0);
+			/* THE ARMING BIT.  Everything this project ships
+			   has it clear, so this is where the whole of the
+			   above stops being reached		*/
+    xprobe(fcbp, off, &probe);
+    if ( dirscan(pwscan, &probe, 0) == 255 ) return(0);
+    return(1);
+}
+
+
+/*  Erase every XFCB belonging to a name.  v3 gets this for free: its
+    delete searches for FCBs and XFCBs together and empties both in one
+    pass (:1611-1700, `init$xfcb$search').  Ours does not, so it is a
+    second scan -- and it has to happen, because an XFCB left behind
+    would attach its password to the NEXT file created with that name.  */
+
+MLOCAL BOOLEAN xkill(fcbp, dirp, dirindx)
+
+REG struct fcb *fcbp;
+REG struct dirent *dirp;
+REG WORD dirindx;
+{
+    BSETUP
+
+    if ( ! match(fcbp, dirp, FALSE) ) return(FALSE);
+    dirp->entry = DE_EMPTY;
+    dir_wr(dirindx >> 2);
+    crit_dsk |= 1 << (GBL.curdsk);
+    return(TRUE);
+			/* no allocation vector work: an XFCB's bytes
+			   16..23 are a password and never a disk map,
+			   which is the rule the login scan already keeps
+			   (alloc() above, and src/cmd/xfcbt.c)	*/
+}
+
+
+del_xfcb(fcbp, off)
+
+REG struct fcb *fcbp;
+REG WORD off;
+{
+    struct fcb	probe;
+    BSETUP
+
+    if ( ! (UBWORD(drvlbl[GBL.curdsk]) & DL_PASSWD) ) return;
+    xprobe(fcbp, off, &probe);
+    dirscan(xkill, &probe, 2);		/* `full': every match	*/
+}
+
+
+/*  Rename a name's XFCBs along with the file (v3 :1855-1860, which walks
+    back through does$xfcb$exist and renames each one it finds).  The
+    directory entry work is identical to a file rename, so this hands the
+    probe to rename() itself: byte 0 says XFCB, the first name says which
+    one, and FCB+16 holds the new name where rename() looks for it.  */
+
+ren_xfcb(fcbp)
+
+REG struct fcb *fcbp;
+{
+    struct fcb	probe;
+    REG UBYTE	*p;
+    REG UBYTE	*q;
+    REG WORD	i;
+    BSETUP
+
+    if ( ! (UBWORD(drvlbl[GBL.curdsk]) & DL_PASSWD) ) return;
+    del_xfcb(fcbp, 16);			/* the new name's own XFCB, if
+					   it somehow has one (:1825) */
+    xprobe(fcbp, 0, &probe);
+    p = (UBYTE *)&(fcbp->dskmap.small[1]);
+    q = (UBYTE *)&(probe.dskmap.small[1]);
+    i = 11;
+    do *q++ = (UBYTE)(*p++ & 0x7f); while (--i);
+    probe.rcdcnt = 0;
+    dirscan(rename, &probe, 2);
+}
+
+
+
+MLOCAL BOOLEAN xmake(fcbp, dirp, dirindx)
+
+REG struct fcb *fcbp;
+REG struct dirent *dirp;
+REG WORD dirindx;
+{
+    UBYTE	mb;
+    REG UBYTE	*e;
+    REG WORD	i;
+    BSETUP
+
+    if ( UBWORD(dirp->entry) != DE_EMPTY ) return(FALSE);
+    e = (UBYTE *)dirp;
+    for (i = 0; i < 32; i++) e[i] = 0;
+    e[0] = (UBYTE)( UBWORD(fcbp->drvcode) | DE_XFCB );
+    move(&fcbp->fname[0], &e[1], 11);
+    setpw(e, GBL.dmaadr);
+    cpy_in(GBL.dmaadr + PASSLEN, &mb, 1);
+    i = UBWORD(mb) & XP_MODES;
+    e[XF_MODE] = (UBYTE)( i ? i : XP_READ );
+
+    dir_wr(dirindx >> 2);
+    if ( (UWORD)dirindx > (GBL.dphp)->hiwater )
+	(GBL.dphp)->hiwater = dirindx;
+    crit_dsk |= 1 << (GBL.curdsk);
+    return(TRUE);
+}
+
+
+UWORD mk_xfcb(fcbp)
+
+REG struct fcb *fcbp;
+{
+    BSETUP
+
+    if ( ! (UBWORD(drvlbl[GBL.curdsk]) & DL_PASSWD) ) return(0);
+    return( dirscan(xmake, fcbp, 8) == 255 ? 0xff : 0 );
+			/* pasthw: the free slot may be past the high
+			   water mark, exactly as create()'s is	*/
+}
+
+
+/****************************************
+*  function 103 -- write file XFCB	*
+****************************************/
+
+
+MLOCAL UWORD xpwmode;		/* v3's pw$mode, for the callback below	*/
+
+
+/*  init$xfcb (:3258-3265) as function 103 needs it: an empty slot
+    becomes an XFCB carrying nothing but its type and the name.  No mode,
+    no password and no stamps -- what goes in them is decided by the
+    caller, which is the difference between this and mk_xfcb(), whose
+    password comes from function 22's DMA at the moment of creation. */
+
+MLOCAL BOOLEAN xnew(fcbp, dirp, dirindx)	/* ARGSUSED */
+
+REG struct fcb *fcbp;
+REG struct dirent *dirp;
+WORD dirindx;
+{
+    REG UBYTE	*e;
+    REG WORD	i;
+
+    if ( UBWORD(dirp->entry) != DE_EMPTY ) return(FALSE);
+    e = (UBYTE *)dirp;
+    for (i = 0; i < 32; i++) e[i] = 0;
+    e[0] = fcbp->drvcode;		/* the probe already carries the
+					   type nibble and the user	*/
+    move(&fcbp->fname[0], &e[1], 11);
+    return(TRUE);
+}
+
+
+MLOCAL BOOLEAN xsfcb(fcbp, dirp, dirindx)
+
+REG struct fcb *fcbp;
+REG struct dirent *dirp;
+REG WORD dirindx;
+{
+    REG UBYTE *p;
+    BSETUP
+
+    if ( ! match(fcbp, dirp, TRUE) ) return(FALSE);
+    if ( (p = sfcbfld(dirindx, SF_PWMODE)) != (UBYTE *)NULL
+	 && UBWORD(*p) != xpwmode )
+    {
+	*p = (UBYTE)xpwmode;
+	dir_wr(dirindx >> 2);
+	crit_dsk |= 1 << (GBL.curdsk);
+    }
+    return(TRUE);
+}
+
+
+UWORD wr_xfcb(fcbp)
+
+REG struct fcb *fcbp;		/* the caller's FCB; extent = the mode	*/
+{
+    struct fcb	probe;
+    REG UBYTE	*e;
+    REG WORD	idx;
+    REG WORD	i;
+    REG UWORD	mode;
+    REG BOOLEAN	made;
+    BSETUP
+
+    if ( ! (UBWORD(drvlbl[GBL.curdsk]) & DL_PASSWD) ) return(0xff);
+    for (i = 0; i < 11; i++)		/* check$wild (:4977)	*/
+	if ( UBWORD(fcbp->fname[i]) == '?' )
+	{
+	    seterr(9, UBWORD(GBL.curdsk));
+	    return(0xff);
+	}
+    mode = UBWORD(fcbp->extent);	/* saved across the search, as v3
+					   saves it (:4979-4983)	*/
+    fcbp->extent = 0;
+    fcbp->s2 = 0;
+    if ( dirscan(matchit, fcbp, 0) == 255 ) return(0xff);
+			/* no such file: an XFCB for a name that is not
+			   there would attach its password to whatever
+			   was created under that name next	*/
+
+    xprobe(fcbp, 0, &probe);
+    made = FALSE;
+    if ( dirscan(xfind, &probe, 0) == 255 )
+    {
+	if ( dirscan(xnew, &probe, 8) == 255 ) return(0xff);
+			/* no directory space; pasthw, because the free
+			   slot may be past the high water mark	*/
+	made = TRUE;
+    }
+    idx = GBL.srchpos;
+    e = xentry();
+
+    if ( ! made && ! pwcmp(e) )
+    {
+	seterr(7, UBWORD(GBL.curdsk));	/* chk$xfcb$password (:5003)	*/
+	return(0xff);
+    }
+
+    if ( UBWORD(e[XF_MODE]) || (mode & 1) )
+    {
+	i = mode & XP_MODES;
+	e[XF_MODE] = (UBYTE)( i ? i : XP_READ );
+	if ( (mode & 1) && ! setpw(e, GBL.dmaadr + PASSLEN) )
+	    e[XF_MODE] = 0;		/* the password was blanked out	*/
+    }
+
+    if ( (UWORD)idx > (GBL.dphp)->hiwater ) (GBL.dphp)->hiwater = idx;
+    dir_wr(idx >> 2);
+    crit_dsk |= 1 << (GBL.curdsk);
+
+    xpwmode = UBWORD(e[XF_MODE]) & XP_MODES;
+    dirscan(xsfcb, fcbp, 0);		/* wxfcb4 (:5020-5026)	*/
+    return(0);
 }
 
 
@@ -780,6 +1235,37 @@ REG WORD dirindx;		/* index into directory		*/
 }
 
 
+/*  The read-only attribute, and what error(5) coming BACK means.
+
+    In the default error mode error(5) reaches filero() (bdosmisc.c),
+    which either aborts through warmboot() or -- on the operator's `C'
+    -- clears the read-only bit, rewrites the entry and reloads this
+    directory record.  Returning there is permission, and the caller
+    goes on to delete, rename or truncate as it always did.
+
+    In function 45 modes 0FEh and 0FFh error(5) records CP/M 3 code 3
+    and returns 1 without touching the file, and the dispatcher turns
+    GBL.errcode into 03FFh for the caller (bdosmain.c).  Returning there
+    is a REFUSAL, and the caller must not mutate anything: that is P1 #2
+    of the first-release review, where the program got its error after
+    the protected file had already gone.
+
+    The entry itself tells the two apart, so this answers TRUE only if
+    the file may now be written.  The callers are dirscan() callbacks,
+    so FALSE reads as "no match": the scan finds nothing, the function
+    returns 255, and errcode carries the reason home.		*/
+
+MLOCAL BOOLEAN rocheck(dirp, fcbp)
+
+REG struct dirent *dirp;	/* the entry found in the directory buffer */
+REG struct fcb	  *fcbp;	/* the caller's FCB, for the message	*/
+{
+    if ( ! ((dirp->ftype[robit]) & 0x80) ) return(TRUE);
+    error(5, fcbp);
+    return( ((dirp->ftype[robit]) & 0x80) == 0 );
+}
+
+
 /************************
 *  delete entry point	*
 ************************/
@@ -792,11 +1278,24 @@ REG WORD dirindx;		/* index into directory		*/
 
 {
     REG WORD i;
+    REG UBYTE *p;
     REG BOOLEAN rtn;
     BSETUP
 
     if ( rtn = match(fcbp, dirp, FALSE) )
     {
+	if ( ! rocheck(dirp, fcbp) ) return(FALSE);
+				/* read-only, and it stayed that way */
+	if ( (p = sfcbfld(dirindx, SF_PWMODE)) != (UBYTE *)NULL
+	     && UBWORD(*p) ) *p = 0;
+			/* "Zero password mode byte in sfcb if sfcb
+			   exists" (bdos30.asm:1686-1691).  The SFCB
+			   sub-record is what function 102 reports the
+			   password mode out of, and the file it described
+			   is going away.  Guarded on the byte being
+			   non-zero, which it is only on a drive that has
+			   had passwords: an ordinary delete writes nothing
+			   it did not write before.	*/
 	dirp->entry = 0xe5;
 	LOCK
 	{
@@ -826,6 +1325,8 @@ REG WORD dirindx;		/* index into directory		*/
 
     if ( rtn =  match(fcbp, dirp, FALSE) )
     {
+	if ( ! rocheck(dirp, fcbp) ) return(FALSE);
+				/* read-only, and it stayed that way */
 	p = &(fcbp->dskmap.small[1]);
 	q = &(dirp->fname[0]);
 	i = 11;
@@ -996,6 +1497,8 @@ REG WORD dirindx;
     BSETUP
 
     if ( ! match(fcbp, dirp, FALSE) ) return(FALSE);
+    if ( ! rocheck(dirp, fcbp) ) return(FALSE);
+				/* read-only, and it stayed that way */
 
     big  = ((GBL.parmp)->dsm > 255);
     nmap = big ? 8 : 16;
@@ -1096,6 +1599,11 @@ REG struct fcb *fcbp;
     tr_nblk = (n + UBWORD((GBL.parmp)->blm)) >> ((GBL.parmp)->bsh);
 
     if ( dirscan(truncit, fcbp, 2) >= 255 ) return(0xff);
+    upd_stamp(fcbp);		/*  v3 stamps before it truncates; this
+				    stamps after the scan that did it, so
+				    that a truncate REFUSED for a
+				    read-only file writes nothing at all
+				    -- the stamp is a directory write too */
     return(0);
 }
 

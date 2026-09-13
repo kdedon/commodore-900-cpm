@@ -4,9 +4,13 @@
 include mk/config.mk
 
 .PHONY: all clean unpublish deps help
+     $(UCONCFS) $(UXDOS) $(UCON1) $(UCONCZ) $(UXDOSPOL) $(UCONCS) $(UCONCV) \
+     $(CPMDISKALL)
+	@$(if $(wildcard $(KBOOT)),:,echo 'note: no kboot at "$(KBOOT)" -- $(CPMDISK) not built. `make deps DEP=kboot`')
 
 help:
 	@printf '%s\n' \
+	  'make                 build cpm.sys, drive images and the boot medium' \
 	  'make imagecheck      check the generated images' \
 	  'make farptrcheck     check the banked-memory invariant in src/bdos' \
 	  'make verify-<name>   run one emulator verification target' \
@@ -21,6 +25,7 @@ deps:
 
 # Remove published images before compiling so failed builds do not leave stale outputs.
 unpublish:
+	@rm -f $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG) $(CPMDISKALL)
 
 clean:
 	rm -rf build

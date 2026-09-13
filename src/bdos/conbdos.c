@@ -80,9 +80,12 @@ BOOLEAN constat()
     if (GBL.conmode & CM_CTLC)
     {		/* ^C-only status: anything else is held for the next
 		   input call and reported as "nothing waiting" */
+	if (kbchar[concur]) return( UBWORD(kbchar[concur]) == ctrlc );
 	if ( ! bconstat() ) return(FALSE);
+	kbchar[concur] = ch = bconin();
 	return( ch == ctrlc );
     }
+    return( kbchar[concur] ? TRUE : bconstat() );
 }
 
 /********************/
@@ -117,6 +120,9 @@ conbrk()
 	if ( ch == ctrls ) stop = TRUE;
 	else if (ch == ctrlq) stop = FALSE;
 	else if (ch == ctrlp) GBL.lstecho = !GBL.lstecho;
+	else kbchar[concur] = ch;	/* the console it was TYPED at: this
+					   process's, since bconin() above
+					   read it from concur		*/
     } while (stop);
 }
 
@@ -289,6 +295,15 @@ UBYTE getch()		/* Get char from buffer or bios */
     REG UBYTE temp;
     BSETUP
 
+	if (temp = kbchar[concur])
+				/* something is already buffered FOR THIS
+				   CONSOLE.  The index is the whole fix:
+				   this used to be one byte for the machine,
+				   so a keystroke conbrk() took off console
+				   0 was handed to whichever console asked
+				   for input first.  pconatt() above has
+				   already made concur's owner us	*/
+	    kbchar[concur] = 0;
 }
     
 UBYTE conin()		/* BDOS console input function */

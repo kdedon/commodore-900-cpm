@@ -30,6 +30,23 @@
 #endif
 
 
+/*  Console type-ahead belongs to the device, not the process producing
+    output -- AND THERE IS ONE BUFFER PER DEVICE.  It was a single byte for
+    the whole machine, which is a steal and not a race: conbrk() takes a
+    character off the PRINTING process's console (bconstat/bconin pass
+    concur, biosdef.h) and parks it here, and getch() hands the parked
+    character to the first reader on ANY console, before it looks at the
+
+    Indexed by concur.  NOT part of stvars: stvars is per-PROCESS, copied
+    wholesale at a switch (proc.c), and type-ahead must survive a switch
+    between two processes sharing one console and must NOT follow a
+    process moved to another console.  CONBUFS is the ceiling the BIOS's
+    own per-console tables use (src/bios/bios900.c CONMAX, and its own
+    lookahead pend[] there is this table's mirror one layer down);
+    bconcnt() says how many of them are configured, and proc.c refuses
+    any console number at or above it.  */
+#define CONBUFS 4
+EXTERN UBYTE	kbchar[CONBUFS];
  
 #define robit 0			/* read-only bit in file type field of fcb */
 #define arbit 2			/* archive bit in file type field of fcb   */
@@ -54,6 +71,17 @@
 /* the label's own two stamps live in its disk-map area */
 #define DL_CRSTAMP 24		/* label created			*/
 #define DL_UPSTAMP 28		/* label updated			*/
+
+
+#define XF_MODE	  12		/* the password mode byte		*/
+#define XF_KEY	  13		/* checksum of the password = XOR key	*/
+#define XF_PASS	  16		/* the eight password bytes, reversed	*/
+#define PASSLEN	  8		/* a CP/M 3 password is eight bytes	*/
+
+#define XP_READ	  0x80		/* password needed to open at all	*/
+#define XP_WRITE  0x40		/* password needed to open for writing	*/
+#define XP_DELETE 0x20		/* password needed to erase or rename	*/
+#define XP_MODES  (XP_READ|XP_WRITE|XP_DELETE)
 
 /* SFCB geometry inside a 128-byte directory record */
 #define SF_MARK	  96		/* byte offset of the SFCB entry	*/
