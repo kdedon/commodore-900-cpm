@@ -1433,6 +1433,16 @@ REG BYTE *com_index;
 			else
 				bdos(CONSOLE_OUTPUT,(long)subdma[k++]);
 		}
+		/*  The scan above is bounded by k < CMD_LEN, so the ONLY way
+		    out with k == CMD_LEN is the bound itself -- neither EOF
+		    nor Cr was seen, by construction.  Re-testing subdma[k]
+		    here therefore proved nothing and read subdma[CMD_LEN],
+		    one byte past sv_subdma[SV_CMDLEN] (ccpsv.h), which is
+		    whatever follows the DMA buffer in the save area.  The
+		    bound alone is the whole condition; dropping the two
+		    reads also makes the else arm below safe, since it is now
+		    reached only with k < CMD_LEN.  */
+		if(k >= CMD_LEN)
 		{
 			k = 0;
 			if(cbdos(READ_SEQ,subfcb) != 0)

@@ -79,8 +79,15 @@ static char	*msgs[] =
 		"File is not executable$",
 		"Insufficient memory$",
 		"Read error on program load$",
+		/*  NOSPLIT (pgmld.c): the split-I/D data bank and side
+		    table are single shared pages, so a second split
+		    program cannot be loaded while one is live in another
+		    process.  Refused before the load, which is the whole
+		    point of the code -- the live program is untouched.  */
+		"Split I/D program already running$",
 		"Program Load Error$"
 	};
+#define MSGMAX	5			/* the last index in msgs[]	*/
 
 /*  Startup context for the user's program (the layout is xfer_'s and
     lives in proc.h now, because the dispatcher builds a process out of
@@ -388,6 +395,7 @@ VOID ccprun()
 		     sv.sv_pfcb1, sv.sv_pfcb2, &context)) != GOOD) {
 	if (!pend)
 	    ldfail(nofile);
+	bdos(PRNTSTR, map_adr((XADDR) msgs[min(MSGMAX, k)], MYDATA));
 	bdos(WARMBOOT, 0L);
     }
 

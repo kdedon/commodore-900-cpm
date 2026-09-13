@@ -753,7 +753,19 @@ db_aput(aptr,vptr,avalue)
     /* initialize counter */
     i = 0;
 
+    /*  right justify numbers
+
+	The cast is not cosmetic.  Written as `at_size - strlen(avalue)'
+	this is an UNSIGNED comparison wherever strlen() is prototyped: with
+	at_size 6 and a 131-character value the bound is not -125 but
+	2^64-125, and the padding loop writes the whole heap.  Nothing in
+	src/app declares strlen and the CP/M-8000 stdio.h does not either,
+	so under ZCC it is implicitly int, the loop is simply empty and the
+	Z8001 build never had the defect -- which is exactly why it could
+	sit here unnoticed.  A value longer than the attribute needs no
+	padding, and the copy below truncates it.  (c900)  */
     if (aptr->at_type == TNUM)
+        for (; i < aptr->at_size - (int) strlen(avalue); i++)
             vptr[i] = ' ';
 
     /* put the attribute value */

@@ -10,7 +10,10 @@
 # that the SDB.Z8K which produced this transcript is byte-for-byte the
 # source in src/app/ -- so what is left to establish is that it WORKS.
 #
+# The session is seven statements: read the help file, create a relation,
 # import three tuples from SDBIN.TXT, print it twice (once whole and once
+# through a WHERE clause), export it back to a file, then sort it and
+# export that too.  What that exercises
 # is the file layer, which is why SDB was
 # chosen first: creatb() to make EMP.SDB, a 512-byte header write,
 # lseek() to a computed tuple offset and a random-record read for every
@@ -128,9 +131,68 @@ else
 	rm -f "$work.out" "$work.in"
 fi
 
+# The sort, and the file the sort must not have touched.
+#
+# SORT.DAT was on the disk before SDB started -- PIP put SDBIN.TXT there
+# under that name -- and it is not a database file.  SRT.C opened it with
+# mode "w" on EVERY sort, so a user's own SORT.DAT came back as a
+# zero-length file; the trace it was opened for is only ever written when
+# that file's `dns' flag is set, and it is 0 in every shipped build.  So
+# the assertion is on the FILE, not on anything the sort printed: it must
+# still hold what PIP wrote into it.
+if [ ! -s "$art/SORT.DAT" ]; then
+	bad sortdat "$art/SORT.DAT is missing or EMPTY.  A sort truncated a"
+	echo "     user's file that has nothing to do with the database"
+	echo "     (src/app/SRT.C, the fopen of the debugging trace)."
+else
+	python3 -c 'import sys; d = open(sys.argv[1], "rb").read(); \
+	    i = d.find(b"\x1a"); d = d[:i] if i >= 0 else d; \
+	    d = d.replace(b"\r\n", b"\n").replace(b"\r", b"\n"); \
+	    sys.stdout.buffer.write(b"".join(l.strip() + b"\n" \
+	        for l in d.split(b"\n") if l.strip()))' \
+	    "$art/SORT.DAT" > "$work.sd"
+	tr -d '\r' < src/dist/disk-a/SDBIN.TXT > "$work.in"
+	if cmp -s "$work.sd" "$work.in"; then
+		echo "  ok  SORT.DAT -- the unrelated file of that name came through"
+		echo "      the sort with its contents intact"
+	else
+		bad sortdat "SORT.DAT is not what was copied into it before the sort"
+		diff "$work.in" "$work.sd" | sed 's/^/       /'
+	fi
+	rm -f "$work.sd" "$work.in"
+fi
+
+# And the sort has to have SORTED, or the check above proved only that a
+# statement SDB rejected cannot destroy anything.  Ascending by salary is
+# SMITH 1000, CLARKE 1750, JONES 2500, which is not the import order.
+if [ ! -s "$art/SDBSRT.TXT" ]; then
+	bad sort "$art/SDBSRT.TXT is not on the partition: the sorted"
+	echo "     relation was never exported, so nothing here shows the sort ran."
+else
+	# CP/M pads the last record after the soft EOF, and what follows it
+	# is whatever was in the buffer -- enough to make grep call the file
+	# binary -- so the text is cut at the ^Z first, exactly as the
+	# export check above does it.
+	python3 -c 'import sys; d = open(sys.argv[1], "rb").read(); \
+	    i = d.find(b"\x1a"); d = d[:i] if i >= 0 else d; \
+	    sys.stdout.buffer.write(d)' "$art/SDBSRT.TXT" \
+		| tr -d '\r' | sed 's/[ 	]*$//' \
+		| grep -E '^(SMITH|JONES|CLARKE)$' > "$work.sn"
+	printf 'SMITH\nCLARKE\nJONES\n' > "$work.se"
+	if cmp -s "$work.sn" "$work.se"; then
+		echo "  ok  the sort put the three tuples in ascending salary order"
+	else
+		bad sort "the exported order is not ascending by salary"
+		diff "$work.se" "$work.sn" | sed 's/^/       /'
+	fi
+	rm -f "$work.sn" "$work.se"
+fi
+
 if [ $fail -ne 0 ]; then
 	echo "sdbchk: FAIL -- $fail assertion(s)"
 	exit 1
 fi
 echo "sdbchk: PASS -- created a relation, imported three tuples, selected"
+echo "        two of them on a numeric predicate, exported all three back,"
+echo "        sorted them, and left an unrelated SORT.DAT untouched"
 exit 0

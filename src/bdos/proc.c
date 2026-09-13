@@ -301,12 +301,56 @@ MLOCAL VOID padopt()
 }
 
 
+/*  IS A SPLIT-I/D PROGRAM LIVE SOMEWHERE ELSE?  The loader's question,
+    asked before it writes anything (src/bdos/pgmld.c, X_NXI_MAGIC): the
+    split data bank and the side table are single fixed pages that no
+    page swap moves (c900cfg.h SPLITDSEG/SPLITTSEG), so loading a second
+    split program REPLACES the live one's data image and its patch
+    table.  It must be refused before the first byte, not after.
+
+    The descriptors are scanned rather than `pnsplit' consulted, because
+    pnsplit counts only the children fn 144 made: a split program the
+    CCP loaded into its own page -- ED, ASZ8K, XCON, XDUMP, AR8K, NMZ8K
+    and SIZEZ8K are all 0xEE0B on the release disk -- is not in it.
+
+    The descriptor of any process that is NOT running is current by
+    construction: a process becomes another process by being switched
+    out, and psave() is what switches it out.
+
+    `pcur' is counted only when `pspcur' says to, and the two callers
+    are why.  A warm boot loads over the running process's OWN program
+    (src/ccp/ccprun.c): that program is finished, its data bank is not
+    wanted, and counting it would make a split program unable to be
+    followed by another one on the same console.  pcrgen() loads into a
+    CHILD's page while the caller stays alive and will resume into its
+    own data bank, so there the caller counts -- and its descriptor is
+    accurate at that moment because psave(me) has just run.  */
+
+MLOCAL	WORD		pspcur;		/* count pcur as well: set only
+					   across pcrgen()'s load	*/
+
+GLOBAL WORD pspother()
+{
+	REG WORD i;
+
+	if (pnlive == 0)
+		return (0);		/* nothing has forked; the running
+					   program is the only one there is */
+	for (i = 0; i < PNPROC; i++)
+		if ((i != pcur || pspcur) &&
+		    pd[i].pd_state == PS_LIVE && pd[i].pd_split)
+			return (1);
+	return (0);
+}
+
+
 
 XADDR	infop;
 {
 	REG struct pdesc *me, *kid;
 	REG WORD	i, k, seg;
 	WORD		kidx;		/* the child's descriptor index	*/
+	XADDR		dma0;		/* the caller's own default DMA	*/
 	struct context	ctx;
 
 	padopt();
@@ -322,16 +366,52 @@ XADDR	infop;
 					   loop variable again below, and
 					   the child's CCP state is psv[kidx] */
 
+	/*  THE SLOT IS CLAIMED HERE, before anything below can yield.
+	    plock() parks the caller whenever another process holds the
+	    filesystem lock, and a second creator resuming in that window
+	    used to find this same slot still PS_FREE, pick it, and build
+	    its process in it -- after which the first creator came back
+	    and built its own on top.  PS_RSVD is not PS_FREE, so the
+	    search above skips it, and it is not PS_LIVE, so nothing else
+	    in this file can see it.  Every failure return below puts it
+	    back.  */
+	kid->pd_state = PS_RSVD;
 
 	/*  A page.  Zero means the pool is empty, which on a 512 KB
 	    machine is always and by construction (pgalloc.c): there the
 	    answer to "run a second program" is no, and it is a hardware
 	    answer.  */
+	if ((seg = pgalloc()) == 0) {
+		kid->pd_state = PS_FREE;
 		return (PC_NOPAGE);
+	}
 
 	plock();
 
+	/*  The request, out of the caller's page and into ours, BEFORE
+	    the page moves -- and INSIDE the lock, because `pq' is one
+	    resident buffer shared by every creator.  It used to be copied
+	    before plock(), so a creator parked in that lock came back to
+	    a `pq' the next creator had replaced and loaded the other
+	    program's file into its own child's page.  The lock is not
+	    widened in scope by this: it already bracketed the whole load,
+	    and `infop' still addresses the caller's TPA here because the
+	    page swap is below and a resumed process gets its page back.  */
+	cpy_in(infop, &pq, (long) sizeof pq);
+	if (UBWORD(pq.pq_tlen) > SV_CMDLEN)
+		pq.pq_tlen = SV_CMDLEN;	/* UBYTE is a signed char here
+						   (stdio.h ALCYON), so the
+						   comparison has to widen */
+
 	psave(me);			/* the caller, as it stands now	*/
+
+	pspcur = 1;			/*  and it STAYS alive over the load
+					    below, so its own split banks
+					    count: a split program launching
+					    a split program would otherwise
+					    have its data image replaced
+					    under it.  psave() above is what
+					    makes its descriptor say so	*/
 
 	pnoyld = 1;			/* from here to the swap back, the
 					   descriptors do not describe the
@@ -384,12 +464,35 @@ XADDR	infop;
 	} else {
 		for (i = 0; i < 36; i++)
 			pqfcb1[i] = pqfcb2[i] = 0;
+		dma0 = me->pd_dma0;	/*  the loader records the default DMA
+					    of the program it loaded in the
+					    RUNNING descriptor (pgmld.c, for
+					    fn 13), and the running descriptor
+					    here is the PARENT's: hold the
+					    caller's own while it does	*/
 		k = ldimage(map_adr((XADDR)pq.pq_fcb, 0), (WORD)pq.pq_tlen,
 			    pq.pq_tail, pqfcb1, pqfcb2, &ctx);
+		if (k == 0)
+			kid->pd_dma0 = me->pd_dma0;	/*  ...to its owner */
+		me->pd_dma0 = dma0;
 	}
 
 	/*  A second split-I/D program would want a second data bank and
 	    a second side table, and there is one of each (c900cfg.h).
+	    THE REFUSAL IS THE LOADER'S NOW (pgmld.c, NOSPLIT): it is the
+	    only place that knows the file is 0xEE0B, and it knows it
+	    before it has written a byte of the shared banks, which is
+	    what this check could not do -- by the time it ran, the live
+	    split program's data image and side table were already gone.
+	    Translated back to PC_SPLIT so fn 144's answer is unchanged.  */
+	if (k == PL_NOSPLIT)
+		k = PC_SPLIT;
+
+	/*  The backstop, kept: if the loader's question is ever asked
+	    wrongly this still refuses, and a refusal after the damage is
+	    better than no refusal.  `pnsplit' counts only fn 144's own
+	    children -- a split program the CCP loaded is not in it --
+	    which is why it cannot be the primary check.  */
 	if (k == 0 && spflag && pnsplit > 0)
 		k = PC_SPLIT;
 
@@ -398,10 +501,13 @@ XADDR	infop;
 	pgtpaswap(seg);
 	me->pd_seg = 0;
 	pnoyld = 0;
+	pspcur = 0;			/* the next load is somebody's warm
+					   boot until this says otherwise */
 	punlock();
 
 	if (k != 0) {
 		pgfree(seg);
+		kid->pd_state = PS_FREE;	/* the claim, given back	*/
 		pload(me);
 		return (k);
 	}

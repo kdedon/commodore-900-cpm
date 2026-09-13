@@ -72,6 +72,22 @@ int y;
 	return ((y & 3) == 0);
 }
 
+/*
+ * Is `b' a packed BCD byte -- both nibbles a decimal digit?  Weighing a
+ * byte as 10*hi + lo and range-checking the sum is not the same test:
+ * 0x1a weighs 20, which passes an hour range check, so the bad byte is
+ * accepted and normalised into one the caller never wrote.
+ */
+static bcdok(b)
+int b;					/* int, not UBYTE: UBYTE is signed
+					   char here, and a char parameter is
+					   promoted anyway.  Both nibbles are
+					   masked, so a sign-extended argument
+					   reads the same as a widened one. */
+{
+	return (((b >> 4) & 0x0f) < 10 && (b & 0x0f) < 10);
+}
+
 static mlen(m, y)			/* days in month m (1..12) of y */
 int m, y;
 {
@@ -316,6 +332,18 @@ UBYTE *tod;
 	day = ((UWORD)(tod[TOD_DATEHI] & 0xff) << 8)
 	    | (UWORD)(tod[TOD_DATELO] & 0xff);
 	if (!day2ymd(day, &y, &m, &d))
+		return (RTC_NONE);
+	/* The three time bytes are BCD, and a nibble above nine is not a
+	 * number at all.  Weighing 10*hi + lo and range-checking the sum
+	 * ACCEPTS such a byte and then stores the weighed value back as
+	 * BCD, so hour 0x1a went in and 0x20 came out: the caller's bad
+	 * value was silently replaced by a plausible one it never asked
+	 * for.  Reject the nibble instead -- this is the last layer below
+	 * BDOS function 104 that can see the caller's bytes, and DATE and
+	 * SET are not the only callers.  (A nibble check does not make the
+	 * range checks below redundant: 0x99 seconds is valid BCD.)  */
+	if (!bcdok(tod[TOD_HOUR]) || !bcdok(tod[TOD_MIN])
+	    || !bcdok(tod[TOD_SEC]))
 		return (RTC_NONE);
 	h = ((tod[TOD_HOUR] >> 4) & 0x0f) * 10 + (tod[TOD_HOUR] & 0x0f);
 	mi = ((tod[TOD_MIN] >> 4) & 0x0f) * 10 + (tod[TOD_MIN] & 0x0f);

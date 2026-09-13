@@ -20,10 +20,35 @@
 
 static struct fcb	src;
 static struct fcb	dst;
+static struct fcb	tmp;		/* the copy, before it is DST	*/
+static char		rnbuf[36];	/* function 23 wants two FCBs	*/
 static char		buf[MAXCNT * SECLEN];
 
 static unsigned		sumbuf();
 static int		setcnt();
+
+/*  Give the scratch FCB the $$$ type, after any call that rebuilds it
+    from the destination's name.  */
+
+static VOID scratch()
+{
+	tmp.ftype[0] = '$';
+	tmp.ftype[1] = '$';
+	tmp.ftype[2] = '$';
+}
+
+/*  Give up with the destination untouched: the scratch file is all that
+    is thrown away.  */
+
+static int giveup(msg)
+char *msg;
+{
+	cputs("mscopy: ");
+	cputs(msg);
+	cputs("\r\n");
+	__bdos(BDOS_DELETE, (long) &tmp);
+	return (1);
+}
 
 int main(argc, argv)
 int argc;
@@ -67,6 +92,24 @@ char *argv[];
 		cputs("\r\n");
 		return (1);
 	}
+	/*  The copy is built in DST's name with type $$$ and only put in
+	    DST's place once it is written and CLOSED, because until then
+	    there is nothing worth replacing DST with.  Deleting DST first
+	    -- which this did -- meant a write error or a refused close
+	    destroyed a good file and left a partial one, or none.  */
+	mkfcb(argv[2], &tmp);
+	if (tmp.ftype[0] == '$' && tmp.ftype[1] == '$' && tmp.ftype[2] == '$') {
+		/*  It would BE the scratch file; see src/cmd/fcopy.c.  */
+		cputs("mscopy: a destination of type $$$ is the scratch file's\r\n");
+		cputs("        own name; copy to another name and rename it\r\n");
+		return (1);
+	}
+	scratch();
+	__bdos(BDOS_DELETE, (long) &tmp);	/* a stale one from before */
+	mkfcb(argv[2], &tmp);			/* delete scrambles the FCB */
+	scratch();
+	if ((__bdos(BDOS_MAKE, (long) &tmp) & 0xff) == 0xff) {
+		cputs("mscopy: cannot create the scratch file for ");
 		cputs(argv[2]);
 		cputs("\r\n");
 		return (1);
@@ -89,11 +132,34 @@ char *argv[];
 		sum1 += sumbuf(buf, recs);
 		nrec += recs;
 		setcnt((int) recs);	/* write back exactly what we read */
+		if (__bdos(BDOS_WRITESEQ, (long) &tmp) != 0) {
+			setcnt(1);
+			return (giveup("write error"));
 		}
 		if (r != 0)
 			break;		/* short read: that was the tail */
 	}
 	setcnt(1);
+	if ((__bdos(BDOS_CLOSE, (long) &tmp) & 0xff) == 0xff)
+		return (giveup("close failed"));
+	__bdos(BDOS_CLOSE, (long) &src);
+	setdma(_base->buff);		/* directory work off the default DMA */
+
+	/*  Put the finished copy in DST's place.  CP/M will not rename onto
+	    a name that exists, so the old file goes first; past the rename
+	    the scratch file holds the only copy, so a failure leaves it
+	    where it is rather than deleting it.  */
+	mkfcb(argv[2], &dst);
+	__bdos(BDOS_DELETE, (long) &dst);
+	mkfcb(argv[2], &dst);			/* delete scrambles the FCB */
+	for (r = 0; r < 16; r++) {
+		rnbuf[r] = ((char *) &tmp)[r];
+		rnbuf[16 + r] = ((char *) &dst)[r];
+	}
+	if ((__bdos(BDOS_RENAME, (long) rnbuf) & 0xff) == 0xff) {
+		cputs("mscopy: cannot rename the scratch file over ");
+		cputs(argv[2]);
+		cputs("\r\n        the copy is in the .$$$ file\r\n");
 		return (1);
 	}
 

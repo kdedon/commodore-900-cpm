@@ -101,6 +101,13 @@ WORD		dirindx;	/* index into directory for *dirp */
 	if ( UBWORD(dirp->entry) < DE_XFCB )
 	{				/* a file FCB, and only a file FCB,
 					   owns the blocks in its disk map */
+	    /*	These block numbers came off the medium and are not checked
+		here: setaloc() (src/bdos/dskutil.c) refuses anything past
+		the drive's dsm, which is the one place that covers this
+		scan, close()'s merge, delete() and truncit() alike.  The
+		bound matters because every drive's alv comes out of one
+		pool (src/bios/bios900.c drvinit), so an out-of-range bit
+		is a bit in ANOTHER drive's live allocation map.	 */
 	    i = 0;
 	    if ((GBL.parmp)->dsm < 256)
 	    {
@@ -1307,7 +1314,25 @@ REG WORD dirindx;		/* index into directory		*/
 			   it did not write before.	*/
 	dirp->entry = 0xe5;
 	LOCK
+	if ( dir_wr(dirindx >> 2) == 0 )
 	{
+	    /* Now free up the space in the allocation vector.  ONLY IF THE
+	       ENTRY WENT AWAY.  A refused directory write used to be
+	       indistinguishable from a successful one (dskutil.c rdwrt), and
+	       freeing here after one left a live file on the medium pointing
+	       at blocks the allocator would hand to the next writer. */
+	    if ((GBL.parmp)->dsm < 256)
+	    {
+		i = 16;
+		do clraloc(UBWORD(dirp->dskmap.small[--i]));
+		    while (i);
+	    }
+	    else
+	    {
+		i = 8;
+		do clraloc(swap(dirp->dskmap.big[--i]));
+		    while (i);
+	    }
 	}
 	UNLOCK
     }
@@ -1503,6 +1528,10 @@ REG WORD dirindx;
     REG WORD	nmap;
     REG UWORD	et;
     REG BOOLEAN	big;
+    UWORD	gone[16];	/* blocks this truncation drops, held back
+				   until the directory write says the entry
+				   that owns them has actually changed	*/
+    REG WORD	ngone;
     BSETUP
 
     if ( ! match(fcbp, dirp, FALSE) ) return(FALSE);
@@ -1516,14 +1545,17 @@ REG WORD dirindx;
     if (et < tr_ent) return(TRUE);	/* wholly below the cut: untouched */
 
     LOCK
+    ngone = 0;
     for ( i = (et == tr_ent) ? tr_nblk : 0; i < nmap; i++)
     {
 	if (big)
 	{
+	    gone[ngone++] = swap(dirp->dskmap.big[i]);
 	    dirp->dskmap.big[i] = 0;
 	}
 	else
 	{
+	    gone[ngone++] = (UWORD)UBWORD(dirp->dskmap.small[i]);
 	    dirp->dskmap.small[i] = 0;
 	}
     }
@@ -1545,6 +1577,11 @@ REG WORD dirindx;
 	dirp->ftype[arbit] &= 0x7f;	/* the file changed: reset archive */
     }
     else dirp->entry = DE_EMPTY;
+    if ( dir_wr(dirindx >> 2) == 0 )
+	while (ngone) clraloc(gone[--ngone]);
+		/* the dropped blocks are released ONLY once the entry that
+		   stopped claiming them is on the medium; a refused write
+		   otherwise leaves a live file pointing at free blocks */
     UNLOCK
     return(TRUE);
 }

@@ -135,6 +135,16 @@ static VOID usage()
 	say("       PUT [CONSOLE] [OUTPUT] [TO] CONSOLE\r\n");
 }
 
+/*  readmod - read PUT.RSX in and check it over, without attaching
+    anything.  Split out of what used to be loadmod() so that every way
+    the module can be REFUSED happens before the requested output file is
+    created: PUT would otherwise leave a zero-length file of the user's
+    own name behind, and its own "already exists; erase it first" test
+    then refused the corrected retry.  */
+
+static unsigned	modorg, modlen;		/* what readmod() found		*/
+
+static int readmod(echo)
 int echo;
 {
 	register int	n, i;
@@ -142,6 +152,7 @@ int echo;
 	register char	*p;
 
 	mkfcb(MODNAME, &tryfcb);
+	if ((__bdos(BDOS_OPEN, (long) &tryfcb) & 0xff) == 255) {
 		say("PUT: cannot find ");
 		say(MODNAME);
 		say(" on the default drive\r\n");
@@ -174,8 +185,20 @@ int echo;
 	for (i = 0; i < sizeof (struct fcb); i++)
 		buf[H_FCB + i] = p[i];
 
+	modorg = org;
+	modlen = len;
+	return (0);
+}
+
+/*  attachmod - put the module readmod() prepared into the resident
+    chain.  */
+
+static int attachmod()
+{
 	pb.rpfunc = RSX_ATTACH;
 	pb.rprsvd = 0;
+	pb.rporg = modorg;
+	pb.rplen = modlen;
 	pb.rpsrc = (long) buf;
 	if (__bdos(BDOS_CALLRSX, (long) &pb) != 0) {
 		say("PUT: there is no room for the module below the resident\r\n");
@@ -297,8 +320,17 @@ char *argv[];
 		say(" already exists; erase it first\r\n");
 		return (1);
 	}
+	/*  The module is read and checked BEFORE the output file is
+	    created.  Every way PUT.RSX can be refused used to happen after
+	    the file existed, which left an empty file of the user's own
+	    name behind -- and the test just above then refused the
+	    corrected retry because of it.  */
+	if (readmod(echo) != 0)
+		return (1);
+
 	for (i = 0; i < sizeof (struct fcb); i++)
 		((char *) &tryfcb)[i] = ((char *) &filefcb)[i];
+	if ((__bdos(BDOS_MAKE, (long) &tryfcb) & 0xff) == 255) {
 		say("PUT: no directory space for ");
 		say(argv[fileat]);
 		say("\r\n");
@@ -306,7 +338,15 @@ char *argv[];
 	}
 	__bdos(BDOS_CLOSE, (long) &tryfcb);
 
+	/*  The attach is the only step that can still fail, and it cannot
+	    be done before the file exists, so this one takes the file back
+	    out again rather than leaving the stub.  */
+	if (attachmod() != 0) {
+		for (i = 0; i < sizeof (struct fcb); i++)
+			((char *) &tryfcb)[i] = ((char *) &filefcb)[i];
+		__bdos(BDOS_DELETE, (long) &tryfcb);
 		return (1);
+	}
 
 	say("Putting console output to file: ");
 	sayfcb(&filefcb);

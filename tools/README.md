@@ -35,6 +35,18 @@ timestamps, free dir entries 0xE5-filled, free data zeroed.
 Extraction is record-granular (CP/M stores sizes in 128-byte records):
 non-multiple-of-128 files come back padded to the next record.
 
+**A decoded CP/M filename is untrusted input.** The eleven name bytes are
+whatever is on the medium, so `--extract` validates the decoded leaf (no path
+separator, not `.`/`..`, not absolute, no control characters) and requires the
+resolved path to stay under the destination; every name in the directory is
+checked before the first byte is written, so a hostile entry cannot leave a
+half-extracted directory behind. An entry named `../OUT.TXT` used to overwrite
+a file outside the destination and exit 0. `tests/extract-test.py`
+(`make verify-extract`) is the check.
+
+A zero allocation slot is a hole, not an absence: a sparse file's later blocks
+stay at the offsets their own slots name.
+
 EOF padding is extension-based (implemented in `is_text()`/`TEXT_EXTS`):
 files with a text extension (`.TXT .C .H .SUB .PD .8KN .S .ASM .DOC .MAN`)
 get their final partial record filled with 0x1A (^Z), the classic CP/M

@@ -9,6 +9,28 @@
 # until somebody builds.  The toolchain runs the same links from its own side
 # on every push; this is the other direction, for a change made here.
 #
+# The two freestanding links are named as their own step FIRST, because that
+# is the step whose failure is an unresolved symbol and nothing else: a link
+# error found there needs no reading to interpret.  `make all' then follows,
+# and it is what the rest of a release is actually made of -- every transient
+# program, the devpack staging, all three packed images, the release staging
+# with its exclusions (which is where tests/relcheck.sh runs), imagecheck and
+# farptrcheck.  Without it CI never built a single transient, never packed an
+# image and never ran relcheck at all, so the thing relcheck asserts was
+# checked by no automation anywhere.
+#
+# `make all' IS NOT A GATE ON THE NETWORK, and that is the constraint it was
+# written against.  The only fetch in this job is the `make deps
+# DEP=toolchain' step that was always here; `all' itself fetches nothing.
+# Its one optional input is kboot, and $(CPMDISKALL) is
+# $(if $(wildcard $(KBOOT)),$(CPMDISK)) (mk/config.mk) -- absent kboot, the
+# boot medium is silently not built and the Makefile prints a note.  So this
+# step fails for a compile, staging, packing or exclusion fault and for
+# nothing else.
+#
+# Nothing here boots -- `make verify' and `make selfhost' are the runtime
+# gates, they need the emulator, and they are a separate question from
+# whether it links.
 name: build
 
 on:
@@ -39,6 +61,28 @@ jobs:
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
         run: make build/cpm.sys build/split.mod
+
+      # Everything else a release is made of: the transient programs, the
+      # staged devpack, the three images, the RELEASE staging and its
+      # exclusion check (tests/relcheck.sh, run by the $(CPMARIMG) recipe),
+      # imagecheck and farptrcheck.  No network: see the header.
+      - name: Transients, staging, images and the release exclusions
+        working-directory: cpm
+        env:
+          C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
+        run: make all
+
+      # relcheck's own answer, on a build that got that far.  Printed, not
+      # asserted: the assertion is relcheck's exit status inside `make all'.
+      - name: What the release staging came out as
+        if: always()
+        working-directory: cpm
+        run: |
+          if [ -d build/diska ] && [ -d build/diska-rel ]; then
+            printf 'development %s files, release %s\n' \
+              "$(ls -1 build/diska | wc -l)" \
+              "$(ls -1 build/diska-rel | wc -l)"
+          fi
 
       - name: The compiler's own log, when it does not
         if: failure()

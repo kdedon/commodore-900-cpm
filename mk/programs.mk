@@ -181,6 +181,20 @@ $(UOBJDIR)/CONCY.Z8K: $(UOBJDIR)/concy.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCZ.Z8K: $(UOBJDIR)/concz.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/XDMA.Z8K: $(UOBJDIR)/xdma.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# F4: the second-split-I/D-program exerciser (verify-split).
+$(UOBJDIR)/SPLITB.Z8K: $(UOBJDIR)/splitb.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# F4: the two creators that contend for one descriptor (verify-concr).
+$(UOBJDIR)/CONCM.Z8K: $(UOBJDIR)/concm.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/CONCO.Z8K: $(UOBJDIR)/conco.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 # F14: the lock holder that is NOT also a creator, and the two creators
 # plus ballast it arranges around it (verify-concr2).
 $(UOBJDIR)/CONCL.Z8K: $(UOBJDIR)/concl.lout $(LOUT2CPM)
@@ -212,6 +226,19 @@ $(UOBJDIR)/CONCWB.Z8K: $(UOBJDIR)/concwb.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 $(UOBJDIR)/CONCWC.Z8K: $(UOBJDIR)/concwc.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# The F1 directory-guard programs; src/cmd/dgena.c explains them.
+$(UOBJDIR)/DGENA.Z8K: $(UOBJDIR)/dgena.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/DGENB.Z8K: $(UOBJDIR)/dgenb.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/DERR.Z8K: $(UOBJDIR)/derr.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/DBOUND.Z8K: $(UOBJDIR)/dbound.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 $(UOBJDIR)/MSCOPY.Z8K: $(UOBJDIR)/mscopy.lout $(LOUT2CPM)

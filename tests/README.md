@@ -23,6 +23,15 @@ clock, for phase timings).
 target claimed, so a wrong answer has to be wrong twice, in two languages,
 to pass.
 
+**Hostile input to a host tool.** `extract-test.py` (`verify-extract`) builds
+directory entries no well-behaved CP/M would write and runs
+`../tools/mkcpmfs.py --extract` on them: the eleven name bytes of a directory
+entry are untrusted input and `--extract` turns them into a host path, so an
+entry named `../OUT.TXT` is a path traversal. It judges the host disk rather
+than the tool's exit status — the traversal case asserts that the file outside
+the destination still holds what it held, because the overwrite this closes
+was silent and exited 0.
+
 **Host builds of target code.** `rtctest.c` + `rtcchip.c`/`.h` + `rtcinc/`
 run the real `src/bios/rtc900.c` and `src/cmd/date.c` against a simulated
 MSM58321; `splitchk.c` and `splittest.c` exercise the split-I/D shim.

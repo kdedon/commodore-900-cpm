@@ -171,6 +171,17 @@ static int srtfatt(sptr,newskey,aname)
     return (db_ferror(ATUNDF));
 }
 
+/*  srtfail - give the trace file back and fail the sort.  The four
+    record-read failures in sort() below used to return with the trace
+    file still open.  */
+static int srtfail(fp)
+  FILE *fp;
+{
+    if (fp != NULL)
+        fclose(fp);
+    return (FALSE);
+}
+
 /* sort - sort the relation */
 static int sort(skeys,sptr1,sptr2,sptr3)
   struct skey *skeys; struct scan *sptr1,*sptr2,*sptr3;
@@ -188,6 +199,20 @@ static int sort(skeys,sptr1,sptr2,sptr3)
     swaps = 0L;
 
     /*dns --->   */
+    /*  The trace file is a debugging aid and `dns' is off in every
+        shipped build, so it must not be CREATED unless it is wanted:
+        mode "w" truncates, and SORT.DAT is a perfectly ordinary name
+        for a user's own file.  Opening it unconditionally destroyed
+        that file on every sort and wrote nothing in its place.  If the
+        create fails there is nothing to trace to and nothing to close,
+        which is why `test' stays NULL rather than being handed to
+        fclose(), and why a failed create turns the tracing off rather
+        than leaving the fprintf()s below pointing at NULL.  */
+    test = NULL;
+    if (dns) {
+        if ((test = fopen("sort.dat", "w")) == NULL)
+            dns = 0;
+        }
     n = sptr1->sc_relation->rl_tcnt;
     m = n;
 
@@ -197,15 +222,18 @@ static int sort(skeys,sptr1,sptr2,sptr3)
        for ( j=1; j<=n-m; j++ )  {
           if( rec1 != j+m )  {
              if(dns) fprintf(test,"Read1: %d\n", j+m);
+             if (!db_rget(sptr1, rec1=j+m))  return (srtfail(test));
              }
           for ( i=j; i>=1; i-=m ) {
              if( rec2 != i )   {
                 if(dns) fprintf(test,"Read2: %d\n", i);
+                if (!db_rget(sptr2, rec2=i))  return (srtfail(test));
                 }
              if (srtcomp(skeys,sptr1,sptr2) > 0)
                 break;
              if(rec3 != i+m)  {
                 if(dns) fprintf(test,"Read3: %d\n", i+m);
+                if (!db_rget(sptr3, rec3=i+m))  return (srtfail(test));
                 }
              if(dns) fprintf(test,"Write 3,2: %d from %d\n", i+m, i);
              assign( sptr3, sptr2 );
@@ -214,6 +242,7 @@ static int sort(skeys,sptr1,sptr2,sptr3)
           if(rec1 != i+m)  {
              if(rec3 != i+m)  {
                 if(dns) fprintf(test,"Read 3: %d\n", i+m);
+                if (!db_rget(sptr3, rec3=i+m))  return (srtfail(test));
                 }
              if(dns) fprintf(test,"Write 3,1: %d from %d\n", i+m, j+m);
              assign( sptr3, sptr1 );
@@ -221,6 +250,8 @@ static int sort(skeys,sptr1,sptr2,sptr3)
              }
           }
        }
+       if (test != NULL)
+          fclose(test);
 
 /*
     l = 2;

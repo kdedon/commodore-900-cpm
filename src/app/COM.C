@@ -50,6 +50,20 @@ LOCAL union codecell code[CODEMAX+1];
 LOCAL int cndx;
 LOCAL struct sel *selptr;
 
+/*  The interpreter's operand stack is STACKMAX deep and INT.C's db_xpush
+    had no check against it.  CODEMAX bounds the CODE, which nearly bounds
+    the stack too -- nesting built out of comparisons costs six cells per
+    level and so cannot reach depth 20 inside a hundred cells -- but not
+    quite: relat()'s comparison loop is optional, so a bare factor is one
+    push plus one operator, three cells a level, and `"x" & ("x" & ( ...
+    ))' thirty deep fits and pushes thirty-one operands.  So the depth is
+    tracked here, where the code is emitted, and an expression that would
+    outrun the stack is refused with the same CDSIZE error an overlong one
+    gets: one diagnostic at parse time rather than a scribble per tuple.
+    (c900)  */
+
+LOCAL int sdepth;               /* operands pending at this point */
+
 /* compile - compile a boolean expression */
 int db_compile(slptr)
   struct sel *slptr;
@@ -65,6 +79,7 @@ int db_compile(slptr)
 
     /* initialize the code array index */
     cndx = 0;
+    sdepth = 0;
 
     /* parse the boolean expression */
     if (!expr(&result)) {
@@ -117,6 +132,19 @@ db_fcode(slptr)
 LOCAL int operator(opr)
   int (*opr)();
 {
+    /*  Account for what this operator does to the interpreter's stack:
+	db_xpush leaves one more operand pending, db_xnot replaces one with
+	one, and every comparison and boolean replaces two with one.  The
+	push is the only one that can grow the stack, so that is where the
+	limit is tested.  (c900)  */
+    if (opr == db_xpush) {
+        if (sdepth >= STACKMAX)
+            return (db_ferror(CDSIZE));
+        sdepth++;
+    }
+    else if (opr != db_xnot && opr != db_xstop)
+        sdepth--;
+
     /* insert the operator */
     if (cndx < CODEMAX)
         code[cndx++].c_operator = opr;

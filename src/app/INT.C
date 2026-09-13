@@ -12,6 +12,7 @@
 
 LOCAL struct operand *stack[STACKMAX],**sptr;
 LOCAL union codecell *cptr;
+LOCAL int stkovf;               /* the push ran out of stack (c900) */
 
 /* db_interpret - interpret a boolean expression */
 int db_interpret(slptr)
@@ -27,6 +28,7 @@ int db_interpret(slptr)
 
     /* setup stack */
     sptr = stack;
+    stkovf = FALSE;
 
     /* execute the code */
     do {
@@ -34,13 +36,33 @@ int db_interpret(slptr)
 	cptr++;
 	} while ((*(*tcptr).c_operator)());
 
+    /*  If db_xpush ran out of stack it stopped the loop early, so there is
+	no result on top -- only unconsumed operands.  Discard them and say
+	the tuple does not match.  db_compile refuses such an expression
+	before it ever gets here, so this path is defence and not the fix.
+	(c900)  */
+    if (stkovf) {
+	while (sptr != stack) {
+	    sptr -= 1;
+	    if ((*sptr)->o_type == TEMP)
+		free(*sptr);
+	}
+	return (FALSE);
+    }
+
     /* get the result from the top of stack */
     result = *--sptr;
     r = result->o_value.ov_boolean;
     if (result->o_type == TEMP)
         free(result);
 
+    /*  Make sure the stack is empty.  This used to free *sptr BEFORE
+	decrementing, so the first thing it freed was `result' again and
+	stack[0] was never freed at all; it was harmless only because a
+	well-formed expression always left sptr == stack here and the loop
+	never ran once.  (c900)  */
     while (sptr != stack) {
+	sptr -= 1;
         if ((*sptr)->o_type == TEMP)
             free(*sptr);
     }
@@ -57,11 +79,29 @@ int db_xstop()
     return (FALSE);
 }
 
+/*  The push had no depth check against stack[STACKMAX], so an expression
+    that left more than STACKMAX operands pending wrote past the array and
+    on into whatever follows it in the data segment.
+
+    CODEMAX does NOT already bound this, though it nearly does: COM.C
+    compiles left-associatively, so a flat `a>1 & a>1 & ...' never holds
+    more than three operands, and nesting built out of COMPARISONS costs
+    six code cells a level (two pushes and an operator, then the `&'), so
+    CODEMAX's hundred cells refuse it at depth seventeen -- three short.
+    What gets past STACKMAX is that relat()'s comparison loop is optional:
+    a bare factor is one push plus one `&', three cells a level, and
+    `"x" & ("x" & ( ... ))' thirty deep fits inside CODEMAX and pushes
+    thirty-one operands.  (c900)  */
+
 int db_xpush()
 {
 #ifdef DEBUG
     printf("*** xpush(): sptr = %08X, cptr = %08X\n", sptr, cptr);
 #endif
+    if (sptr >= &stack[STACKMAX]) {
+        stkovf = TRUE;
+        return (FALSE);         /* stops the do-while in db_interpret */
+    }
     *sptr++ = (*cptr++).c_operand;
     return(TRUE);
 }

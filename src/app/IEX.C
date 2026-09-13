@@ -19,6 +19,7 @@ int db_import(fmt,a1,a2,a3,a4,a5,a6,a7,a8,a9)
     struct attribute *aptr;
     char fname[STRINGMAX+1],avalue[STRINGMAX+1];
     int tcnt,astart,i,eofile;
+    int len,ch;                         /* (c900) */
     FILE *fp;
 
     /* check for a command line */
@@ -64,6 +65,25 @@ int db_import(fmt,a1,a2,a3,a4,a5,a6,a7,a8,a9)
                 eofile = TRUE;
                 break;
             }
+
+            /*  This was `avalue[strlen(avalue)-1] = EOS;', which removed
+                the last byte read WHATEVER IT WAS.  Three things came of
+                that.  A file with no newline after its last value lost the
+                last character of it -- 1000 imported as 100, and the
+                command still said "[ 1 imported ]", which no return code
+                can show.  A value line beginning with a NUL made strlen()
+                zero and the subscript -1, writing one byte BEFORE avalue.
+                And a line longer than the buffer left its tail in the
+                stream, where the next round of this loop read it as the
+                next attribute's value.  Remove a newline only if there is
+                one, and if there is not, discard the rest of the line.
+                (c900)  */
+            len = strlen(avalue);
+            if (len > 0 && avalue[len-1] == '\n')
+                avalue[len-1] = EOS;
+            else
+                while ((ch = getc(fp)) != '\n' && ch != -1)
+                    ;
 
             /* store the attribute value */
             db_aput(aptr,&sptr->sc_tuple[astart],avalue);

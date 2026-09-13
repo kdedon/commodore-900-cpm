@@ -585,6 +585,12 @@ def edit_image(imgpath, opts):
 # ---- reader (independent path) ----------------------------------------------
 
 def read_dir(imgpath):
+    """Parse the directory.
+
+    Returns {(user, name11): {entry_k: (recs, blocklist)}}, where blocklist is
+    a list of (slot, block) pairs -- slot 0..7 within the entry's allocation
+    list -- carrying only the allocated slots.
+    """
     with open(imgpath, 'rb') as f:
         img = f.read()
     if len(img) < DIRBLKS * BLS:
@@ -601,10 +607,16 @@ def read_dir(imgpath):
         ext_total = (s2 << 5) | ex
         entry_k = ext_total >> 1        # EXM=1: 2 logical extents per entry
         recs = (ext_total & 1) * RECS_PER_LOGEXT + rc
+        # A zero AL slot is a HOLE, not an absence: the file has no block
+        # there (a sparse file, which random-record writes produce), and the
+        # blocks AFTER it still belong at the offsets their own slots name.
+        # So each block is carried with its slot number j; dropping the zeros
+        # and renumbering would slide every later block toward the start.
         blocklist = []
         for j in range(8):
             b = e[16 + 2 * j] | (e[17 + 2 * j] << 8)   # little-endian
             if b:
+                blocklist.append((j, b))
         files.setdefault((user, name11), {})[entry_k] = (recs, blocklist)
     return img, files
 
@@ -641,6 +653,11 @@ def stamp_of(dirbuf, files, key):
     """The SFCB sub-record stamping a file's extent-0 entry, or None.
 
     Only the first directory FCB of a file is stamped (bdos30.asm qdirfcb1),
+    so the stamp is looked up on that entry.  Which entry that is must be
+    decided on the DIRECTORY entry number, not on the raw extent: with EXM=1
+    one entry maps two logical extents, and RC/EX record the LAST logical
+    extent the entry holds, so the first entry of a file over 16 KiB carries
+    raw extent 1.  Shifting by EXM is what read_dir does for the same reason.
     """
     user, name11 = key
     for i in range(NENT):
@@ -649,6 +666,8 @@ def stamp_of(dirbuf, files, key):
             continue
         if bytes(c & 0x7f for c in e[1:12]) != name11:
             continue
+        ext_total = ((e[14] & 0x3f) << 5) | (e[12] & 0x1f)
+        if ext_total >> 1 == 0:         # EXM=1: entries 0 and 1 are one FCB
             return get_sfcb(dirbuf, i)
     return None
 
@@ -762,14 +781,54 @@ def label_modes(mode):
     return ','.join(names) if names else 'none'
 
 
+def extract_path(destdir, user, name11):
+    """Host path for one extracted file, or die().
+
+    THE ELEVEN NAME BYTES ARE UNTRUSTED INPUT.  They are whatever is on the
+    medium -- a directory entry can say `../OUT.TXT' or `/OUT.TXT' as easily
+    as `PIP.COM' -- and nothing in CP/M stops it, so the decoded name may not
+    be handed to os.path.join as a path.  Two separate checks, because either
+    alone can be fooled: the decoded leaf must BE a leaf, and the path it
+    resolves to must lie under the destination (which also catches a symlink
+    planted in the destination directory).
+    """
+    leaf = decode_name(name11)
+    if user != 0:
+        leaf += ".u%d" % user
+    bad = None
+    if leaf in ('', '.', '..'):
+        bad = "is not a filename"
+    elif '/' in leaf or '\\' in leaf or os.sep in leaf or (
+            os.altsep and os.altsep in leaf):
+        bad = "contains a path separator"
+    elif os.path.isabs(leaf) or os.path.splitdrive(leaf)[0]:
+        bad = "is an absolute path"
+    elif any(c < ' ' or c == '\x7f' for c in leaf):
+        bad = "contains a control character"
+    if bad is None:
+        dest = os.path.realpath(destdir)
+        out = os.path.realpath(os.path.join(dest, leaf))
+        if out != os.path.join(dest, leaf):
+            bad = "resolves outside %s" % dest
+    if bad is not None:
+        die("refusing to extract user %d entry %r: the decoded name %r %s"
+            % (user, bytes(name11), leaf, bad))
+    return os.path.join(destdir, leaf)
+
+
 def cmd_extract(imgpath, destdir):
     img, files = read_dir(imgpath)
     os.makedirs(destdir, exist_ok=True)
+    # Every name is validated BEFORE the first byte is written, so a directory
+    # holding one hostile entry does not get half-extracted first.
+    outpath = dict((key, extract_path(destdir, key[0], key[1]))
+                   for key in sorted(files))
     for (user, name11) in sorted(files):
         extmap = files[(user, name11)]
         sz = file_size(extmap)
         buf = bytearray(sz)             # unallocated (sparse) ranges read as 0
         for k, (recs, blocklist) in extmap.items():
+            for j, b in blocklist:
                 if b > DSM:
                     die("%s: block %d out of range" % (decode_name(name11), b))
                 src = img[b * BLS:(b + 1) * BLS]
@@ -777,6 +836,7 @@ def cmd_extract(imgpath, destdir):
                 n = min(BLS, sz - dst)
                 if n > 0:
                     buf[dst:dst + n] = src[:n]
+        with open(outpath[(user, name11)], 'wb') as f:
             f.write(buf)
     print("extracted %d files to %s" % (len(files), destdir))
 

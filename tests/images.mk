@@ -106,6 +106,38 @@ $(CPMACONCW): $(CPMAIMG) $(UCONCW) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACW)
 
+# Malformed x.out fixtures for verify-xout.  tests/mkxout.py derives them
+# from MHELLO.Z8K, so a fixture that fails to be malformed in exactly the
+# intended way fails the script rather than quietly testing nothing.
+CPMAXOUT = build/cpma-xout.img
+DISKAXO  = build/diska-xout
+$(CPMAXOUT): $(CPMAIMG) $(UOBJDIR)/MHELLO.Z8K $(UXDMA) tests/mkxout.py \
+		tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKAXO)
+	@mkdir -p $(DISKAXO)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKAXO)/$$b || cp $$f $(DISKAXO)/$$b; done
+	@for f in $(UXDMA); do b=`basename $$f`; \
+		cmp -s $$f $(DISKAXO)/$$b || cp $$f $(DISKAXO)/$$b; done
+	python3 tests/mkxout.py $(UOBJDIR)/MHELLO.Z8K $(DISKAXO)
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAXO)
+
+# F4 descriptor-reservation fixtures: the development medium plus the two
+# creators.  Their own image rather than $(CPMACONC), which several
+# concurrency targets share and none of them expects to grow.
+CPMACONCR = build/cpma-concr.img
+DISKACR   = build/diska-concr
+$(CPMACONCR): $(CPMAIMG) $(UCONCR) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKACR)
+	@mkdir -p $(DISKACR)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKACR)/$$b || cp $$f $(DISKACR)/$$b; done
+	@for f in $(UCONCR); do b=`basename $$f`; \
+		cmp -s $$f $(DISKACR)/$$b || cp $$f $(DISKACR)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACR)
+
 # F14 fixtures for the DISCRIMINATING descriptor race: the development
 # medium plus CONCL and CONCR.  Its own image for the same reason
 # $(CPMACONCR) has one -- a shared image none of its users expects to grow.
@@ -121,6 +153,21 @@ $(CPMACONCR2): $(CPMAIMG) $(UCONCR2) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACR2)
 
+# F4 split-I/D fixtures: the development medium plus SPLITB, which drives
+# the release disk's own 0xEE0B tools (ASZ8K and SIZEZ8K) and the source
+# file MINI.8KN that is already staged there.
+CPMASPLIT = build/cpma-split.img
+DISKASP   = build/diska-split
+$(CPMASPLIT): $(CPMAIMG) $(USPLIT) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKASP)
+	@mkdir -p $(DISKASP)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKASP)/$$b || cp $$f $(DISKASP)/$$b; done
+	@for f in $(USPLIT); do b=`basename $$f`; \
+		cmp -s $$f $(DISKASP)/$$b || cp $$f $(DISKASP)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKASP)
+
 # Quantum measurement fixtures.
 CPMACONCV = build/cpma-concv.img
 DISKACV   = build/diska-concv
@@ -133,3 +180,38 @@ $(CPMACONCV): $(CPMAIMG) $(UCONCV) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
 		cmp -s $$f $(DISKACV)/$$b || cp $$f $(DISKACV)/$$b; done
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACV)
+
+# F1 directory-guard fixtures.  DGENA/DGENB/DERR need nothing of the medium
+# (verify-dirwerr truncates the whole disk, not this partition).
+CPMADIRG = build/cpma-dirg.img
+DISKADG  = build/diska-dirg
+$(CPMADIRG): $(CPMAIMG) $(UDIRG) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKADG)
+	@mkdir -p $(DISKADG)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKADG)/$$b || cp $$f $(DISKADG)/$$b; done
+	@for f in $(UDIRG); do b=`basename $$f`; \
+		cmp -s $$f $(DISKADG)/$$b || cp $$f $(DISKADG)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKADG)
+
+# THE CORRUPT ENTRY IS THE FIXTURE.  dirpoke.py writes one out-of-range
+# block number into one A: directory entry after the file system is built,
+# and fails if it cannot find an entry to write it into -- so verify-dirbnd
+# cannot pass by being handed a clean disk.  2600 is past A:'s dsm (2559)
+# and lands, byte 325 of the shared pool, inside B:'s live allocation map
+# (src/bios/bios900.c drvinit carves both out of one alvpool[]).
+DIRBNDBLK = 2600
+CPMADIRB = build/cpma-dirb.img
+DISKADB  = build/diska-dirb
+$(CPMADIRB): $(CPMAIMG) $(UDIRB) tools/mkcpmfs.py tools/sparse.py \
+		tests/dirpoke.py | $(OBJDIR)
+	@rm -rf $(DISKADB)
+	@mkdir -p $(DISKADB)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKADB)/$$b || cp $$f $(DISKADB)/$$b; done
+	@for f in $(UDIRB); do b=`basename $$f`; \
+		cmp -s $$f $(DISKADB)/$$b || cp $$f $(DISKADB)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKADB)
+	python3 tests/dirpoke.py $@ $(DIRBNDBLK)

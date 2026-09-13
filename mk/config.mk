@@ -124,6 +124,12 @@ UCONCFS	= $(UOBJDIR)/CONCD.Z8K $(UOBJDIR)/CONCE.Z8K \
 	  $(UOBJDIR)/CONCH.Z8K $(UOBJDIR)/CONCI.Z8K \
 	  $(UOBJDIR)/CONCX.Z8K $(UOBJDIR)/CONCY.Z8K
 
+# The default-DMA-across-a-spawn exerciser (verify-xout).
+UXDMA	= $(UOBJDIR)/XDMA.Z8K
+
+# F4: two creators and one free descriptor, with a yield in the middle of
+# creation (verify-concr).  CONCM holds the lock at an operator prompt and
+# CONCO parks inside pcrgen(); the programs they ask for -- MHELLO and
 # CONCB -- are already on the development image.  CONCR joined it at F14:
 # in role W it is the ballast that keeps exactly ONE descriptor free, which
 # was implicit in PNPROC being 4 and had to become explicit at 6.
@@ -136,6 +142,12 @@ UCONCR	= $(UOBJDIR)/CONCM.Z8K $(UOBJDIR)/CONCO.Z8K $(UOBJDIR)/CONCR.Z8K
 # is both creators and the ballast, its role taken from its command tail.
 # MHELLO, the program both creators ask for, is already on the image.
 UCONCR2	= $(UOBJDIR)/CONCL.Z8K $(UOBJDIR)/CONCR.Z8K
+
+# F4: a second split-I/D program asked for while one is running
+# (verify-split).  It creates the release disk's own 0xEE0B tools, so it
+# needs nothing of its own on the medium.
+USPLIT	= $(UOBJDIR)/SPLITB.Z8K
+
 # XDOS exercisers.
 UXDOS	= $(UOBJDIR)/XDOSM.Z8K $(UOBJDIR)/XDOSD.Z8K $(UOBJDIR)/XDOSE.Z8K
 
@@ -156,6 +168,14 @@ UCONCV	= $(UOBJDIR)/CONCV.Z8K $(UOBJDIR)/CONCY.Z8K
 # Warm-boot segment ownership (F5): the foreground, the background that
 # outlives it, and the program the CCP runs afterwards.
 UCONCW	= $(UOBJDIR)/CONCW.Z8K $(UOBJDIR)/CONCWB.Z8K $(UOBJDIR)/CONCWC.Z8K
+
+# F1: the directory's three missing guards.  DGENA/DGENB are the two
+# processes that share a directory record (verify-dirgen), DERR writes past
+# the end of a truncated drive B: (verify-dirwerr), and DBOUND reads drive
+# B:'s free space either side of logging a drive with a corrupt directory
+# entry in (verify-dirbnd).  Excluded from the release disk.
+UDIRG	= $(UOBJDIR)/DGENA.Z8K $(UOBJDIR)/DGENB.Z8K $(UOBJDIR)/DERR.Z8K
+UDIRB	= $(UOBJDIR)/DBOUND.Z8K
 
 # SESSION starts a CCP on a second console (BDOS function 142): it is the
 # only door to the multi-user feature, so it ships on both drive-A images.

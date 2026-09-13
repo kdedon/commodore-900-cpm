@@ -816,6 +816,18 @@ build/cpmhost: $(wildcard $(CPMCMD)) | $(OBJDIR)
 dirfmt-check: build/cpmhost
 	python3 tests/dirfmt-test.py build/dirfmt build/cpmhost
 
+# --extract against a directory that lies.  The eleven name bytes of a CP/M
+# directory entry are untrusted input and --extract turns them into a host
+# path, so this target builds entries a well-behaved CP/M would never write --
+# a name of `../OUT.TXT', a sparse allocation list, a file over 16 KiB whose
+# first entry carries raw extent 1 -- and judges the host DISK, not the tool's
+# exit status: the traversal case checks that the file it aimed at outside the
+# destination still holds what it held.  Pure host work, no emulator.
+.PHONY: verify-extract
+verify-extract:
+	python3 tests/extract-test.py build/extract
+	@echo "verify-extract: PASS -- a decoded CP/M name is a leaf, holes stay holes, a big file keeps its stamp"
+
 # The proof that matters for sequencing: a STAMPED drive A: booted by the
 # CURRENT, unmodified CP/M.  The BDOS does not maintain stamps yet -- what
 # this shows is that it does not break them and does not misreport space.
@@ -1382,6 +1394,16 @@ SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 # a file this target just compiled.  The \" are for the shell: SDB wants
 # real quotes around a file name, or it scans it as an identifier and
 # appends .dat.
+# SORT.DAT is copied onto the disk BEFORE SDB runs and is nothing to do
+# with the database: it is an ordinary user file that happens to carry the
+# name SRT.C's debugging trace used, and the `sort' statement at the end
+# of the session is what used to destroy it.  SRT.C opened that name with
+# mode "w" on every sort even though its `dns' flag is 0 in every shipped
+# build, so the file was truncated by a command that had no business
+# touching it.  The sort is last so that the export above it -- and the
+# checks on what it produced -- are unaffected; what the sort produced is
+# exported separately into SDBSRT.TXT and read back off the partition.
+SDBRUNIN = $(OSSEL)PIP SORT.DAT=SDBIN.TXT\rSDB\rhelp\rcreate emp ( name char 10 dept char 6 sal num 6 ) 20\rimport \"SDBIN.TXT\" into emp\rprint * from emp ;\rprint * from emp where emp.sal > \"1500\" ;\rexport emp into \"SDBOUT.TXT\" ;\rsort emp by sal ;\rexport emp into \"SDBSRT.TXT\" ;\rexit\r$(ENDIN)
 .PHONY: verify-sdb
 verify-sdb: all
 	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
@@ -3066,6 +3088,35 @@ CCPLOG	= build/verify-ccp.log
 CCPVERIFYIN = $(OSSEL)U5HELLO PATHOK\rTYPE DEV:U5ONLY.TXT\rDEV:\rTYPE U5ONLY.TXT\rHOME:\rIFERR\rIFOK\rRCCFAIL\rRCCPASS\rIFEX\rBADCMD FOO\rSUBMIT TEST BUILTIN SECOND\r
 CCPRCSTATIN = $(OSSEL)RCCSTAT\r
 CCPRCSTATLOG = build/verify-ccp-rcstat.log
+# F11: THE ASSEMBLY WITNESS, and the reason there is one.  RCERR.8KN and
+# RCOK.8KN (src/dist/disk-ccp) set BDOS function 108 BY HAND -- three
+# instructions and a warm boot, no C runtime underneath -- so they separate
+# the two halves of the path F10's three commands exercise together.  If
+# RCCFAIL fails and RCERR passes, src/cmd/cstart.c is not publishing main's
+# status; if both fail, the BDOS or the CCP is not carrying it.  Without
+# that, a P1 #20 regression tells you a return code was lost and nothing
+# about where.  Both were checked into the tree as fixtures for exactly this
+# and NO TARGET RAN THEM; F10 having made the status actually arrive is what
+# gives them something true to assert.
+#
+# They are assembled and converted ON TARGET, which nothing else in this
+# suite does: verify-arx, verify-legacy and verify-rsx2 all stop at XCON or
+# XDUMP and never load the result.  So this run also proves the devpack can
+# produce a program the system will then RUN -- the last step of the
+# self-hosting claim.  XCON's x.out is the command-file format, and the
+# sources are position independent on purpose (no message, no jumps) because
+# it emits no relocation records.
+#
+# ITS OWN RUN, for two reasons: the split tools go through the SC-trap shim
+# and need ARXMAX rather than EMUMAX, and ASZ8K/XCON print through the same
+# console the main session's type-ahead is queued in.  IFRC/IFRC0 are
+# invoked bare, the way IFERR/IFOK are, and TYPE markers of their own so the
+# transcript says which submit file and which branch -- the four RCIF4/
+# RCELSE4/RCIF5/RCELSE5 files.  As shipped both fixtures typed HELLO.TXT
+# and README.TXT, the same markers IFERR.SUB and IFOK.SUB use, which could
+# not have been told apart in a transcript.
+CCPRCASMIN = $(OSSEL)ASZ8K RCERR.8KN\rXCON -o RCERR.Z8K RCERR.OBJ\rASZ8K RCOK.8KN\rXCON -o RCOK.Z8K RCOK.OBJ\rDIR RC*.Z8K\rIFRC\rIFRC0\r
+CCPRCASMLOG = build/verify-ccp-rcasm.log
 .PHONY: verify-ccp
 verify-ccp: all
 	rm -rf $(CCPFS)
@@ -3082,6 +3133,10 @@ verify-ccp: all
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CCPTEST)) \
 		--input="$(CCPRCSTATIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CCPRCSTATLOG))
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CCPTEST)) \
+		--input="$(CCPRCASMIN)" --max=$(ARXMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CCPRCASMLOG))
 	@$(EMUOK)
 	@grep -q 'arg 1: PATHOK' $(CCPLOG) \
 		|| { echo "verify-ccp: FAIL -- path did not reach user area 5"; exit 1; }
@@ -3122,6 +3177,42 @@ verify-ccp: all
 		     echo "              can never report failure"; exit 1; }
 	@grep -q 'RCC3: STAT _exit(1) TOOK THE ELSE BRANCH' $(CCPRCSTATLOG) \
 		&& { echo "verify-ccp: FAIL -- STAT's _exit(1) took the ELSE branch"; \
+		     exit 1; } || true
+	@# F11: the assembly witness.  Assert the OBJECTS first -- that the
+	@# assembler and the converter actually produced a program -- because
+	@# a missing RCERR.Z8K makes `RCERR' an unresolvable command, and the
+	@# CCP's error handler would then leave the return code from the
+	@# command BEFORE it, which `IF ERROR' would report as a pass.
+	@# The DIRECTORY, not the echo of the XCON command line: a DIR listing
+	@# writes the name padded to eight and the type with NO dot, so
+	@# `RCERR' followed by spaces and `Z8K' can only come from the
+	@# directory.  Matching `RCERR.Z8K' instead would have matched the
+	@# echoed command and asserted nothing.
+	@grep -qE 'RCERR +Z8K' $(CCPRCASMLOG) \
+		|| { echo "verify-ccp: FAIL -- RCERR.Z8K is not in the directory, so"; \
+		     echo "              ASZ8K + XCON did not produce a program and the"; \
+		     echo "              IF ERROR assertions below cannot mean anything."; \
+		     echo "              See $(CCPRCASMLOG)"; exit 1; }
+	@grep -qE 'RCOK +Z8K' $(CCPRCASMLOG) \
+		|| { echo "verify-ccp: FAIL -- RCOK.Z8K is not in the directory"; exit 1; }
+	@grep -qi 'not a command\|CCP ERROR HANDLER' $(CCPRCASMLOG) \
+		&& { echo "verify-ccp: FAIL -- something in the assemble/convert/run"; \
+		     echo "              chain was not a command, so one of ASZ8K, XCON,"; \
+		     echo "              RCERR or RCOK did not run"; exit 1; } || true
+	@grep -q 'RCA1: ASM FN 108 = 7 TOOK THE IF BRANCH' $(CCPRCASMLOG) \
+		|| { echo "verify-ccp: FAIL -- a hand-written function 108 = 7 did not"; \
+		     echo "              reach \`IF ERROR'.  This path has no C runtime in"; \
+		     echo "              it, so with RCCFAIL passing the fault is in the"; \
+		     echo "              BDOS or the CCP, not in src/cmd/cstart.c"; exit 1; }
+	@grep -q 'RCA1: ASM FN 108 = 7 TOOK THE ELSE BRANCH' $(CCPRCASMLOG) \
+		&& { echo "verify-ccp: FAIL -- function 108 = 7 took the ELSE branch"; \
+		     exit 1; } || true
+	@grep -q 'RCA2: ASM FN 108 = 0 TOOK THE ELSE BRANCH' $(CCPRCASMLOG) \
+		|| { echo "verify-ccp: FAIL -- a hand-written function 108 = 0 did not"; \
+		     echo "              take the ELSE branch: the return code is stuck"; \
+		     echo "              nonzero, or RCOK's store did not land"; exit 1; }
+	@grep -q 'RCA2: ASM FN 108 = 0 TOOK THE IF BRANCH' $(CCPRCASMLOG) \
+		&& { echo "verify-ccp: FAIL -- function 108 = 0 took the IF branch"; \
 		     exit 1; } || true
 	@grep -q 'arg 1: NESTOK' $(CCPLOG) \
 		|| { echo "verify-ccp: FAIL -- nested IF EXIST / IF ~EXIST"; exit 1; }
@@ -5636,12 +5727,26 @@ verify-get: all $(CPMAGP)
 PUTIN1	= $(OSSEL)PUT FILE POUT.TXT\rTYPE PMARKER.TXT\rRSXT2\rPUT CONSOLE\rTYPE POUT.TXT\r
 PUTIN2	= $(OSSEL)PUT FILE POUT.TXT [NO ECHO]\i\r\iT\iY\iP\iE\i \iP\iM\iA\iR\iK\iE\iR\i.\iT\iX\iT\i\r\iP\iU\iT\i \iC\iO\iN\iS\iO\iL\iE\i\rTYPE POUT.TXT\r
 PUTIN3	= $(OSSEL)PUT\rPUT CONSOLE\rPUT FILE PMARKER.TXT\rPUT FILE PNEW.TXT [PROGRAM]\rPUT PRINTER FILE PNEW.TXT\rPUT FILE PNEW.TXT QQQ\r
+# --- 4: PUT.RSX is not there, so nothing can be captured.  The point of
+# this run is what is left ON THE DISK afterwards, not what was printed:
+# PUT used to create the requested file BEFORE it went looking for its
+# module, so a missing PUT.RSX left a zero-length file of the user's own
+# name -- and PUT's own "already exists; erase it first" test then refused
+# the corrected retry, which is why the command is issued TWICE here.  The
+# second run must be refused for the same reason as the first and not for
+# the file the first one left.  PSTUB.TXT must not exist at the end, and
+# that is checked by pulling the partition apart, not by reading DIR.
+PUTIN4	= $(OSSEL)ERA PUT.RSX\rPUT FILE PSTUB.TXT\rPUT FILE PSTUB.TXT\rDIR PSTUB.TXT\r
 PUTMARK	= [NO ECHO]
+GPDIR	= build/gp
 
 .PHONY: verify-put
 verify-put: all $(CPMAGP)
+	for n in 1 2 3 4; do \
 		$(MKDISK) $(GPIMG) $(CPMSYS) $(CPMAGP); \
 		case $$n in \
+		1) in='$(PUTIN1)';; 2) in='$(PUTIN2)';; 3) in='$(PUTIN3)';; \
+		4) in='$(PUTIN4)';; esac; \
 		{ $(EMUCD) && ./c900 --disk=$(abspath $(GPIMG)) \
 			--input="$$in" --input-mark='$(PUTMARK)' \
 			--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
@@ -5677,6 +5782,25 @@ verify-put: all $(CPMAGP)
 		|| { echo "verify-put: FAIL -- a word PUT does not know was swallowed"; exit 1; }
 	@test "`grep -c 'Putting console output to file' $(GPLOG)-put3.log`" = 0 \
 		|| { echo "verify-put: FAIL -- one of the refused commands attached the module anyway"; exit 1; }
+#	--- 4: a refusal must leave no file behind.  GPIMG still holds run
+#	4's disk, so the answer is on the medium.
+	@test "`grep -c 'cannot find PUT.RSX' $(GPLOG)-put4.log`" = 2 \
+		|| { echo "verify-put: FAIL -- with PUT.RSX erased, BOTH attempts must be refused for the missing module; one of them was not"; exit 1; }
+	@test "`grep -c 'already exists; erase it first' $(GPLOG)-put4.log`" = 0 \
+		|| { echo "verify-put: FAIL -- the second PUT was refused because of a file the FIRST one left behind: the empty output file is still being created before the module is validated"; exit 1; }
+	rm -rf $(GPDIR); mkdir -p $(GPDIR)
+	dd if=$(GPIMG) of=$(GPDIR)/cpma.img bs=512 skip=$(CPMA_START) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(GPDIR)/cpma.img $(GPDIR)
+	@test ! -e $(GPDIR)/PSTUB.TXT \
+		|| { echo "verify-put: FAIL -- PSTUB.TXT is ON THE DISK after two"; \
+		     echo "                refused commands.  PUT created the requested"; \
+		     echo "                output before it knew it could write to it,"; \
+		     echo "                and the empty file it left is what blocks the"; \
+		     echo "                corrected retry (src/cmd/put.c)"; exit 1; }
+	@test -s $(GPDIR)/PMARKER.TXT \
+		|| { echo "verify-put: FAIL -- the fixture file went missing, so the check above proved nothing about PSTUB.TXT"; exit 1; }
+	@echo "verify-put: PASS -- functions 2, 9 and 111 copied into a file, the module seen in the chain, [ECHO] and [NO ECHO] differing in what the console saw and not in what the file got, the last partial record flushed and the file closed by PUT CONSOLE, six refusals by name, and a missing PUT.RSX leaving no file on the disk to block the retry"
 #      awkward one.  Its four segments total 61,188 bytes (0xEF04,
 #      decoded from build/diska/DDT.Z8K), and an 0xEE03 image is given
 #      0x10000 - rsxres() - BPLEN - DEFSTACK: 0xFE00 with nothing
@@ -5883,6 +6007,161 @@ verify-wdbusy: build/wdtest
 build/wdtest: tests/wdtest.c src/bios/wd900.c | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ tests/wdtest.c
 
+
+# ======================================================================
+# F1 -- THE DIRECTORY IS THE THING TWO PROCESSES SHARE, and all three of
+# its guards were missing.  Closes P1 #1, #3 and #8 of
+# docs/cpm/docs/FIRST-RELEASE-REVIEW-2026-09-12.md in c900oses.
+# ======================================================================
+
+# ---- verify-dirgen: a peer's directory entry must survive our close ----
+#
+# src/bdos/dskutil.c dirget().  pdirbuf and dirsecn are per-process (they
+# are inside struct stvars, which src/bdos/proc.c copies at every switch),
+# and with cks == 0 -- every C900 drive, src/bios/bios900.c -- a cached
+# record used to be handed straight back.  close() then writes all 128
+# bytes of it, so a record cached before a peer's create and written after
+# it erases the peer's entry.
+#
+# The ordering is the programs', not the scheduler's: DGENA and DGENB hand
+# each other XDOS flags (BDOS 132/133), so DGENA has the record cached
+# before DGENB creates and closes after it.  `DGENB: made=2' asserts the
+# situation was actually built -- both entries in ONE 128-byte record --
+# and without it the target would pass having tested nothing.
+DIRGIMG	= build/dirgen.bin
+DIRGLOG	= build/dirgen.log
+.PHONY: verify-dirgen
+verify-dirgen: all $(CPMADIRG)
+	$(MKDISK) $(DIRGIMG) $(CPMSYS) $(CPMADIRG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(DIRGIMG)) \
+		--input="$(OSSEL)DGENA\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(DIRGLOG))
+	@$(EMUOK)
+	@grep -q 'DGENA: A start' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- DGENA did not run at all"; exit 1; }
+	@grep -q 'DGENA: no second process' $(DIRGLOG) \
+		&& { echo "verify-dirgen: FAIL -- function 144 refused; the reason is in the"; \
+		     echo "               transcript above"; exit 1; } || true
+	@grep -q 'DGENA: FAIL' $(DIRGLOG) \
+		&& { echo "verify-dirgen: FAIL -- DGENA could not set the situation up; see"; \
+		     echo "               the transcript above"; exit 1; } || true
+	@grep -q 'DGENA: slot=1' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- the target's entry is not at slot 1 of a"; \
+		     echo "               directory record, so a stale copy of that record"; \
+		     echo "               would not cover the peer's entry at all"; exit 1; }
+	@grep -q 'DGENB: made=2' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- the peer's entry did not land in the SAME"; \
+		     echo "               128-byte record as the target's, so nothing was"; \
+		     echo "               shared and this target tested nothing"; exit 1; }
+	@grep -q 'DGENA: own=1' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- the closing process lost its OWN file"; exit 1; }
+	@grep -q 'DGENA: peer=1' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- one process's close() overwrote another"; \
+		     echo "               process's directory entry.  The per-process cached"; \
+		     echo "               directory record (src/bdos/dskutil.c dirget) was"; \
+		     echo "               reused after a peer had rewritten that record, and"; \
+		     echo "               the whole 128 bytes went back to the disk."; exit 1; }
+	@grep -q 'DGENA: A done' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- DGENA did not finish"; exit 1; }
+	@grep -q 'DGENB: B done' $(DIRGLOG) \
+		|| { echo "verify-dirgen: FAIL -- DGENB did not finish"; exit 1; }
+	@echo "verify-dirgen: PASS -- a process closed a file over a directory record"
+	@echo "               another process had rewritten, and both entries survived"
+
+# ---- verify-dirwerr: a refused transfer is not a success ----
+#
+# src/bdos/dskutil.c rdwrt() left its retry loop and returned zero, so a
+# transfer the medium refused was reported as complete.  The `C' answer
+# (continue with bad data) is the sharpest form of it: error mode 0 sets no
+# errcode either, so nothing anywhere said the record had not been written.
+#
+# The device error is REAL.  The medium is truncated so drive B: keeps its
+# whole directory (32 sectors) and its first data block (8 more) and nothing
+# after that, and the emulated hard-disk controller answers 92h, drive not
+# ready, for an LBA past the end of the image file (bus.c).  DERR writes
+# past that block; the scripted operator answers `C' once, which is all the
+# session needs whether or not the write is reported.
+#
+# THE PROMPT IS PART OF THE ASSERTION.  `write error on drive B' in the
+# transcript is what says a physical error actually happened; without it
+# `no failure reported' would be indistinguishable from `nothing failed'.
+# CPMB_BASEBLK (mk/config.mk) is where the B: partition starts.  DIRWKEEP is
+# how many of its sectors the truncated medium keeps: 32 for the whole
+# directory (four 4096-byte allocation blocks) plus 8 for one data block.
+DIRWKEEP = 40
+DIRWIMG	= build/dirwerr.bin
+DIRWLOG	= build/dirwerr.log
+.PHONY: verify-dirwerr
+verify-dirwerr: all $(CPMADIRG)
+	$(MKDISK) $(DIRWIMG) $(CPMSYS) $(CPMADIRG) $(CPMBIMG)
+	truncate -s $$(( ($(CPMB_BASEBLK) + $(DIRWKEEP)) * 512 )) $(DIRWIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(DIRWIMG)) \
+		--input="$(OSSEL)DERR\r\iC$(ENDIN)" --input-mark="Continue with bad data" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(DIRWLOG))
+	@$(EMUOK)
+	@grep -q 'DERR: start' $(DIRWLOG) \
+		|| { echo "verify-dirwerr: FAIL -- DERR did not run at all"; exit 1; }
+	@grep -q 'DERR: FAIL' $(DIRWLOG) \
+		&& { echo "verify-dirwerr: FAIL -- DERR could not set up on B:; see above"; exit 1; } || true
+	@grep -q 'write error on drive B' $(DIRWLOG) \
+		|| { echo "verify-dirwerr: FAIL -- no physical write error happened at all, so"; \
+		     echo "                the truncation did not remove the block DERR aims"; \
+		     echo "                at and this target tested nothing"; exit 1; }
+	@grep -q 'DERR: refused=unreported' $(DIRWLOG) \
+		&& { echo "verify-dirwerr: FAIL -- the write was reported as SUCCESSFUL even"; \
+		     echo "                though the medium refused it and the operator said"; \
+		     echo "                to continue with bad data.  rdwrt() returned zero"; \
+		     echo "                after leaving its retry loop (src/bdos/dskutil.c),"; \
+		     echo "                which is also what let a failed directory read be"; \
+		     echo "                published as cache and a failed directory write be"; \
+		     echo "                followed by clraloc()."; exit 1; } || true
+	@grep -q 'DERR: refused=reported' $(DIRWLOG) \
+		|| { echo "verify-dirwerr: FAIL -- DERR reported nothing"; exit 1; }
+	@grep -q 'DERR: done' $(DIRWLOG) \
+		|| { echo "verify-dirwerr: FAIL -- DERR did not finish"; exit 1; }
+	@echo "verify-dirwerr: PASS -- a write the medium refused was reported to the"
+	@echo "                program instead of being counted as a success"
+
+# ---- verify-dirbnd: a corrupt block number stays out of the next drive ----
+#
+# src/bdos/fileio.c alloc() handed directory-supplied block numbers to
+# setaloc() with no check against the drive's dsm, and setaloc had no bound
+# of its own.  src/bios/bios900.c drvinit() carves every drive's alv out of
+# ONE 1536-byte pool in drive order, so a block number past A:'s dsm lands
+# inside B:'s LIVE allocation map: tests/dirpoke.py writes 2600 into an A:
+# entry (byte 325 of the pool, B:'s block 40).
+#
+# The run carries its own control: B: is logged in and its free space read,
+# A: is logged in next -- which is when the corrupt entry is scanned -- and
+# B:'s free space is read again without B: being logged in a second time.
+# Nothing but the scan of A: can have moved it.  No second session and no
+# expected constant, so nothing here goes stale when the disk contents do.
+DIRBIMG	= build/dirbnd.bin
+DIRBLOG	= build/dirbnd.log
+.PHONY: verify-dirbnd
+verify-dirbnd: all $(CPMADIRB)
+	$(MKDISK) $(DIRBIMG) $(CPMSYS) $(CPMADIRB) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(DIRBIMG)) \
+		--input="$(OSSEL)DBOUND\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(DIRBLOG))
+	@$(EMUOK)
+	@grep -q 'DBOUND: start' $(DIRBLOG) \
+		|| { echo "verify-dirbnd: FAIL -- DBOUND did not run at all"; exit 1; }
+	@grep -q 'DBOUND: b0=0' $(DIRBLOG) \
+		&& { echo "verify-dirbnd: FAIL -- drive B: reported no free space at all, so"; \
+		     echo "               the two readings cannot say anything"; exit 1; } || true
+	@grep -q 'DBOUND: peermap=intact' $(DIRBLOG) \
+		|| { echo "verify-dirbnd: FAIL -- logging drive A: in changed drive B:'s free"; \
+		     echo "               space.  A corrupt block number in an A: directory"; \
+		     echo "               entry reached setaloc() unbounded and set a bit in"; \
+		     echo "               B:'s live allocation map (one 1536-byte pool holds"; \
+		     echo "               both -- src/bios/bios900.c drvinit)."; exit 1; }
+	@grep -q 'DBOUND: done' $(DIRBLOG) \
+		|| { echo "verify-dirbnd: FAIL -- DBOUND did not finish"; exit 1; }
+	@echo "verify-dirbnd: PASS -- a directory entry claiming a block past the"
+	@echo "               drive's dsm left the next drive's allocation map alone"
+
 # ---- a refusal that mutates first is not a refusal ----
 # P1 #2 and the password/XFCB P2 items of the first-release review, in one
 # session, because all four are the same mistake: the program is told no
@@ -6048,6 +6327,102 @@ verify-refuse: all
 	@echo "        without its password and opened with it; and function 103 wrote"
 	@echo "        nothing onto a read-only drive"
 
+# ---- the loader must not believe the file (verify-xout) ----
+# P1 #4 and #5 of the first-release review, in src/bdos/pgmld.c.  Three
+# malformed images, all derived from MHELLO.Z8K by tests/mkxout.py so that
+# everything except the defect is the linker's own work:
+#
+#   BADSEG.Z8K    header segment count 17, one past the sixteen-element
+#   HUGESEG.Z8K   header segment count 1000        seglim/segsiz/segloc/x_sg
+#   TRUNCX.Z8K    last record dropped; the declared segment lengths run
+#                 past the records that exist, code segment intact
+#
+# WHAT IS ASSERTED IS THE OBJECT, NOT THE RETURN CODE.  A refusal that
+# still ran the program would satisfy a return-value check, so the
+# transcript is asked instead how many times MHELLO's own greeting
+# appears: TRUNCX is MHELLO, so if the loader accepts it the greeting
+# appears a THIRD time (and its arguments do not, because there are
+# none).  Two is the only right answer -- the two real MHELLO runs.
+# The same count also proves the stale-TPA path did not run: MHELLO ONE
+# leaves MHELLO's code in the TPA, and TRUNCX's missing records are
+# exactly what a loader that strides over failed reads leaves behind.
+#
+# Then the session must go on and load GOOD programs: MHELLO TWO (0xEE01)
+# after both refusals, ED (0xEE0B) and DDT (0xEE03), the two release-disk
+# binaries a header check could plausibly break.  ED is gate-off (\g) from
+# its command line on, as in verify-ed; DDT is last because its `-' prompt
+# does not latch scripted input, and the run ends on console idle.
+# The transcript cannot see the OTHER half of P1 #4 -- a bad count that is
+# refused only AFTER its loop has written past the arrays looks exactly like
+# a bad count that was bounded -- so the same pgmld.c is compiled for the
+# host with the compiler's bounds checking on its globals and driven over
+# the same malformed images.  tests/xouttest.c's header says why.
+build/xouttest: tests/xouttest.c src/bdos/pgmld.c src/bdos/x.out.h \
+		src/bdos/bdosdef.h src/bios/c900cfg.h | $(OBJDIR)
+	$(HOSTCC) -std=gnu89 -w -fsanitize=address -Isrc/bios -o $@ tests/xouttest.c
+
+XOUTIMG	= build/xouttest.bin
+XOUTLOG	= build/verify-xout.log
+XOUTFMT	= $(OSSEL)MHELLO ONE\rBADSEG\rHUGESEG\rTRUNCX\rMHELLO TWO\rED XOUTT.TXT\r\\gi\rline from ED after the refusals\r\032e\rTYPE XOUTT.TXT\rDDT MHELLO.Z8K\r
+.PHONY: verify-xout
+verify-xout: all $(CPMAXOUT) build/xouttest
+	./build/xouttest \
+		|| { echo "verify-xout: FAIL -- the host run of pgmld() above either"; \
+		     echo "             mis-handled a malformed image or wrote past the"; \
+		     echo "             segment arrays (an address-sanitizer report is"; \
+		     echo "             the overrun itself, not a test artefact)"; exit 1; }
+	$(MKDISK) $(XOUTIMG) $(CPMSYS) $(CPMAXOUT)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XOUTIMG)) \
+		--input="$$(printf '$(XOUTFMT)')" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } \
+		| tee $(abspath $(XOUTLOG))
+	@$(EMUOK)
+	@test "`grep -c 'MWC hello' $(XOUTLOG)`" = 2 \
+		|| { echo "verify-xout: FAIL -- MHELLO's greeting appears `grep -c 'MWC hello' $(XOUTLOG)` times, not 2:"; \
+		     echo "             a malformed image was LOADED AND RUN (three times means"; \
+		     echo "             TRUNCX ran; one means a good program stopped loading)."; exit 1; }
+	@test "`grep -c 'File is not executable' $(XOUTLOG)`" = 2 \
+		|| { echo "verify-xout: FAIL -- the two bad segment counts were not both"; \
+		     echo "             refused with a reportable error (BADHDR)"; exit 1; }
+	@test "`grep -c 'Read error on program load' $(XOUTLOG)`" = 1 \
+		|| { echo "verify-xout: FAIL -- the truncated image was not refused with"; \
+		     echo "             a read error the caller can report"; exit 1; }
+	@grep -q 'arg 1: ONE' $(XOUTLOG) \
+		|| { echo "verify-xout: FAIL -- the baseline MHELLO run is missing, so the"; \
+		     echo "             greeting count proves nothing"; exit 1; }
+	@grep -q 'arg 1: TWO' $(XOUTLOG) \
+		|| { echo "verify-xout: FAIL -- a good 0xEE01 program no longer loads after"; \
+		     echo "             the three refusals"; exit 1; }
+	@grep -q 'line from ED after the refusals' $(XOUTLOG) \
+		|| { echo "verify-xout: FAIL -- ED.Z8K (0xEE0B, on the release disk) did not"; \
+		     echo "             load, run and write its file"; exit 1; }
+	@grep -q 'Zilog portable debugger' $(XOUTLOG) \
+		|| { echo "verify-xout: FAIL -- DDT.Z8K (0xEE03, on the release disk) did not load"; exit 1; }
+	@# ---- the third finding: a child load must not move the PARENT's
+	@# default DMA, and must leave the CHILD one of its own.  Its own run,
+	@# because XDMA creates a second process and the run ends when both
+	@# are done (no end mark: the CCP prompt comes back while the child is
+	@# still going, which is verify-conc3's arrangement too).  What is
+	@# asserted is where a disk read LANDED -- src/cmd/xdma.c says why
+	@# there is nothing else to ask.
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XOUTIMG)) \
+		--input="$(OSSEL)XDMA\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } \
+		| tee -a $(abspath $(XOUTLOG))
+	@$(EMUOK)
+	@grep -q 'XDMA: parent start' $(XOUTLOG) \
+		|| { echo "verify-xout: FAIL -- XDMA did not run"; exit 1; }
+	@test "`grep -c 'fn13 DMA = own base page' $(XOUTLOG)`" = 2 \
+		|| { echo "verify-xout: FAIL -- function 13 did not put BOTH processes'"; \
+		     echo "             DMA back to their own base page buffer (the child's"; \
+		     echo "             is the one a child load used to leave unset):"; \
+		     grep 'XDMA:' $(XOUTLOG); exit 1; }
+	@echo "verify-xout: PASS -- 17 and 1000 segments and a truncated image all"
+	@echo "             refused with a reportable error and NOT run (greeting"
+	@echo "             twice, from the two real MHELLO runs); ED and DDT still"
+	@echo "             load; and a spawned child's function 13 aims at its own"
+	@echo "             base page, its parent's at the parent's"
+
 # ======================================================================
 # F6 -- THE COMPATIBILITY LAYERS VALIDATED ONE RECORD AND THEN COPIED
 # MANY.  Closes P1 #12 and the i86dec.c and z80load.c bullets of
@@ -6128,13 +6503,59 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 	@echo "             was parsed without reading byte 256, a segment of"
 	@echo "             prefix bytes decoded instead of hanging, and DUMP and"
 	@echo "             PIP still take the paths verify-z80 and verify-i86 gate on"
+
+# ---- verify-concr: TWO CREATORS, ONE FREE DESCRIPTOR, AND A YIELD IN
+# ---- THE MIDDLE OF CREATION (F4, P1 #7) ----
+#
+# src/bdos/proc.c pcrgen() picks a free process descriptor, then calls
+# plock() -- which PARKS the caller whenever another process holds the
+# filesystem lock.  Until the slot was claimed before that yield, a second
+# creator resuming in the window found it still PS_FREE and built its
+# process in it, and the first creator came back and built its own on top.
+#
+# THE ARRANGEMENT is verify-conclk's plus a second creator, and it is
+# described where the programs are (src/cmd/concm.c).  CONCM creates CONCO
+# while the lock is free, then parks at the one operator prompt that comes
+# up UNDER the lock; CONCO waits for that, says so, and asks for a process
+# -- parking inside pcrgen() with a descriptor picked.  The emulator holds
+# the answer to the prompt (\i plus --input-mark) until CONCO says it is
+# ready, which is the only way to put both creators in that window at
+# once: paced input never arrives while two processes are parked at each
+# other, and type-ahead would answer the prompt before CONCO had run.
+#
+# THE TWO CREATORS ASK FOR DIFFERENT PROGRAMS, and that is the object.
+# CONCO asks for MHELLO.Z8K, CONCM for CONCB.Z8K.  With the descriptor
+# reserved, exactly one request can be served -- CONCO's, which got there
+# first -- and MHELLO's greeting is in the transcript while CONCB never
+# runs at all.  Without it, CONCM is told 0 and CONCB runs in the slot
+# CONCO had already picked.
+#
+# WHAT THIS TARGET DOES NOT SHOW, stated here because a reader would
+# otherwise assume it: it does NOT discriminate the reservation.  Running it
+# against a build with the PS_RSVD claim removed PASSES, and the reason is
+# worth writing down.  The race needs BOTH creators to have picked the same
+# free slot before either resumes, which needs a THIRD process to be the one
 # holding the lock -- a lock holder plus two creators plus a slot to contend
 # processes and could not be had from four descriptors.  Here CONCM is
 # itself the lock holder, so
+# when it releases the lock the dispatcher hands the machine to the parked
+# creator at that call's own gate return (src/bdos/proc.c pdisp), CONCO
+# completes, and CONCM's own request finds the slot LIVE rather than free.
+# It is told 5 either way.
+#
+# So this is a concurrency regression test and not a proof of P1 #7: a
+# creator parked inside pcrgen() resumes, gets ITS OWN program, the other is
+# refused cleanly, nothing deadlocks, and no reserved slot is left behind to
+# leak (a PS_RSVD that was never released would refuse the next create).
+# docs/cpm/docs/run/F4.md records the reachability argument and what a test
+# that did discriminate would need: three live processes and a spare
+# descriptor, which is a one-console machine (no cold-boot session) or a
 # larger PNPROC.  PNPROC IS 6 SINCE F14 AND THAT TEST NOW EXISTS:
 # verify-concr2, at the end of this file, fails with the reservation removed.
 # This one is kept as the regression it honestly is and is NOT weakened to
 # overlap it.
+CONCRIMG = build/concr.bin
+CONCRLOG = build/verify-concr.log
 # Four program loads, a handful of disk operations and a second-and-a-half
 # wait; it ends on console idle well inside this.
 CONCRMAX ?= 900000000
@@ -6146,7 +6567,17 @@ CONCRMAX ?= 900000000
 # refusal; it is the machine's capacity that moved (F14).
 CONCRBALLAST = 2
 CONCRLIVE = 5
+.PHONY: verify-concr
+verify-concr: all $(CPMACONCR)
+	$(MKDISK) $(CONCRIMG) $(CPMSYS) $(CPMACONCR) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCRIMG)) \
 		--input-mark='CONCO: asking' \
+		--max=$(CONCRMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONCRLOG))
+	@$(EMUOK)
+	@# ---- the arrangement, which has to be true before anything else is
+	@grep -q 'CONCM: O created' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- the second creator was never created"; exit 1; }
 	@test "`tr -d '\r' < $(CONCRLOG) | sed -n 's/^CONCM: live before the race //p'`" \
 		= "$(CONCRLIVE)" \
 		|| { echo "verify-concr: FAIL -- there were not $(CONCRLIVE) live processes"; \
@@ -6155,6 +6586,388 @@ CONCRLIVE = 5
 		     echo "              be served on its merits rather than refused.  PNPROC"; \
 		     echo "              (src/bdos/proc.h) or the cold-boot session count has"; \
 		     echo "              moved: set CONCRBALLAST and CONCRLIVE to match."; exit 1; }
+	@grep -q 'is read-only' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- close() never reached its operator prompt,"; \
+		     echo "              so nothing was parked HOLDING the lock and no creator"; \
+		     echo "              ever had to park inside pcrgen()"; exit 1; }
+	@grep -q 'CONCO: asking' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- CONCO never asked for a process"; exit 1; }
+	@grep -q 'CONCO: my request answered 0' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- the creator that got there FIRST was not"; \
+		     echo "              served.  If it was answered 5 it had not yet parked"; \
+		     echo "              when the prompt was answered, so the window this"; \
+		     echo "              target is about never opened; anything else is in the"; \
+		     echo "              transcript above."; exit 1; }
+	@# ---- THE OBJECT: whose program ran ----
+	@grep -q 'CONCB: B alive' $(CONCRLOG) \
+		&& { echo "verify-concr: FAIL -- CONCB RAN.  The second creator picked the"; \
+		     echo "              descriptor the parked one had already picked, so two"; \
+		     echo "              processes were built in one slot (src/bdos/proc.c"; \
+		     echo "              pcrgen: the claim must be written down before the"; \
+		     echo "              yield in plock, not after the load)."; exit 1; } || true
+	@grep -q 'MWC hello' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- MHELLO, the program the served creator asked"; \
+		     echo "              for, never ran: its request was replaced by the other"; \
+		     echo "              creator's"; exit 1; }
+	@grep -q 'CONCM: my own request answered 5' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- the creator that arrived second was not told"; \
+		     echo "              5 (no free process descriptor).  The only free slot"; \
+		     echo "              belongs to the creator that was parked in plock()."; exit 1; }
+	@# ---- and nothing deadlocked: both creators came back out
+	@grep -q 'CONCO: O done' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- the parked creator never resumed"; exit 1; }
+	@grep -q 'CONCM: M done' $(CONCRLOG) \
+		|| { echo "verify-concr: FAIL -- the lock holder never finished"; exit 1; }
+	@echo "verify-concr: PASS -- a creator parked inside process creation resumed"
+	@echo "              with ITS OWN program, the second creator was refused"
+	@echo "              cleanly, and the program IT asked for never ran"
+
+# ---- verify-split: A REFUSED SECOND SPLIT-I/D PROGRAM MUST NOT HAVE
+# ---- ALREADY OVERWRITTEN THE FIRST ONE'S BANKS (F4, P1 #6) ----
+#
+# A 0xEE0B program's code runs in its process's own 64 KB page, but its
+# data address space is ONE fixed physical bank (src/bios/c900cfg.h
+# SPLITDSEG) and its instruction patch table is ONE more (SPLITTSEG).
+# Neither moves with a page swap.  That is why at most one split program
+# may be live, and it is why the refusal of the second one has to come
+# before the loader writes anything: src/bdos/proc.c pcrgen() used to ask
+# after ldimage() had returned, so the caller got a correct 7 and the
+# program already running had had its data image and its side table
+# replaced underneath it.
+#
+# THE RETURN CODE IS THEREFORE NOT THE OBJECT.  It was 7 before the fix
+# and it is 7 after it; what differs is whether the first split program's
+# WORK survives.  So this target runs the same job twice --
+#
+#   control       SPLITB creates ASZ8K.Z8K as a background process to
+#                 assemble STARTUP.8KN, and asks for nothing else;
+#   interference  the same, and two seconds in, with the assembler well
+#                 into its source, it asks for a second split program
+#                 (SIZEZ8K.Z8K, also 0xEE0B).
+#
+# -- and compares STARTUP.OBJ, the assembler's output, byte for byte.
+# Both runs must produce the same non-trivial file.  With the refusal
+# after the load, the interference run's assembler takes a split trap on
+# its own patched code and leaves a ZERO-LENGTH object behind, while still
+# printing "refused 7, as it must be": that transcript is why this target
+# reads the disk and not the log.
+#
+# The size floor is what stops two cut-off assemblies from passing as a
+# match.  SPLITB stays alive until function 145 says the assembler is
+# gone, for the same reason (src/cmd/splitb.c).
+SPLITCTL = build/split-ctl.bin
+SPLITINT = build/split-int.bin
+SPLITCLOG = build/verify-split-ctl.log
+SPLITILOG = build/verify-split-int.log
+# The assembly is minutes of emulated time; both runs end on console idle
+# long before this, and a run that did not is a run to look at.
+SPLITMAX ?= 2000000000
+# STARTUP.OBJ is 896 bytes when the assembly completes.  The floor is well
+# under that and well over a truncated file: it is a floor, not a value.
+SPLITOBJMIN = 256
+.PHONY: verify-split
+verify-split: all $(CPMASPLIT)
+	$(MKDISK) $(SPLITCTL) $(CPMSYS) $(CPMASPLIT) $(CPMBIMG)
+	$(MKDISK) $(SPLITINT) $(CPMSYS) $(CPMASPLIT) $(CPMBIMG)
+	@echo "--- 1. the control: one split program, nobody interfering"
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(SPLITCTL)) \
+		$(EMUSTAT); } \
+		| tee $(abspath $(SPLITCLOG))
+	@$(EMUOK)
+	@echo "--- 2. the same job, with a second split program asked for in the middle"
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(SPLITINT)) \
+		$(EMUSTAT); } \
+		| tee $(abspath $(SPLITILOG))
+	@$(EMUOK)
+	@# the arrangement itself: both runs must have had an assembler
+	@grep -q 'SPLITB: assembling, live=3' $(SPLITCLOG) \
+		|| { echo "verify-split: FAIL -- the control run created no assembler process"; \
+		     echo "              (function 144's answer is in the transcript above)"; exit 1; }
+	@grep -q 'SPLITB: assembling, live=3' $(SPLITILOG) \
+		|| { echo "verify-split: FAIL -- the interference run created no assembler process"; exit 1; }
+	@grep -q 'SPLITB: assembler gone' $(SPLITCLOG) \
+		|| { echo "verify-split: FAIL -- the control assembly never ended, so the"; \
+		     echo "              comparison below would be between two unfinished files"; exit 1; }
+	@grep -q 'SPLITB: assembler gone' $(SPLITILOG) \
+		|| { echo "verify-split: FAIL -- the interference assembly never ended"; exit 1; }
+	@# the refusal, which is necessary but is NOT the object
+	@grep -q 'SPLITB: CREATED' $(SPLITILOG) \
+		&& { echo "verify-split: FAIL -- a SECOND split-I/D program was created while"; \
+		     echo "              one was running.  The data bank and the side table are"; \
+		     echo "              single fixed pages (src/bios/c900cfg.h): both programs"; \
+		     echo "              are now sharing one data address space."; exit 1; } || true
+	@grep -q 'SPLITB: refused 7' $(SPLITILOG) \
+		|| { echo "verify-split: FAIL -- the second split-I/D request was not refused"; \
+		     echo "              with PC_SPLIT (7).  What it was told is in the"; \
+		     echo "              transcript above."; exit 1; }
+	@# ---- THE OBJECT: the first split program's output file ----
+	dd if=$(SPLITCTL) of=build/split-ctl-cpma.img bs=512 skip=$(CPMA_BASEBLK) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	dd if=$(SPLITINT) of=build/split-int-cpma.img bs=512 skip=$(CPMA_BASEBLK) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	rm -rf build/split-ctl-fs build/split-int-fs
+	python3 tools/mkcpmfs.py --extract build/split-ctl-cpma.img build/split-ctl-fs
+	python3 tools/mkcpmfs.py --extract build/split-int-cpma.img build/split-int-fs
+	@test "`wc -c < build/split-ctl-fs/STARTUP.OBJ`" -ge $(SPLITOBJMIN) \
+		|| { echo "verify-split: FAIL -- the CONTROL assembly produced `wc -c < build/split-ctl-fs/STARTUP.OBJ` bytes,"; \
+		     echo "              under the $(SPLITOBJMIN)-byte floor: nothing was measured, because"; \
+		     echo "              the undisturbed run did not finish its own job"; exit 1; }
+	@test "`wc -c < build/split-int-fs/STARTUP.OBJ`" -ge $(SPLITOBJMIN) \
+		|| { echo "verify-split: FAIL -- THE ASSEMBLER'S OUTPUT IS `wc -c < build/split-int-fs/STARTUP.OBJ` BYTES."; \
+		     echo "              A second split-I/D program was refused, and the live one's"; \
+		     echo "              data bank and side table went with the attempt: it died on"; \
+		     echo "              its own patched code (look for a TRAP line above) with its"; \
+		     echo "              object file unwritten.  The refusal has to happen before"; \
+		     echo "              the loader writes the shared banks, not after"; \
+		     echo "              (src/bdos/pgmld.c X_NXI_MAGIC, src/bdos/proc.c pcrgen)."; exit 1; }
+	@cmp build/split-ctl-fs/STARTUP.OBJ build/split-int-fs/STARTUP.OBJ \
+		|| { echo "verify-split: FAIL -- the assembly came out DIFFERENTLY when a second"; \
+		     echo "              split-I/D program was asked for while it ran.  The refusal"; \
+		     echo "              was correct and the shared banks were written anyway."; exit 1; }
+	@echo "verify-split: PASS -- a second split-I/D program is refused before the"
+	@echo "              loader touches the shared data bank or side table: the"
+	@echo "              running one's assembly came out byte-identical to the"
+	@echo "              undisturbed run (`wc -c < build/split-ctl-fs/STARTUP.OBJ` bytes)"
+
+# ---- verify-repl: a good file is not thrown away for a copy that fails ----
+#
+# Three programs that replace a file used to delete or overwrite the old
+# one BEFORE they could know a replacement existed.  Every assertion here
+# is on the FILE, because that is what a user loses; a check on a program's
+# exit code would pass against all three of the defects.
+#
+# THE MEDIUM IS THE INJECTION, for FCOPY and MSCOPY.  Drive B: keeps its
+# whole directory (32 sectors: four 4096-byte allocation blocks) and THREE
+# data blocks -- two hold BONLY.TXT and READMEB.TXT, the third is the one
+# free block the copy gets -- and nothing after that, so the emulated
+# controller answers 92h, drive not ready, for the fourth (bus.c, and the
+# same arrangement verify-dirwerr uses).  BIG.TXT is 20 KB, five times that
+# free block, so the copy cannot finish.  The scripted operator answers `C'
+# (continue with bad data) once, which is the sharpest form of the failure:
+# the write is refused and the program is told so.
+#
+# `write error on drive B' in the transcript is part of the assertion.
+# Without it, "the destination survived" would be indistinguishable from
+# "nothing was ever attempted", which is how this target could rot into
+# proving nothing.
+#
+# THE PASSWORD IS THE INJECTION for PIP, and it needs no crippled medium.
+# HELLO.TXT is given an XFCB in DELETE mode (20h) on a drive whose label
+# carries the password bit; a read does not need the password, so PIP opens
+# the source, writes its scratch file and closes it -- and then the delete
+# of the old destination is refused (delete, rename and set-attributes are
+# protected by ANY password, src/bdos/fileio.c).  PIP ignored the result of
+# both that delete and the rename that follows it, so it returned as if the
+# copy had happened, leaving the old contents in place and a .$$$ file
+# beside them.  Now it says so, and the litter is gone.
+REPLKEEP  = 56
+REPLBIMG  = build/repl.bin
+REPLBLOG  = build/verify-repl-b
+REPLBDIR  = build/repl-b
+REPLACPMA = build/cpma-repl.img
+REPLAIMG  = build/repla.bin
+REPLALOG  = build/verify-repl-a.log
+REPLADIR  = build/repl-a
+.PHONY: verify-repl
+verify-repl: all $(CPMAIMG) $(CPMBIMG)
+#	--- FCOPY and MSCOPY: the medium runs out under the copy
+	rm -rf $(REPLBDIR); mkdir -p $(REPLBDIR)/before
+	python3 tools/mkcpmfs.py --extract $(CPMBIMG) $(REPLBDIR)/before
+	for n in 1 2; do \
+		$(MKDISK) $(REPLBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG); \
+		truncate -s $$(( ($(CPMB_BASEBLK) + $(REPLKEEP)) * 512 )) \
+			$(REPLBIMG); \
+		case $$n in \
+		1) in='FCOPY A:BIG.TXT B:BONLY.TXT';; \
+		2) in='MSCOPY A:BIG.TXT B:READMEB.TXT 16';; esac; \
+		{ $(EMUCD) && ./c900 --disk=$(abspath $(REPLBIMG)) \
+			--input="$(OSSEL)$$in\r\iC$(ENDIN)" \
+			--input-mark="Continue with bad data" \
+			--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(REPLBLOG))-$$n.log; $(EMUOK); \
+		mkdir -p $(REPLBDIR)/after$$n; \
+		dd if=$(REPLBIMG) of=$(REPLBDIR)/b-after$$n.img bs=512 \
+			skip=$(CPMB_BASEBLK) status=none conv=sparse; \
+		truncate -s $$(( $(CPMB_BLOCKS) * 512 )) \
+			$(REPLBDIR)/b-after$$n.img; \
+		python3 tools/mkcpmfs.py --extract $(REPLBDIR)/b-after$$n.img \
+			$(REPLBDIR)/after$$n; done
+	@for n in 1 2; do \
+		grep -q 'write error on drive B' $(REPLBLOG)-$$n.log \
+		|| { echo "verify-repl: FAIL -- run $$n saw no physical write error at"; \
+		     echo "             all, so the truncation did not remove the block"; \
+		     echo "             the copy needed and this run tested nothing"; \
+		     exit 1; }; done
+	@grep -q 'fcopy: write error' $(REPLBLOG)-1.log \
+		|| { echo "verify-repl: FAIL -- FCOPY did not report the refused write"; exit 1; }
+	@test "`grep -c 'fcopy: copied' $(REPLBLOG)-1.log`" = 0 \
+		|| { echo "verify-repl: FAIL -- FCOPY reported a completed copy after a"; \
+		     echo "             write the medium refused"; exit 1; }
+	@grep -q 'mscopy: write error' $(REPLBLOG)-2.log \
+		|| { echo "verify-repl: FAIL -- MSCOPY did not report the refused write"; exit 1; }
+	@cmp $(REPLBDIR)/before/BONLY.TXT $(REPLBDIR)/after1/BONLY.TXT \
+		|| { echo "verify-repl: FAIL -- B:BONLY.TXT is not what it was before"; \
+		     echo "             FCOPY failed to copy over it.  The destination was"; \
+		     echo "             deleted before the first record was written"; \
+		     echo "             (src/cmd/fcopy.c)"; exit 1; }
+	@cmp $(REPLBDIR)/before/READMEB.TXT $(REPLBDIR)/after2/READMEB.TXT \
+		|| { echo "verify-repl: FAIL -- B:READMEB.TXT is not what it was before"; \
+		     echo "             MSCOPY failed to copy over it (src/cmd/mscopy.c)"; exit 1; }
+	@for n in 1 2; do \
+		test "`ls $(REPLBDIR)/after$$n | grep -c '[$$]'`" = 0 \
+		|| { echo "verify-repl: FAIL -- run $$n left a scratch file on drive B:"; \
+		     ls $(REPLBDIR)/after$$n; exit 1; }; done
+#	--- PIP: the destination cannot be deleted, so the copy cannot happen
+	cp $(CPMAIMG) $(REPLACPMA)
+	python3 tools/mkcpmfs.py --label C900R --label-mode create,update,password \
+		--xfcb HELLO.TXT:0x20:DSECRET --xfcb MHELLO.Z8K:0x20:DSECRET \
+		$(REPLACPMA)
+	@python3 tools/mkcpmfs.py --entries $(REPLACPMA) \
+		| grep -q 'label C900R .*password' \
+		|| { echo "verify-repl: FAIL -- the drive was not armed, so the delete"; \
+		     echo "             below cannot be refused and this leg tests nothing"; exit 1; }
+	rm -rf $(REPLADIR); mkdir -p $(REPLADIR)/before $(REPLADIR)/after
+	python3 tools/mkcpmfs.py --extract $(REPLACPMA) $(REPLADIR)/before
+	$(MKDISK) $(REPLAIMG) $(CPMSYS) $(REPLACPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(REPLAIMG)) \
+		--input="$(OSSEL)PIP HELLO.TXT=README.TXT\rDIR HELLO.*\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(REPLALOG))
+	@$(EMUOK)
+#	--- GENCOM: the program file it cannot replace must still be there.
+#	The same armed drive, and the same refusal: GENCOM builds TEMP.$$$,
+#	closes it, and is then refused the delete of the program file.  Its
+#	die() takes TEMP.$$$ back out, which is right HERE -- the program is
+#	still in place -- and wrong only in the window after the program has
+#	been deleted, where the temporary is the only copy; that window is
+#	dielast()'s, and no medium this suite can build makes the RENAME fail
+#	on its own.
+#
+#	THIS RUN FOUND THE SHARPER HALF OF THAT BUG.  GENCOM compared the
+#	BDOS gate's result with 255 outright, and the extended error code
+#	comes back in the HIGH byte, so a delete refused for a password
+#	(0FEFFh) was not 255, the rename that then failed because the file
+#	was still there was not 255 either, and GENCOM printed `GENCOM
+#	completed.' over a program it had not touched, leaving TEMP.$$$
+#	behind.  Both tests now mask the low byte.  What is asserted is the
+#	guarantee a user cares about: the refusal is reported, the program is
+#	whole, and no half-built TEMP.$$$ is left holding a program's worth
+#	of the disk.
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(REPLAIMG)) \
+		--input="$(OSSEL)GENCOM MHELLO.Z8K PROT.RSX\rDIR TEMP.*\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(REPLALOG))-gc
+	@$(EMUOK)
+	dd if=$(REPLAIMG) of=$(REPLADIR)/cpma.img bs=512 skip=$(CPMA_START) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(REPLADIR)/cpma.img $(REPLADIR)/after
+	@grep -q 'ERROR' $(REPLALOG) \
+		|| { echo "verify-repl: FAIL -- PIP said nothing.  It could neither delete"; \
+		     echo "             the old destination nor rename its scratch file over"; \
+		     echo "             it, and returned as though the copy had been made"; \
+		     echo "             (src/cmd/pip.c closedest)"; exit 1; }
+	@cmp $(REPLADIR)/before/HELLO.TXT $(REPLADIR)/after/HELLO.TXT \
+		|| { echo "verify-repl: FAIL -- HELLO.TXT changed under a copy that could"; \
+		     echo "             not complete"; exit 1; }
+	@test "`ls $(REPLADIR)/after | grep -c '[$$]'`" = 0 \
+		|| { echo "verify-repl: FAIL -- a scratch file was left on drive A: by a"; \
+		     echo "             command that could not finish (PIP's .\$$\$$\$$ or"; \
+		     echo "             GENCOM's TEMP.\$$\$$\$$):"; ls $(REPLADIR)/after; exit 1; }
+	@grep -q 'gencom: cannot replace the program file' $(REPLALOG)-gc \
+		|| { echo "verify-repl: FAIL -- GENCOM did not report being unable to"; \
+		     echo "             replace the program file, so this leg proved nothing"; \
+		     exit 1; }
+	@cmp $(REPLADIR)/before/MHELLO.Z8K $(REPLADIR)/after/MHELLO.Z8K \
+		|| { echo "verify-repl: FAIL -- MHELLO.Z8K changed or went away under a"; \
+		     echo "             GENCOM that could not replace it (src/cmd/gencom.c)"; exit 1; }
+	@test "`grep -c 'GENCOM completed' $(REPLALOG)-gc`" = 0 \
+		|| { echo "verify-repl: FAIL -- GENCOM said it had completed after the"; \
+		     echo "             medium refused both the delete of the program file"; \
+		     echo "             and the rename over it.  The gate's result was"; \
+		     echo "             compared with 255 without masking off the extended"; \
+		     echo "             error code in the high byte (src/cmd/gencom.c)"; exit 1; }
+	@echo "verify-repl: PASS -- a refused write left B:BONLY.TXT and"
+	@echo "             B:READMEB.TXT exactly as they were and no scratch file"
+	@echo "             behind, a destination PIP could not delete was reported"
+	@echo "             instead of being reported as copied, and a GENCOM that"
+	@echo "             could not replace its program file left it whole"
+
+# ---- src/app under malformed input ----
+# verify-a3 and verify-sdb build these same programs on the machine and run
+# them on good input.  This target runs them on BAD input, and it runs them
+# ON THE HOST for the reason tests/appbound.sh's header gives at length:
+# every defect it covers is a write past the end of a buffer, and on the
+# Z8001 such a write lands in whatever is next in the TPA while the command
+# still reports success.  A return code cannot see it.  So the sources are
+# compiled here with -fsanitize=address, where the compiler watches the
+# arrays and a write one element past one ABORTS the run -- the same
+# instrument as tests/xouttest.c and the -fsanitize=address half of
+# verify-shim, and the same reasoning.
+#
+# It covers the review's P1 #17 (FROMHEX's EOF-less semicolon search and its
+# store-before-the-limit), #18 (CMD.C get_aname's unbounded form-attribute
+# name), #19 (SORTFL's line and pointer arrays, KILLDU's two line arrays)
+# and the INT.C, IO.C and IEX.C items in its P2 list.  Fourteen checks
+# failed against the sources as shipped.
+#
+# THE SOURCES ARE NOT MODIFIED TO GET THEM THROUGH A MODERN COMPILER, with
+# two exceptions that are command-line only.  -Dstatic= is there because
+# ZCC1 accepted a call to a `static' function written before its definition
+# and gcc makes that a hard error in forty places; dropping `static' for the
+# host build is smaller and safer than editing forty declarations, and the
+# only function-scope statics in src/app are inside `#ifdef Lattice'.
+# -Dexit=appexit is for CMD.C:50's argument-less exit(), which a prototyped
+# stdlib refuses.  tests/appshim.c holds that, plus openb/creatb/fopenb --
+# SDBIO.H defines CPM68K, so the branches compiled here are the ones the
+# shipped Z8001 binaries take.
+APPBDIR	= build/appbound
+APPBSRCD = $(APPBDIR)/src
+APPBSDB	= $(APPBSRCD)/cmd.c $(APPBSRCD)/com.c $(APPBSRCD)/cre.c \
+	  $(APPBSRCD)/err.c $(APPBSRCD)/iex.c $(APPBSRCD)/int.c \
+	  $(APPBSRCD)/io.c $(APPBSRCD)/junk.c $(APPBSRCD)/mth.c \
+	  $(APPBSRCD)/scn.c $(APPBSRCD)/sdb.c $(APPBSRCD)/sel.c \
+	  $(APPBSRCD)/srt.c $(APPBSRCD)/tbl.c
+APPBCC	= $(HOSTCC) -std=gnu89 -w -fsanitize=address -g
+
+# The guest sources are named in upper case and include their headers in
+# lower ("sdbio.h"), which the 1984 CP/M file system did not distinguish and
+# this one does.  Copy them down rather than rename anything shipped.
+$(APPBDIR)/src.stamp: $(wildcard src/app/*.C) src/app/SDB.H src/app/SDBIO.H
+	@mkdir -p $(APPBSRCD)
+	@for f in src/app/*.C src/app/*.H; do \
+		cp $$f $(APPBSRCD)/`basename $$f | tr 'A-Z' 'a-z'`; done
+	@touch $@
+
+$(APPBDIR)/appshim.o: tests/appshim.c | $(OBJDIR)
+	@mkdir -p $(APPBDIR)
+	$(APPBCC) -c -o $@ tests/appshim.c
+
+$(APPBDIR)/fromhex: $(APPBDIR)/src.stamp $(APPBDIR)/appshim.o
+	$(APPBCC) -Dabort=appabort -o $@ $(APPBSRCD)/fromhex.c \
+		$(APPBDIR)/appshim.o
+$(APPBDIR)/sortfl: $(APPBDIR)/src.stamp
+	$(APPBCC) -o $@ $(APPBSRCD)/sortfl.c
+$(APPBDIR)/killdu: $(APPBDIR)/src.stamp
+	$(APPBCC) -o $@ $(APPBSRCD)/killdu.c
+$(APPBDIR)/sdb: $(APPBDIR)/src.stamp $(APPBDIR)/appshim.o
+	$(APPBCC) -Dstatic= -Dexit=appexit -o $@ $(APPBSDB) \
+		$(APPBDIR)/appshim.o
+
+.PHONY: verify-appbound
+verify-appbound: $(APPBDIR)/fromhex $(APPBDIR)/sortfl $(APPBDIR)/killdu \
+		$(APPBDIR)/sdb
+	python3 tests/appbound.py $(APPBDIR)
+	@sh tests/appbound.sh $(APPBDIR) \
+		|| { echo "verify-appbound: FAIL -- see the checks above.  An"; \
+		     echo "                 AddressSanitizer report IS the"; \
+		     echo "                 out-of-bounds access, not a test"; \
+		     echo "                 artefact; rc 124 IS the hang."; \
+		     exit 1; }
+	@echo "verify-appbound: PASS -- the seven unbounded inputs of the review's"
+	@echo "                 P1 #17, #18, #19 and its INT.C, IO.C and IEX.C"
+	@echo "                 items, each driven by the input that reached it,"
+	@echo "                 with the arrays instrumented and every"
+	@echo "                 well-formed control still right"
 
 # ---- verify-concr2: THE SAME RACE AS verify-concr, ARRANGED SO THAT THE
 # ---- RESERVATION IS THE ONLY THING THAT DECIDES IT (F14, for F4's P1 #7) ----

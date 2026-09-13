@@ -654,6 +654,9 @@ char	*errmsg[] =				/* Standard messages	    */
 		"OPEN FILE",			/*  20			    */
 		"PRINTER BUSY",			/*  21			    */
 		"CAN'T DELETE TEMP FILE",	/*  22			    */
+		"OBSOLETE FEATURE",		/*  23			    */
+		"CAN'T DELETE OLD DESTINATION",	/*  24			    */
+		"CAN'T RENAME TEMP FILE OVER DESTINATION"/*25		    */
 	};
 
 
@@ -2006,10 +2009,43 @@ closedest()					/*   file, flushing buffer  */
 	    odest.flfcb.R_O &= 0x7f;		/* OK to delete old dest    */
 	    odest.flfcb.SYSTEM &= 0x7f;		/*   file: clear attributes */
 	    setatt(&odest);			/*   so it can be deleted   */
+						/* A delete that the medium */
+						/*   refuses leaves the OLD */
+						/*   destination in place,  */
+						/*   the rename below then  */
+						/*   fails too, and PIP     */
+						/*   used to return as if   */
+						/*   the copy had happened. */
+						/*   The scratch file is    */
+						/*   still the only new     */
+						/*   copy, so error() may   */
+						/*   delete it: the old file*/
+						/*   is intact and the user */
+						/*   can retry.	 A 255 with */
+						/*   a zero extended code   */
+						/*   is "no such file",     */
+						/*   which is not an error  */
+						/*   here (same test as the */
+						/*   temp-file delete in    */
+						/*   setupdest()).	    */
+	    if ((delete(&odest) == 255) && ((exten & 0x0f) != 0))
+		error(24, exten, FALSE, &odest);
 	}
 						/* Rename the temporary dest*/
 						/*   file (replace $$$ type)*/
 	move((char *) &odest.flfcb, dest.flfcb.resvd, 16);
+						/* Past this point the old  */
+						/*   destination is gone and*/
+						/*   the scratch file holds */
+						/*   the only copy, so it   */
+						/*   must NOT be deleted on */
+						/*   the way out: clear     */
+						/*   `made' before error(). */
+	if (rename(&dest) == 255)
+	{
+	    made = FALSE;
+	    error(25, exten, FALSE, &dest);
+	}
 						/* Set dest attributes same */
 						/*   as source		    */
 

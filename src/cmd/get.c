@@ -153,6 +153,13 @@ int echo;
 	register char	*p;
 
 	mkfcb(MODNAME, &tryfcb);
+	/* Mask before comparing: a directory function's failure return puts
+	 * the extended error code in the HIGH byte (src/bdos/bdosmain.c
+	 * returns 0x04ff and 0x02ff literally), so an unmasked `== 0xff'
+	 * does not merely lose the code -- it misses the failure entirely
+	 * and walks on with an FCB that never opened.  Twenty other sites
+	 * in src/cmd already mask; these two were the exceptions. */
+	if ((__bdos(BDOS_OPEN, (long) &tryfcb) & 0xff) == 0xff) {
 		say("GET: cannot find ");
 		say(MODNAME);
 		say(" on the default drive\r\n");
@@ -295,6 +302,7 @@ char *argv[];
 	mkfcb(argv[fileat], &filefcb);
 	for (i = 0; i < sizeof (struct fcb); i++)
 		((char *) &tryfcb)[i] = ((char *) &filefcb)[i];
+	if ((__bdos(BDOS_OPEN, (long) &tryfcb) & 0xff) == 0xff) {
 		say("GET: no such file: ");
 		say(argv[fileat]);
 		say("\r\n");

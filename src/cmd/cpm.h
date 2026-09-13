@@ -37,6 +37,7 @@
 #define	BDOS_GETDPB	31	/* copy out the disk parameter block	*/
 #define	BDOS_ROVEC	29	/* return read-only drive vector	*/
 #define	BDOS_SETMULTI	44	/* set multi-sector count, 1..128	*/
+#define	BDOS_FREESP	46	/* free space on a drive -> 4 bytes to DMA */
 #define	BDOS_ERRMODE	45	/* set BDOS error mode			*/
 #define	BDOS_FREEBLK	98	/* free temporarily allocated blocks	*/
 #define	BDOS_SERIAL	107	/* return 6-byte serial number		*/

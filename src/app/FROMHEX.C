@@ -47,10 +47,26 @@ FAST FILE *infile;
     FAST int n,chk2,b;
     int checksum,rec_num,block_len,byte;
     
+    /*  The semicolon search used to be `while (getc(infile) != ';') ;'
+	with no EOF test, so a file with no semicolon left in it -- a
+	truncated transfer, or any file that is not hex at all -- spun for
+	ever on getc()'s -1.  A well-formed stream ends with the
+	zero-length record TOHEX.C:35 always writes, not with end of file,
+	which is how this got away with it; end of file now returns 0 and
+	main()'s `> 0' loop stops.  (c900)  */
+    while ((n = getc(infile)) != ';')
+	if (n == EOF)		/* stdio.h -> portab.h:44, the same EOF
+				   SORTFL.C and KILLDU.C already use */
+	    return (0);
     fscanf(infile,"%02x%04x",&block_len,&rec_num);
     chk2 = block_len + (rec_num & 0x00ff) + ((rec_num >> 8) & 0x00ff);
     b = 0;
+    /*  ... and the limit used to be tested AFTER the store, so a record
+	whose length byte was bigger than the buffer wrote byte 33 of a
+	32-byte buffer and only then said "Buffer overflow".  Test first.
+	(c900)  */
     while ((block_len--)>0) {
+	if ((buffsiz--)<1) {fprintf(stderr,"Buffer overflow\n");abort(3);}
 	fscanf(infile,"%02x",&byte);
 	byte &= 0x00ff;
 	chk2 += byte;

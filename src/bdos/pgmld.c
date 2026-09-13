@@ -26,6 +26,11 @@ extern UWORD rsxres();		/* C900: bytes of TPA held by resident	*/
 extern UWORD rsxchk();		/* C900: placement rules + chain entry	*/
 extern UWORD rsxlink();		/*   (rsx.c), for the GENCOM path below	*/
 
+extern int pspother();		/* C900: proc.c -- is a split-I/D program
+				   live in ANOTHER process?  The split banks
+				   are shared, so the answer decides whether
+				   a 0xEE0B image may be loaded at all.	*/
+
 #define SPLIT	0x4000		/* Separate I/D flag for LPB		*/
 #define SEG	0x2000		/* Segmented code flag for TPA		*/
 #define NSEG	16		/* Maximum number of x.out segments	*/
@@ -45,6 +50,14 @@ extern UWORD rsxlink();		/*   (rsx.c), for the GENCOM path below	*/
 #define BADHDR	1		/* bad header 		 		*/
 #define NOMEM	2		/* not enough memory 			*/
 #define READERR	3		/* read error 				*/
+#define NOSPLIT	4		/* C900: this is a split-I/D program and
+				   another process is already using the one
+				   data bank and the one side table.  The
+				   loader's code because the loader is where
+				   the magic is first known, and it is
+				   returned BEFORE anything is written --
+				   proc.h PL_NOSPLIT, same value, which fn
+				   144 reports as PC_SPLIT.		*/
 
 #define MYDATA	0		/* Argument for map_adr			*/
 #define TPAPROG	5		/* Argument for map_adr			*/
@@ -159,6 +172,13 @@ XADDR xlpbp;
 	   (loader3.asm:216-231) and comfile moves the program afterwards
 	   (:248-267).  x_nseg holds the module count here.  */
 
+	/*  C900: the magic is a SIXTEEN-BIT quantity and x_magic is a signed
+	    short, so it is masked before it is compared.  On the target int
+	    is sixteen bits and the mask changes nothing; off the target
+	    (tests/xouttest.c runs this loader on the host) a wider int would
+	    sign-extend 0xEE03 and no case below would ever match.  */
+
+	if ((x_hdr.x_magic & 0xffff) == X_GC_MAGIC) {
 		if ((j = ldrsx((int) x_hdr.x_nseg)) != GOOD)
 			return (j);
 		if (readhdr() == EOF)	/* now the program's own header	*/
@@ -167,6 +187,7 @@ XADDR xlpbp;
 
 	rsvd = (XADDR) rsxres();
 
+	switch (x_hdr.x_magic & 0xffff)	/* Is this acceptable x.out file*/
 	{
 	  case X_NXN_MAGIC:		/* Non-seg, combined I & D	*/
 		split = FALSE;
@@ -191,6 +212,22 @@ XADDR xlpbp;
 		   the top of the TPA (implicit CALL/PUSH traffic must be
 		   native), which the SC handlers honor by routing
 		   addresses at or above the user SP to the TPA. */
+
+		/* C900: THE ONE DATA BANK AND THE ONE SIDE TABLE ARE
+		   SHARED, so a second split-I/D program is refused HERE
+		   -- the first moment the magic is known and the last
+		   moment before anything is written.  loadseg() below
+		   puts every data segment at SPLITDBASE and spload()
+		   rebuilds the side table in SPLITTSEG; both are fixed
+		   physical pages no page swap moves (c900cfg.h), so a
+		   load that goes ahead and is refused afterwards has
+		   already replaced the live split program's data image
+		   with the initial contents of this one.  fn 144 used to
+		   check after ldimage() for exactly this and could only
+		   report damage it had done (src/bdos/proc.c pcrgen). */
+		if (pspother())
+			return (NOSPLIT);
+
 		split = SPLIT;
 		seg = FALSE;
 		break;
@@ -217,7 +254,26 @@ XADDR xlpbp;
 		    : (mrp->m_reg[NSPREG].tpalow),
 		0xffff);
 	
+	/* C900: THE SEGMENT COUNT IS THE FILE'S, so it is bounded before it
+	   indexes anything.  x_sg, seglim, segsiz and segloc hold NSEG
+	   entries and the loops below walk all four with this count; stock
+	   took it as read, so a seventeen-segment image wrote past all of
+	   them into whatever the linker put after -- resident loader state
+	   in the BDOS's own data.  Zero is refused with it: a program with
+	   no segments has no code, and there is nothing to run.  The
+	   comparison is signed because x_nseg is (x.out.h), which is also
+	   why a negative count lands here rather than in an empty loop. */
+
+	if (x_hdr.x_nseg <= 0 || x_hdr.x_nseg > NSEG)
+		return (BADHDR);
+
 	for (i = 0; i < x_hdr.x_nseg; i++) {	/* For each segment...	*/
+		if( readxsg(i) != GOOD)		/* ...get segment hdr	*/
+			return(READERR);	/* C900: readxsg answers
+						   READERR at end of file,
+						   never EOF -- stock tested
+						   for EOF here, so the
+						   check never fired */
 		seglim[i] = SEGLEN - rsvd;	/* ...set max length	*/
 		segsiz[i] = 0L;			/* ...and current size	*/
 	}
@@ -563,11 +619,31 @@ int i;
 		{			/*   remains to transfer*/
 			length = 0;
 			mbdos(SETDMA, mydma);
+			if (fillbuf() == EOF)
+				return (READERR);
+				/* C900: stock ignored this.  The file has
+				   fewer records than its segment lengths
+				   declare, and gp = mydma below would then
+				   hand the STALE contents of the read
+				   buffer to the program as its own code. */
+			gp = mydma;	/* fillbuf consumed the first byte */
 		}
 		else			/* Read full sector	*/
 		{			/*   into target space  */
 			length = SECLEN;
 			bdos(SETDMA, phystarg);
+			if (bdos(READ, mylpb.fcbaddr) != 0) {
+				/* C900: stock ignored this too, and then
+				   strode over the record it had not read:
+				   whatever was in the TPA -- the program
+				   that ran before this one -- stood in for
+				   the missing code, and pgmld returned
+				   GOOD.  Put the DMA back to the loader's
+				   own buffer before leaving: it is
+				   pointing into the TPA right now. */
+				mbdos(SETDMA, mydma);
+				return (READERR);
+			}
 		}
 
 		phystarg += length;

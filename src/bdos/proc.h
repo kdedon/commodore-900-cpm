@@ -63,9 +63,20 @@ struct context {
 
 #define	PNCON		bconcnt()
 /*  Process states.  PS_FREE is zero so that a bss-cleared table is a
+    table of free slots and nothing has to initialise it.
+
+    PS_RSVD is a slot pcrgen() has CLAIMED but not yet built.  It exists
+    because creation yields: plock() parks the creator when another
+    process holds the filesystem lock, and until the claim was written
+    down a second creator resuming in that window picked the same slot
+    and both of them built a process in it.  Every other loop in proc.c
+    asks for PS_LIVE, so a reserved slot is invisible to scheduling,
+    wakeups and death -- it is only invisible to the free-slot search
+    that PS_FREE answers, which is the whole point.  */
 
 #define	PS_FREE		0
 #define	PS_LIVE		1
+#define	PS_RSVD		2
 
 
 #define	PW_RUN		0	/* runnable				*/
@@ -77,6 +88,7 @@ struct context {
 #define	PW_LOCK		6	/* for the file-system lock to be free	*/
 
 struct pdesc {
+	short	pd_state;	/* PS_FREE / PS_LIVE / PS_RSVD		*/
 	short	pd_seg;		/* the pool segment PARKING this process's
 				   64 KB image, or 0 while this process is
 				   the one segment TPASEG points at.  Exactly
@@ -178,6 +190,12 @@ struct pdesc {
     or about this stage rather than a policy.  Values above 4 stay clear
     of pgmld.c's own 1..4 (BADHDR/NOMEM/READERR/other), which pcreate
     passes straight through when it is the load that failed.  */
+
+/*  The one loader code pcreate() does NOT pass through: the loader's
+    refusal of a second split-I/D program, which fn 144 has always
+    reported as PC_SPLIT.  pgmld.c's NOSPLIT, same value.  */
+
+#define	PL_NOSPLIT	4
 
 #define	PC_OK		0
 #define	PC_NOPD		5	/* no free process descriptor		*/

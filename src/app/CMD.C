@@ -766,6 +766,10 @@ static int form(ofp,slptr,ffp)
         /* process the form */
         while ((ch = getc(ffp)) != -1)
             if (ch == '<') {
+                /*  ANSIZE+1 and not sizeof(aname): this is compiled by
+                    ZCC1, and the declaration above is the one place the
+                    size is written.  (c900)  */
+                get_aname(ffp,aname,ANSIZE+1,&pad);
                 put_avalue(ofp,slptr,aname,pad);
             }
             else
@@ -777,8 +781,20 @@ static int form(ofp,slptr,ffp)
 }
 
 /* get_aname - get an attribute name (and padding flag [mpk]) */
+/*  The caller's buffer is aname[ANSIZE+1], and this used to store into it
+    until it saw '>' with no check on either the length or the end of the
+    form file.  A form carrying a name longer than ANSIZE wrote past the
+    caller's frame, and a form ending in mid-name wrote past it without
+    limit: getc() returns -1 at end of file, which is neither '>' nor a
+    space, so the store ran on for as long as the process lived.  Take the
+    buffer's size and stop at both.  A name that does not fit is truncated,
+    and put_avalue() then reports it as <error> like any other name that
+    matches no selected attribute.  (c900)  */
+static get_aname(fp,aname,asize,pad)
+  FILE *fp; char *aname; int asize; int *pad;
 {
     int ch;
+    int n;
 
     if ((ch = getc(fp)) != '$') { /* mpk */
         ungetc(ch,fp);  /* put it back! */
@@ -786,6 +802,11 @@ static int form(ofp,slptr,ffp)
     }
     else
         *pad = 0;
+    n = 0;
+    while ((ch = getc(fp)) != '>' && ch != -1)
+        if (!isspace(ch) && n < asize - 1)
+            aname[n++] = ch;
+    aname[n] = 0;
 }
 
 /* put_avalue - output attribute value */

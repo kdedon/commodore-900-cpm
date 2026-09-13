@@ -16,6 +16,56 @@ int *db_nerror();
 /* list of currently loaded relation definitions */
 static struct relation *relations = NULL;
 
+/*  hdrchk - is this relation header consistent with itself?
+
+    CRE.C builds every relation file with rl_size = 1 + the sum of the
+    attribute sizes (db_rcreate() starts it at 1 for the status byte and
+    db_acreate() adds each attribute's size), and rl_data = 512, the length
+    of the header block.  Nothing else in SDB writes these fields, so that
+    is the invariant, and a file that breaks it is a damaged file -- not a
+    relation with unusual dimensions.  The buffer db_ropen() allocates is
+    rl_size bytes and every access to it is indexed by the at_size fields,
+    so this is the one place where the two can be required to agree.
+
+    The ceiling is what the header block itself can describe: the status
+    byte plus NATTRS attributes of at most 127 bytes, at_size being a
+    signed char.  It also disposes of a negative rl_size, which on the
+    Z8001's sixteen-bit int is what a header saying 0xFFF0 produces --
+    malloc() of a negative size.  (c900)  */
+
+#define TUPMAX (1 + NATTRS * 127)
+
+static int hdrchk(rptr)
+  struct relation *rptr;
+{
+    int i, total;
+    struct attribute *aptr;
+
+    if (rptr->rl_data < 512)
+        return (FALSE);
+    if (rptr->rl_size < 1 || rptr->rl_size > TUPMAX)
+        return (FALSE);
+
+    total = 1;                          /* the tuple status byte */
+    for (i = 0; i < NATTRS; i++) {
+        aptr = &rptr->rl_header.hd_attrs[i];
+        if (aptr->at_name[0] == 0)
+            break;
+        if (aptr->at_type != TCHAR && aptr->at_type != TNUM)
+            return (FALSE);
+        if (aptr->at_size < 1)
+            return (FALSE);
+        total += aptr->at_size;
+    }
+
+    /*  The attributes must FIT.  A header that leaves slack is accepted:
+        it wastes disk and indexes nothing out of bounds.  */
+    if (total > rptr->rl_size)
+        return (FALSE);
+
+    return (TRUE);
+}
+
 /* rfind - find the specified relation */
 static struct relation *rfind(rname)
   char *rname;
@@ -68,6 +118,22 @@ static struct relation *rfind(rname)
     rptr->rl_tmax = db_cvword(rptr->rl_header.hd_tmax);
     rptr->rl_data = db_cvword(rptr->rl_header.hd_data);
     rptr->rl_size = db_cvword(rptr->rl_header.hd_size);
+
+    /*  CHECK THE HEADER AGAINST ITSELF.  Everything above comes off the
+	disk, and every later read and write of a tuple is indexed by the
+	at_size fields of the same header while the buffer is malloc'd from
+	hd_size -- so a file whose hd_size is smaller than its own
+	attributes describe made db_aget() and db_aput() index past the
+	buffer, on the sizes the file chose.  A relation file is not a
+	trusted structure: it is bytes on a disk that PIP, a crash or
+	another program may have left in any state, and it names no version
+	and carries no checksum.  The status byte plus the attribute sizes
+	ARE the tuple size, so require the header to agree with itself.
+	(c900)  */
+    if (!hdrchk(rptr)) {
+	free(rptr);
+	return ((struct relation *) db_nerror(BADHDR));
+    }
 
     /* store the relation name */
     strncpy(rptr->rl_name,rname,RNSIZE);

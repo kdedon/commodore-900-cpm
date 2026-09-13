@@ -21,6 +21,7 @@ EXTERN		initexc();		/* init the exception handler in  */
 					/* exceptn.s			*/
 EXTERN UWORD	dirscan();		/* Directory scanning routine	*/
 EXTERN UWORD	dir_rd();		/* read one directory record	*/
+EXTERN WORD	dirhave();		/* is our cached record current? */
 EXTERN BOOLEAN  set_attr();		/* Set File attributes function */
 
 /*  Declare external variables */
@@ -258,6 +259,11 @@ REG struct fcb *fcbp;
 	    case 'C':   fcbp->ftype[robit] &= 0x7f;
 			sec = GBL.dirsecn;
 			rtn = dirscan(set_attr, fcbp, 2);
+			if (sec >= 0 && ! dirhave((UWORD)sec))
+			    dir_rd((UWORD)sec);
+			/* dirhave(), not `dirsecn != sec': the scan may have
+			   left the tag on the same record and still written
+			   it, and another process may have written it too */
 			return(rtn);
 	}
     }   while (TRUE);

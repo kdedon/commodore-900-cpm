@@ -119,6 +119,23 @@ char *msg;
 	__bdos(BDOS_WBOOT, 0L);
 }
 
+/*  As die(), but for the one window in which TEMP.$$$ is the ONLY copy of
+    the program: after the original has been deleted and before the rename
+    has put the new file in its place.  Deleting the temporary there -- as
+    die() does, correctly, everywhere else -- loses both copies, so this
+    one keeps it and says where the program now lives.  */
+
+VOID dielast(msg)
+char *msg;
+{
+	cputs("gencom: ");
+	cputs(msg);
+	cputs("\r\n");
+	cputs("gencom: the new program is in TEMP.$$$ and the old one is\r\n");
+	cputs("        gone; rename TEMP.$$$ by hand.\r\n");
+	__bdos(BDOS_WBOOT, 0L);
+}
+
 /*  Read one record of the currently open file into rec[].  Returns 0 at
     end of file.  */
 
@@ -201,6 +218,7 @@ int argi;
 	register int	k;
 
 	mkfcb(name, &mfcb);
+	if ((__bdos(BDOS_OPEN, (long) &mfcb) & 0xff) == 255) {
 		cputs("gencom: no such RSX file: ");
 		cputs(name);
 		die("");
@@ -283,6 +301,7 @@ char *argv[];
 	__bdos(BDOS_DELETE, (long) &tfcb);
 
 	mkfcb(argv[1], &pfcb);
+	if ((__bdos(BDOS_OPEN, (long) &pfcb) & 0xff) == 255)
 		die("no such program file");
 	if (!getrec(&pfcb))
 		die("the program file is empty");
@@ -390,6 +409,7 @@ char *argv[];
 		}
 	}
 
+	if ((__bdos(BDOS_MAKE, (long) &tfcb) & 0xff) == 255)
 		die("no directory space for TEMP.$$$");
 
 	if (nmod > 0) {
@@ -420,6 +440,7 @@ char *argv[];
 		if (i < oldn)			/* replaced: drop the old */
 			skiprecs(&pfcb, oldrec[i]);
 		mkfcb(argv[mfrom[i]], &mfcb);
+		if ((__bdos(BDOS_OPEN, (long) &mfcb) & 0xff) == 255)
 			die("an RSX file went away mid-run");
 		rc = nrecs(mlen[i]);
 		for (k = 0; k < rc; k++) {
@@ -449,9 +470,25 @@ char *argv[];
 	while (getrec(&pfcb))
 		putrec();
 
+	/*  The close is the last write TEMP.$$$ gets -- the final extent's
+	    directory entry -- so it is the last thing that can fail, and
+	    until it has succeeded TEMP.$$$ is not a complete program.  The
+	    original must not be deleted before then: die() drops the
+	    half-built temporary and leaves the program where it was.  */
+	if ((__bdos(BDOS_CLOSE, (long) &tfcb) & 0xff) == 255)
+		die("cannot close TEMP.$$$; the program file is untouched");
 	__bdos(BDOS_CLOSE, (long) &pfcb);
 	setdma(_base->buff);
 
+	/*  MASK THE RETURN.  Every test in this file compared the gate's
+	    result with 255 outright, and the BDOS returns the extended
+	    error code in the HIGH byte: a delete refused for a password
+	    comes back 0FEFFh, which is not 255, so this test passed, the
+	    rename below then failed because the file was still there, that
+	    test passed too, and GENCOM printed `GENCOM completed.' over a
+	    program it had not touched and a TEMP.$$$ it left lying about.
+	    Observed on an armed drive; verify-repl is the test.  */
+	if ((__bdos(BDOS_DELETE, (long) &pfcb) & 0xff) == 255)
 		die("cannot replace the program file");
 	/*  Function 23 matches the directory on the FIRST 16 bytes and
 	    writes the name from the second (sys/fileio.c rename() takes
@@ -461,6 +498,8 @@ char *argv[];
 		rnfcb[i] = ((char *) &tfcb)[i];
 		rnfcb[16 + i] = ((char *) &pfcb)[i];
 	}
+	if ((__bdos(BDOS_RENAME, (long) rnfcb) & 0xff) == 255)
+		dielast("cannot rename TEMP.$$$ over the program file");
 
 	for (i = 0; i < nmod; i++) {
 		cputs("gencom: ");

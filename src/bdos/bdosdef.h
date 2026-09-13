@@ -265,6 +265,17 @@ struct stvars
 				/* directory buffer, and once a process can */
 				/* park inside a BDOS call two of them are  */
 				/* in flight at once.  See below.	   */
+	UWORD	dirgen;		/* The value of dskutil.c's SHARED per-drive */
+				/* dirwgen[] at the moment pdirbuf was	   */
+				/* filled.  dirsecn alone says WHICH record */
+				/* this process cached; this says whether   */
+				/* anybody has written that record since.   */
+				/* Without it a process with cks == 0 -- and */
+				/* every C900 drive has cks == 0 -- reuses   */
+				/* a record another process has already	   */
+				/* changed, and close() writes all 128	   */
+				/* bytes of it back over the newer entry.   */
+				/* See dirhave() in dskutil.c.		   */
 	struct dirent pdirbuf[SECLEN / sizeof (struct dirent)];
 				/* THE PER-PROCESS DIRECTORY BUFFER, and   */
 				/* the thing DRI's own comment on dirbufp  */
