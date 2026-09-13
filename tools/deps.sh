@@ -15,7 +15,14 @@
 # `make EMU=/wrong' is refused as what the user asked for rather than
 # silently re-searched.
 #
+#   dep           variable          what it names
+#   emu           EMU, C900_EMU     the emulator CHECKOUT (bin/c900 inside it)
+#   kboot         KBOOT             the BUILT loader, build/kboot
 #   kbootsrc      KBOOTSRC          the CHECKOUT, for include/bootinfo.h
+#   toolchain     C900_TOOLCHAIN    the toolchain checkout, built
+#   userland      COHERENT_OS       a COHERENT userland checkout
+#   userland-cpm  COHERENT_OS       cpm.c INSIDE that checkout, wherever it
+#                                   sits -- the userland has moved it twice
 #
 # Search order for each: the variable wins; then the PINNED release in deps/
 # -- named by the tag DEPS gives, so bumping the pin stops an older unpack
@@ -50,8 +57,24 @@ siblings() {
 	echo "$root/repos/$1"
 }
 
+# Where cpm(1)'s source sits inside a COHERENT userland checkout.  The tree has
+# been reorganised more than once -- os/cmd/, then extended/cmd/, now base/cmd/
+# -- and a checkout of any age is a perfectly good oracle, so ALL the spellings
+# are tried rather than the newest one being made a requirement.  Prints the
+# first that exists, nothing if none do; new layouts go at the FRONT.
+cpmsrc() {
+	for _r in base/cmd/cpm.c extended/cmd/cpm.c os/cmd/cpm.c; do
+		if [ -f "$1/$_r" ]; then echo "$1/$_r"; return 0; fi
+	done
+	return 1
+}
+
 # Per dep: VAR names the variable, WANT what is being looked for, LIST the
 # candidate paths, ok() the test that a candidate is the real thing, and
+# fixup() the value a caller's own spelling maps to.  report() is what a
+# resolved candidate PRINTS, which is the candidate itself unless a dep names
+# something inside it.
+report() { echo "$1"; }
 case "$1" in
 -n) mode=need; dep=$2; given=$3 ;;
 *)  mode=find; dep=$1; given= ;;
@@ -141,10 +164,26 @@ toolchain)
   a built checkout of your own (a checkout that is present but not yet
   built resolves to nothing here, on purpose)."
 	;;
+userland | userland-cpm)
 	VAR="COHERENT_OS"
 	WANT="a COHERENT userland checkout"
 	LIST="$(siblings commodore-900-coh-userland)"
 	[ -n "$given" ] || given=${COHERENT_OS:-}
+	# A caller may point COHERENT_OS straight at cpm.c; the checkout is what
+	# is searched and tested, so wind such a value back up to it.
+	fixup() {
+		case "$1" in
+		*/cmd/cpm.c) echo "${1%/*/cmd/cpm.c}" ;;
+		*) echo "$1" ;;
+		esac
+	}
+	ok() { cpmsrc "$1" >/dev/null; }
+	# `userland' names the checkout, `userland-cpm' the source inside it: the
+	# Makefile compiles that file and cannot spell the path itself, because
+	# which of the layouts a checkout uses is only known once it is found.
+	if [ "$dep" = userland-cpm ]; then
+		report() { cpmsrc "$1"; }
+	fi
 	HOW="  Two targets cross-check this directory format against COHERENT's own
   reader of it, cpm(1), so they need that source tree:
       git clone <...>/commodore-900-coh-userland
@@ -153,6 +192,8 @@ toolchain)
   \`make deps' clones the repository named in DEPS."
 	;;
 *)
+	echo "deps.sh: unknown dependency \`$dep'" \
+	     "(emu, kboot, toolchain, userland, userland-cpm)" >&2
 	exit 2
 	;;
 esac
@@ -169,6 +210,7 @@ else
 fi
 
 if [ -n "$found" ]; then
+	[ "$mode" = find ] && report "$found"
 	exit 0
 fi
 

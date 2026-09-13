@@ -1,6 +1,8 @@
 
 	.globl	tepa_, tprv_, tseg_, tnmi_, tnvi_, tvi_
 	.globl	faultcom_, faultpanic_
+	.globl	ttick_, tvidsm_, tickget_, tickei_
+	.globl	tickcnt_		/ the tick counter (bios/tick900.c)
 	.globl	xvec_			/ 48-entry vector table (bios900.c)
 	.globl	panic_			/ frame printer (bios900.c)
 
@@ -95,3 +97,25 @@ faultpanic_:
 fhang:
 	halt
 	jr	fhang
+
+ttick_:
+	ldb	rl0, $0x24		/ clear IP and IUS; gate stays open
+	outb	0x0019, rl0		/   CT3 command and status
+	ldl	rr0, tickcnt_
+	addl	rr0, $1
+	ldl	tickcnt_, rr0
+	iret
+
+tvidsm_:
+	iret
+
+/ long tickget() -- the tick, read in ONE instruction.  A C `long' load
+/ is two word loads and ttick_ can land between them; LDL cannot be split,
+/ so this is the only sanctioned reader of tickcnt_.
+tickget_:
+	ldl	rr0, tickcnt_
+	ret
+
+tickei_:
+	ei	VI
+	ret

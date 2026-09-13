@@ -23,10 +23,63 @@
 #define SCC_RR0		0x0101		/* SCC channel B: Rx/Tx status */
 #define SCC_RR8		0x0111		/* SCC channel B: data */
 
+#define CONMAX		4
+#define NCHAN		16	/* bi_serial is 16 bits			*/
+/*
+ * The device number of serial channel `c'.  CD_SCCA IS CD_SER(1) -- the
+ * guest-visible numbering of BIOS function 28 is unchanged, and channels
+ * past the first spare simply continue it.  CD_SER(0) is CD_ROM, which
+ * is the truth: channel 0 is the ROM's own console channel, and console
+ * 0 reaches it the ROM's way (through crsr.c, or the keyboard on a video
+ * machine) rather than as a raw line.
+ */
+#define CD_SER(c)	((c) + 1)
+
 extern int inb();
 extern outb();
 
 static int convid;	/* nonzero: video console, input = local keyboard */
+static int pend[CONMAX];	/* CONST lookahead, 0 = none, per console */
+static char condev[CONMAX];	/* console -> device; see the banner	*/
+static unsigned int conmap;	/* the serial map the table was built from */
+static int ncon = 1;	/* consoles 0..ncon-1.  coninit() sets it; 1 until
+			   then, so that a console call made before cold
+			   start is over reaches console 0 and not an
+			   unbuilt table entry. */
+
+#define NSCCBASE	6
+static unsigned int sccbase[NSCCBASE] = {
+	0x0100,		/* motherboard SCC U74 -- the ROM's console line	*/
+	0x0120,		/*   and its spare port (COHERENT's /dev/tty51)	*/
+	0x0300, 0x0320,	/* LR board SCC U31, connectors CN3 and CN4	*/
+	0x0380, 0x03a0	/* LR board SCC U36, connectors CN5 and CN6	*/
+};
+
+/*
+ * The port address of register `reg' of serial channel `chan', or 0 if
+ * this BIOS has no address for that channel.  A Z8030 register lives at
+ * base | (register << 1) | 1 -- the register number is AD4:AD1 and the
+ * odd address is the byte lane the console's own constants use.
+ */
+static sccport(chan, reg)
+int chan, reg;
+{
+	if (chan < 0 || chan >= NSCCBASE)
+		return (0);
+	return ((int)(sccbase[chan] | (unsigned int)(reg << 1) | 1));
+}
+	return (n >= 0 && n < ncon ? n : 0);
+	if (n <= 0 || n >= ncon || dev < CD_NONE)
+		return (-1);
+	/* A device that is not CD_NONE is a serial channel, and the only
+	 * channels this may name are the ones the machine WAS FOUND to have:
+	 * conmap is the map coninit() built the table from.  Without this a
+	 * program could bind a console to a channel that is not fitted, and
+	 * this driver would then poll and store at a real I/O address with
+	 * nothing behind it.  CD_ROM (channel 0) is always allowed: it is
+	 * console 0's device and the last place an error message can go. */
+	if (dev != CD_NONE && dev != CD_ROM
+	    && (conmap & (1 << (dev - 1))) == 0)
 /************************************************************************/
 /*	AUX -- the spare line as a device, not a terminal (N2)		*/
 /************************************************************************/
@@ -118,6 +171,19 @@ int c;
 	outb(sccport(auxchan, 8), c & 0xff);
 }
 
+static sccinit(chan)
+int chan;
+	if (sccport(chan, 0) == 0)
+		return;			/* no address for that channel */
+	outb(sccport(chan, 4), 0x44);	/* x16 clock, 1 stop bit, no parity */
+	outb(sccport(chan, 3), 0xc0);	/* Rx 8 bits/char, receiver off	    */
+	outb(sccport(chan, 5), 0x60);	/* Tx 8 bits/char, transmitter off  */
+	outb(sccport(chan, 11), 0x50);	/* Rx and Tx clock from the BRG	    */
+	outb(sccport(chan, 12), 0x03);	/* BRG divisor low  = 38,400 baud   */
+	outb(sccport(chan, 13), 0x00);	/*   and high			    */
+	outb(sccport(chan, 14), 0x03);	/* BRG source = PCLK, BRG enable    */
+	outb(sccport(chan, 3), 0xc1);	/* receiver ON			    */
+	outb(sccport(chan, 5), 0x68);	/* transmitter ON		    */
 
 static char iobyte;
 
@@ -129,11 +195,26 @@ static char iobyte;
 {
 	register int c;
 
+		register int p;
+
+		if (p == 0)
+		if ((inb(p) & RXAVAIL) == 0)
 	if ((inb(SCC_RR0) & RXAVAIL) == 0)
 		return (0);
 	return (inb(SCC_RR8) & 0x7f);
 }
 
+{
+	register int p;
+
+	p = sccport(condev[con] - 1, 0);
+	if (p == 0)
+		return;			/* fitted, but not addressable here */
+		if (inb(p) & TXEMPTY)
+	outb(sccport(condev[con] - 1, 8), c & 0xff);
+}
+
+long p;
 {
 }
 
@@ -154,16 +235,35 @@ static char iobyte;
 /* SECLEN (128) comes from bdosdef.h */
 
 	BI_ASK,			/* the version asked of the loader		*/
+	(unsigned short)BI_ASKLEN,
+	BI_CON_ANY,		/* bi_console */
+	0			/* bi_serial: nothing was probed */
 /* Deblocking runs over the LRU sector cache (sys/bcb.c), whose buffers sit
  * in the seg-0x33 buffer segment the startup code maps at phys 0x0C0000;
  * the WD controller DMAs straight to their physical addresses. */
 
 extern mem_cpy();
 extern ccpentry();		/* glue.s: reset the stack, enter the CCP */
+extern long tickget();		/* src/bios/tick900.c, trap.s	*/
 
 static UBYTE dirbuf[128];
 
 
+static int bivalid()
+	/* ANY version this header knows is a handoff: a block says which
+	 * version it is and how long it is, and bilen() is the agreement
+	 * between the two.  What is not there is decided from the LENGTH,
+	 * below, and never from the number -- kboot's own rule, and the
+	 * reason a v3 loader and a v4 one can both hand this BIOS a table. */
+	if (bilen(bootinf.bi_version) == 0)
+	if (bootinf.bi_len != bilen(bootinf.bi_version))
+	return (1);
+}
+
+static int bigood()
+{
+	if (!bivalid())
+		return (0);
 
 static int settrk, setsec;	/* selected track / sector (0-based)	*/
 static long setdma;		/* DMA address (XADDR)			*/
@@ -256,6 +356,18 @@ int dsk;
  */
 extern long rtctime();
 extern rtcinit();
+
+/*
+ * The segment allocator (src/bios/pgalloc.c), reached by BIOS function
+ * 25 below and by nothing else in this file.
+ */
+extern int	pgalloc();
+extern int	pgfree();
+extern int	pgcount();
+extern		pginit();
+extern		pgrelall();
+extern int	pgtpaswap();
+extern int	tpaphys;
 
 /************************************************************************/
 /*	Memory Region Table (fn 18)					*/
@@ -359,6 +471,25 @@ int vec, id, fcw, pcseg, pcoff;
 /*	Init + dispatcher						*/
 /************************************************************************/
 
+#define CONDFLMAP	0x0003		/* channels 0 and 1: the on-board SCC */
+
+static coninit()
+{
+	register int chan;
+	unsigned int map;
+
+	map = CONDFLMAP;
+	if (bivalid() && bootinf.bi_len >= (unsigned short)BI_LEN4
+	    && bootinf.bi_serial != 0)
+		map = bootinf.bi_serial;
+	conmap = map;
+
+	for (chan = 0; chan < CONMAX; chan++) {
+		condev[chan] = CD_NONE;
+		pend[chan] = 0;
+	}
+	condev[0] = CD_ROM;		/* whatever the ROM chose	   */
+	ncon = 1;
 	/*  The AUX device (N2) starts on the SAME channel console 1 does --
 	 *  the first spare port, 0x0120 on this machine.  That is not two
 	 *  owners of one wire by accident: there is only one spare wire, and
@@ -366,20 +497,35 @@ int vec, id, fcw, pcseg, pcoff;
 	 *  function 28 (`CONDEV(1, CD_NONE)') at the moment a transfer
 	 *  starts.  Binding AUX somewhere else, or nowhere, is function 32.  */
 	auxchan = -1;
+	for (chan = 1; chan < NCHAN && ncon < CONMAX; chan++) {
+		if ((map & (1 << chan)) == 0)
+			continue;
+		condev[ncon] = CD_SER(chan);	/* console 1 = the first spare */
+		sccinit(chan);			/* a no-op with no address    */
 		if (auxchan < 0)
 			auxchan = chan;		/* ...and so is the AUX line */
+		ncon++;
+	}
+}
+
 biosinit()
 {
 	extern int mapseg();
 
 	BTRACE("<1>");		/* binit (BIOS fn 0) entered */
+	coninit();			/* the console table: the loader's
+					 * bi_serial, or the known map */
 	iobyte = 0;
 	/* split-I/D shim banks: pgmld's loadseg copies a 0xEE0B program's
 	 * D segments into SPLITDSEG before spload() runs, so both shim
 	 * segments must be mapped from boot, not at scan time */
 	mapseg(SPLITDSEG, SPLITDPAGE, 2);
 	mapseg(SPLITTSEG, SPLITTPAGE, 2);
+	/* size the segment pool from the ROM's memory report -- before
+	 * anything can ask, and answering zero on a 512 KB machine */
+	pginit();
 	rtcinit();			/* CIO #1 Port B/PC1 -> MSM58321 */
+	tickinit();			/* CIO #1 C/T 3 -> the 100 Hz tick */
 	wdinit900();
 	bcbinit();
 	curix = -1;
@@ -399,6 +545,8 @@ long d1, d2;
 		break;
 
 	case 1:					/* WBOOT: back to the CCP */
+		pgrelall();			/* the transient is over: its
+						 * segments go back, mapped
 		flushhst();
 						 * must not leave the parser
 						 * eating the CCP's output */
@@ -490,6 +638,30 @@ long d1, d2;
 
 	case 23:				/* TIME: read/set the RTC */
 		return (rtctime(d1, (int)d2));
+
+	case 24:				/* TICK */
+		return (tickget());
+
+	case 25:				/* SEGMENT */
+		switch ((int)d1) {
+		case 0:
+			return ((long)pgalloc());
+		case 1:
+			return ((long)pgfree((int)d2));
+		case 2:
+			return ((long)pgcount());
+		}
+		return (0L);
+
+	case 26:				/* TPASWAP */
+		if ((int)d1 == 0)
+			return ((long)tpaphys);
+		return ((long)pgtpaswap((int)d1));
+	case 27:				/* CONOUTN */
+		break;
+
+	case 29:				/* CONCNT */
+		return ((long)ncon);
 
 	case 31:				/* AUXIST */
 		return ((long)auxist());

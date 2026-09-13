@@ -43,3 +43,6 @@
 #define	SPLITMAXT	0xE000		/* max text bytes: the side table's
 					 * scan scratch begins at this offset
 					 * in the SPLITTSEG segment */
+
+#define	SYSPHYSPAGE	0x08		/* phys 0x080000: CPM.SYS's text */
+#define	PGPGLO		0x10		/* SPLITMPHYSPAGE + 1		 */

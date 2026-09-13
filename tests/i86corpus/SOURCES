@@ -1,0 +1,14 @@
+tests/i86corpus/ -- .CMD files tests/i86test.c reads.  Test input, nothing else.
+
+PIP.CMD, ED.CMD, GENCMD.CMD and SUBMIT.CMD are Digital Research's own CP/M-86
+1.0 programs, unmodified, from the cpm86pc drop of the Unofficial CP/M Web
+Site.  Licensed by the 9 July 2022 grant from Bryan Sparks (President, DRDOS,
+Inc.) at <http://cpm.z80.de/license.html>, which carries no distribution
+restriction.
+
+They are 8086 code.  Nothing on this machine executes them and nothing stages
+them onto a disk image: our utilities are native Z8000 programs -- src/cmd/
+pip.c and src/cmd/stat.c are DRI's sources rebuilt as .Z8K, and they beat
+anything a shim can interpret.  These four are here because a loader needs
+real headers to be tested against, and because a PIP copy is a known-answer
+test for the day the CP/M-86 shim can make a BDOS call.

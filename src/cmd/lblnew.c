@@ -27,6 +27,26 @@ char *argv[];
 	register int	r;
 	register int	i;
 
+	if (argc > 1 && (argv[1][0] & 0x5f) == 'P') {
+		/* ---- a label THIS BDOS did not write ----
+		   login scan, which copies byte 12 of the type-20h entry
+		   The image this runs on is labelled by
+		   tools/mkcpmfs.py --label-mode ...,password, and the
+		   Makefile proves host-side that the bit really is on
+		   the medium -- otherwise this would pass on any disk. */
+		r = getlabel();
+		cputs("LBLNEW: fn 101 on a password-labelled drive -> ");
+		puthex(r);
+		if (!(r & DL_EXISTS)) {
+			cputs("  BAD -- no label on this image");
+			bad++;
+			bad++;
+		}
+		cputs("\r\n");
+		cputs(bad ? "LBLNEW: FAIL\r\n" : "LBLNEW: PASS\r\n");
+		return (bad != 0);
+	}
+
 	if (getlabel() != 0) {
 		cputs("LBLNEW: BAD -- this image already has a label\r\n");
 		return (1);

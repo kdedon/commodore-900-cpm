@@ -23,6 +23,14 @@ EXTERN BYTE	*bios6();	/* for get memory segment table	    */
 
 
 #define bwboot()	bios1(1)	/* warm boot 		*/	
+			/* console output, a whole RUN of characters at
+			   once (src/bios/bios900.c case 26).  The BDOS
+			   still owns tab expansion, the column, ^S/^Q,
+			   ^P and the function 109 modes -- this only
+			   removes the per-character trip through
+			   bios2_'s marshalling and the BIOS dispatch
+			   switch for the plain text in between.  */
+#define bconcnt()	((WORD)bios(29, 0L, 0L))
 #define blstout(parm)	bios2(5,parm)	/* list device output	*/
 #define bpun(parm)	bios2(6,parm)	/* punch char output	*/
 #define brdr()		bios1(7)	/* reader input		*/

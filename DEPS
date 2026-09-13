@@ -23,6 +23,7 @@
 #
 # Verify only.  `make all' needs neither; `make verify' needs both.
 #   emu        the c900 emulator binary, to run the guest tests
+#   userland   cmd/cpm.c -- COHERENT's own reader of the CP/M directory
 #              format, built on the host as an independent oracle
 
 toolchain  release  https://github.com/kdedon/commodore-900-toolchain  v0.1.7  c900-toolchain-@REF@-@HOST@

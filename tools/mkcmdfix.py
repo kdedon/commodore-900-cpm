@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""mkcmdfix.py - the synthetic .CMD fixtures `make i86test' loads.
+
+    mkcmdfix.py <destdir>
+
+tests/i86corpus/ holds four of DRI's own .CMD files, and they answer "does
+the loader read what a real file says".  They cannot answer anything else:
+all four are small-model, all four carry A-Base 0, and none of them is
+malformed.  So the header space the loader must refuse -- kill criterion K1
+(CPM86-STAGE-ONE.md §6) and every CE_* error in src/cmd/i86.h -- has no real
+file behind it, and never will.  These fixtures are that half, built from
+the format description in src/cmd/i86load.c: a 128-byte header of eight
+9-byte group descriptors (G-Form, G-Length, A-Base, G-Min, G-Max, all
+little-endian paragraph counts) followed by the group images in descriptor
+order.
+
+Four of them also RUN.  The real files cannot: their first BDOS call has
+nowhere to go until the INT 0E0h seam exists, so nothing here is a copy of
+one.  They are the smallest programs that make a loader decision visible in
+a result -- the 8080 model's entry at code offset 0x100, G-Max 0 resolving
+to a whole segment through the base page the guest itself reads, and the
+difference
+between "we do not implement this" and "this is not an instruction", which
+is the property that keeps future widening honest.
+
+One fixture is not a .CMD at all.  GENCMD.CMD reads FILENAME.H86 and
+writes FILENAME.CMD, and no corpus of .CMD files can supply its input, so
+<destdir>/I86HEX.H86 is built here too -- real DRI hex, real checksums,
+around a hand-assembled 8086 program.  See p_hex().
+
+Output is <destdir>/*.CMD plus <destdir>/I86HEX.H86 plus
+<destdir>/MANIFEST, which is what tests/i86test.c reads:
+
+    LOAD <file> <CE_*> [model=|entry=|ng=|alloc=n,n|need=]
+    RUN  <file> <X_*>  [ip=|ax=|bx=|cx=|dx=|sp=|steps=|w=seg:off:val]
+
+Every expected value in the manifest is written here from the fixture's
+intent -- the sum a program computes, the allocation rule stated in
+i86load.c's galloc() -- and never read back out of the loader or the
+executor, which would agree with themselves and prove nothing.
+"""
+
+import os
+import sys
+
+# G-Form values (src/cmd/i86.h).
+G_CODE = 1
+G_DATA = 2
+G_EXTRA = 3
+G_STACK = 4
+G_AUX1 = 5
+G_SHCODE = 9
+
+PARA = 16
+HDR = 128
+MAXPAR = 4096                           # paragraphs in one 64 KB segment
+
+TAIL = "B:FIX.DAT"                      # the command tail i86test passes
+
+
+# ---------------------------------------------------------------- assembler
+
+class Asm:
+    """A two-pass assembler just big enough for the fixture programs.
+
+    Bytes are written out by hand so the encodings stay visible in the
+    source; only the branch displacements are computed, because a
+    hand-counted displacement is the one thing here that would be wrong
+    silently rather than loudly.
+    """
+
+    def __init__(self, org=0):
+        self.org = org
+        self.pos = org
+        self.items = []                 # (bytes, None) or (None, fixup)
+        self.labels = {}
+
+    def label(self, name):
+        self.labels[name] = self.pos
+        return self
+
+    def at(self, name):
+        return self.labels[name]
+
+    def b(self, *vals):
+        data = bytes(vals)
+        self.items.append((data, None))
+        self.pos += len(data)
+        return self
+
+    def rel8(self, op, target):
+        self.items.append((None, (1, op, target, self.pos + 2)))
+        self.pos += 2
+        return self
+
+    def rel16(self, op, target):
+        self.items.append((None, (2, op, target, self.pos + 3)))
+        self.pos += 3
+        return self
+
+    def code(self):
+        out = bytearray()
+        for data, fix in self.items:
+            if data is not None:
+                out += data
+                continue
+            n, op, target, after = fix
+            d = self.labels[target] - after
+            if n == 1:
+                if not -128 <= d <= 127:
+                    raise ValueError("rel8 out of range to %s" % target)
+                out += bytes([op, d & 0xff])
+            else:
+                out += bytes([op, d & 0xff, (d >> 8) & 0xff])
+        return bytes(out)
+
+
+# ------------------------------------------------------------------- format
+
+def w16(v):
+    return bytes([v & 0xff, (v >> 8) & 0xff])
+
+
+def header(groups):
+    """groups: list of (form, glen, abase, gmin, gmax), in descriptor order."""
+    h = bytearray(HDR)
+    for i, (form, glen, abase, gmin, gmax) in enumerate(groups):
+        o = i * 9
+        h[o] = form
+        h[o + 1:o + 3] = w16(glen)
+        h[o + 3:o + 5] = w16(abase)
+        h[o + 5:o + 7] = w16(gmin)
+        h[o + 7:o + 9] = w16(gmax)
+    return bytes(h)
+
+
+def npar(image):
+    """Paragraphs an image occupies -- G-Length is a paragraph count."""
+    return (len(image) + PARA - 1) // PARA
+
+
+def write(dest, name, groups, images=None, cut=None):
+    """Write one fixture.  `images' pads to each descriptor's G-Length;
+    `cut' truncates the finished file to that many bytes, which is the
+    only way to build the two files that end early."""
+    data = bytearray(header(groups))
+    for i, (form, glen, abase, gmin, gmax) in enumerate(groups):
+        img = images[i] if images and i < len(images) else b''
+        if len(img) > glen * PARA:
+            raise ValueError("%s: group %d image exceeds G-Length" % (name, i))
+        data += img + bytes(glen * PARA - len(img))
+    if cut is not None:
+        data = data[:cut]
+    open(os.path.join(dest, name), 'wb').write(bytes(data))
+    return len(data)
+
+
+# ----------------------------------------------------------------- programs
+
+def p_8080():
+    """RUN8080.CMD -- the 8080 model, and the entry point that comes with it.
+
+    i86load.c's finding, made against DDT86, TOD and SETUP: a code-only
+    .CMD is the 8080 model and enters at code offset 0x100, with the first
+    256 bytes of the image reserved for the base page.  So this image holds
+    256 zero bytes and then a program, and the STEP COUNT in the manifest
+    is what pins the entry: enter at 0 instead and the 256 zeros decode as
+    128 harmless `add [bx+si],al' before falling into the same program with
+    the same answer, but 128 instructions late.
+
+    It sums 1..10 with LOOP (55), doubles it in a near CALL (110), stores
+    that, and reads the command tail's length out of the base page at 0x80
+    -- the two halves of i86bpage(), the group table and the tail, seen
+    from inside the guest.
+    """
+    a = Asm(0x100)
+    a.b(0x31, 0xc0)                     # xor ax,ax
+    a.b(0xb9, 0x0a, 0x00)               # mov cx,10
+    a.label('sum')
+    a.b(0x01, 0xc8)                     # add ax,cx
+    a.rel8(0xe2, 'sum')                 # loop sum       -- 10 iterations
+    a.rel16(0xe8, 'dbl')                # call dbl
+    a.b(0xa3, 0x00, 0x04)               # mov [0x400],ax
+    a.b(0x8a, 0x1e, 0x80, 0x00)         # mov bl,[0x80]  -- tail length
+    a.label('halt')
+    a.b(0xf4)                           # hlt
+    a.label('dbl')
+    a.b(0x51)                           # push cx
+    a.b(0x89, 0xc1)                     # mov cx,ax
+    a.b(0x01, 0xc8)                     # add ax,cx
+    a.b(0x59)                           # pop cx
+    a.b(0xc3)                           # ret
+    img = bytes(0x100) + a.code()
+    # 2 setup + 10*(add+loop) + call + 5 in the subroutine + 2 stores + hlt
+    steps = 2 + 20 + 1 + 5 + 2 + 1
+    exp = "ip=0x%04x ax=110 bx=%d cx=0 steps=%d w=cs:0x400:110" % (
+        a.at('halt'), len(TAIL), steps)
+    return img, exp
+
+
+def p_small():
+    """RUNSMALL.CMD -- the small model, and G-Max 0 read by the guest.
+
+    The data group supplies 17 paragraphs, asks for 512 and declares G-Max
+    0.  i86load.c: zero is not a bound of zero, it is "no maximum", so the
+    allocation grows from G-Min to the whole 64 KB segment the group owns
+    -- and this program does not take the loader's word for it, it reads
+    its own data group's paragraph count out of the base page (word at
+    DS:6, the second group-table entry's length) and stores it.  A loader
+    that read G-Max literally would put 0 there; one that stopped at G-Min
+    would put 512, which is what it did until 2026-09-04.
+
+    The array it sums sits at DS:0x100, immediately above the base page,
+    which is also the check that the data image landed at DS:0 with only
+    its first 256 bytes overwritten.
+    """
+    a = Asm(0)
+    a.b(0xa1, 0x06, 0x00)               # mov ax,[6]     -- data G paragraphs
+    a.b(0xa3, 0x00, 0x02)               # mov [0x200],ax
+    a.b(0xbe, 0x00, 0x01)               # mov si,0x100
+    a.b(0xb9, 0x05, 0x00)               # mov cx,5
+    a.b(0x31, 0xdb)                     # xor bx,bx
+    a.label('sum')
+    a.b(0x03, 0x1c)                     # add bx,[si]
+    a.b(0x83, 0xc6, 0x02)               # add si,2
+    a.rel8(0xe2, 'sum')                 # loop sum
+    a.b(0x89, 0x1e, 0x02, 0x02)         # mov [0x202],bx
+    a.label('halt')
+    a.b(0xf4)                           # hlt
+    words = (0x0101, 0x0202, 0x0303, 0x0404, 0x0505)    # sum 0x0f0f
+    data = bytes(0x100) + b''.join(w16(v) for v in words)
+    steps = 5 + 5 * 3 + 2
+    exp = ("ip=0x%04x ax=%d bx=0x0f0f steps=%d w=ds:0x200:%d "
+           "w=ds:0x202:0x0f0f" % (a.at('halt'), MAXPAR, steps, MAXPAR))
+    return a.code(), data, exp
+
+
+def p_multi():
+    """I86MG.CMD -- the large model, and the only multi-group .CMD there is.
+
+    All 15 files in DRI's cpm86pc drop are small model or 8080, so nothing
+    real declares an extra, a stack or an auxiliary group and the compact
+    and large paths of src/cmd/i86load.c i86place() have no corpus behind
+    them.  This is that corpus: five groups -- code, data, extra, stack and
+    aux 1 -- built here from the format description, which is why nothing
+    binary is shipped for it.
+
+    IT DOES NOT TAKE THE LOADER'S WORD FOR ANY OF IT.  Every claim
+    i86place() makes is checked from inside the guest, by a program that
+    can only pass if the claim holds:
+
+      1. ES is a DIFFERENT segment from DS.  It writes 0xBEEF at ES:0x300,
+         then 0xCAFE at DS:0x300, then reads ES:0x300 back.  One segment
+         behind both -- which is what the loader did before the extra
+         group had a segment of its own -- gives 0xCAFE and fails here.
+      2. SS is a different segment again.  It pushes the marker and reads
+         it back through an explicit SS: override at the address the push
+         must have used.
+      3. The auxiliary group has a segment and NO segment register, so the
+         only way to it is the base page: the program loads its paragraph
+         from DS:0x10 -- the fifth group-table entry, which i86bpage()
+         fills from g->par -- into ES, and writes and reads through it.
+         i86resolve() has to answer that paragraph without a slow-path
+         escape, which is what makes `slow segment resolutions 0' on the
+         target a statement about this program.
+
+    Then it prints and exits through the BDOS, so the same file is a target
+    gate (tests/verify.mk verify-i86) and not only a host fixture.  The
+    manifest entry stops at the FIRST INT, where DX names which of the two
+    messages is about to be printed: the expectations below are what the
+    registers hold if and only if all three checks passed.
+    """
+    a = Asm(0)
+    a.b(0xb8, 0xef, 0xbe)               # mov ax,0xbeef
+    a.b(0x26, 0xa3, 0x00, 0x03)         # mov es:[0x300],ax
+    a.b(0xbb, 0xfe, 0xca)               # mov bx,0xcafe
+    a.b(0x89, 0x1e, 0x00, 0x03)         # mov [0x300],bx      -- into DS
+    a.b(0x26, 0x8b, 0x0e, 0x00, 0x03)   # mov cx,es:[0x300]
+    a.b(0x39, 0xc1)                     # cmp cx,ax
+    a.rel8(0x75, 'fail')                # jne fail            -- 1: ES != DS
+    a.b(0xbc, 0x00, 0x04)               # mov sp,0x400
+    a.b(0x50)                           # push ax
+    a.b(0x5a)                           # pop dx
+    a.b(0x39, 0xc2)                     # cmp dx,ax
+    a.rel8(0x75, 'fail')
+    a.b(0x36, 0x8b, 0x3e, 0xfe, 0x03)   # mov di,ss:[0x3fe]
+    a.b(0x39, 0xc7)                     # cmp di,ax
+    a.rel8(0x75, 'fail')                # jne fail            -- 2: SS
+    a.b(0x8b, 0x36, 0x10, 0x00)         # mov si,[0x10]  -- aux1 paragraph
+    a.b(0x8e, 0xc6)                     # mov es,si
+    a.b(0xb8, 0xaa, 0x55)               # mov ax,0x55aa
+    a.b(0x26, 0xa3, 0x00, 0x02)         # mov es:[0x200],ax
+    a.b(0x26, 0x8b, 0x2e, 0x00, 0x02)   # mov bp,es:[0x200]
+    a.b(0x39, 0xc5)                     # cmp bp,ax
+    a.rel8(0x75, 'fail')                # jne fail            -- 3: aux 1
+    a.b(0xba, 0x00, 0x01)               # mov dx,MSGOK
+    a.label('print')
+    a.b(0xb9, 0x09, 0x00)               # mov cx,9       -- print string
+    a.b(0xcd, 0xe0)                     # int 0e0h
+    a.b(0xb9, 0x00, 0x00)               # mov cx,0       -- system reset
+    a.b(0xcd, 0xe0)                     # int 0e0h
+    a.label('fail')
+    a.b(0xba, 0x10, 0x01)               # mov dx,MSGBAD
+    a.b(0xb9, 0x09, 0x00)
+    a.b(0xcd, 0xe0)
+    a.b(0xb9, 0x00, 0x00)
+    a.b(0xcd, 0xe0)
+
+    # The two messages, in the DATA group above the base page: the first
+    # 256 bytes of a small/compact/large data image are overwritten by
+    # i86bpage(), so nothing may live there.
+    msgs = bytearray(0x100)
+    msgs += b"I86MG OK\r\n$"             # at DS:0x100
+    msgs += bytes(0x110 - len(msgs))
+    msgs += b"I86MG BAD\r\n$"            # at DS:0x110
+
+    # Check 1 is six instructions and its JNE; check 2 is four and its
+    # JNE; check 3's SS: read is two and its JNE; the auxiliary group is
+    # six and its JNE; then MOV DX, MOV CX and the INT itself, which is
+    # the step ldrun() stops on.
+    steps = (6 + 1) + (4 + 1) + (2 + 1) + (6 + 1) + 1 + 1 + 1
+    exp = ("ip=0x%04x ax=0x55aa bx=0xcafe cx=9 dx=0x100 sp=0x400 bp=0x55aa "
+           "di=0xbeef si=0x5000 steps=%d w=ds:0x300:0xcafe "
+           "w=ss:0x3fe:0xbeef w=es:0x200:0x55aa"
+           % (a.at('print') + 5, steps))
+    return a.code(), bytes(msgs), exp
+
+
+def p_refuse(bad, comment):
+    """RUNUNIMP.CMD and RUNBAD.CMD -- the same program twice, differing in
+    one byte, so that "decoded, not implemented" and "not an instruction"
+    are told apart by the fixture and not only by the return code.  Both
+    must stop AT the offending byte with the work before it done: a refusal
+    that cannot name its own address is not a refusal, it is a crash."""
+    a = Asm(0x100)
+    a.b(0xb8, 0x34, 0x12)               # mov ax,0x1234
+    a.label('stop')
+    a.b(bad)                            # the byte under test: %s
+    a.b(0xf4)                           # hlt (never reached)
+    img = bytes(0x100) + a.code()
+    exp = "ip=0x%04x ax=0x1234 steps=2" % a.at('stop')
+    return img, exp + "  # " + comment
+
+
+# --------------------------------------------------------------- DRI hex
+
+# GENCMD.CMD's input format, and it is Intel hex only in its punctuation.
+# A record is
+#
+#	:LL AAAA TT <LL data bytes> CC
+#
+# with LL the byte count, AAAA the load offset, TT the record type and CC
+# the two's-complement checksum of everything between the colon and it.
+# What DRI added is the TYPE FIELD: 00 is an ordinary Intel data record,
+# 01 an end of file and 03 a start address, but 81 says "this data belongs
+# to the CODE segment" and 82 "to the DATA segment" -- that is how one hex
+# file carries the several groups a .CMD header has to describe.
+#
+# READ OFF A REAL FILE, not remembered: the CCP/M source drop's
+# LBDOS.H86 (cpm8000/ref/incoming/ccpmsrc/CCPM/) opens with
+# `:0400000300000000F9' -- a type 03 start address of 0000:0000, whose
+# checksum verifies as 0x100 - 7 -- and then runs type 81 records from
+# offset 0000 through type 82 records for its data.  Everything below
+# is that shape.
+H86_EOF   = 0x01
+H86_START = 0x03
+H86_CODE  = 0x81
+H86_DATA  = 0x82
+
+# Records are 27 data bytes wide because LBDOS.H86's are (0x1B).
+H86_WIDTH = 27
+
+
+def h86rec(typ, addr, data):
+    body = bytes([len(data), (addr >> 8) & 0xff, addr & 0xff, typ]) + data
+    ck = (-sum(body)) & 0xff
+    return (':' + ''.join('%02X' % b for b in body) + '%02X' % ck
+            + '\r\n').encode('ascii')
+
+
+def h86group(typ, org, data):
+    """One segment's image as a run of records, `H86_WIDTH' bytes each.
+
+    Leading zeros are NOT emitted: a hex file states the bytes it has and
+    the loader fills the rest, which is exactly how the data group's first
+    256 bytes -- the base page's own space -- come to be absent below."""
+    out = b''
+    i = 0
+    while i < len(data):
+        chunk = data[i:i + H86_WIDTH]
+        out += h86rec(typ, org + i, chunk)
+        i += len(chunk)
+    return out
+
+
+def p_hex():
+    """I86HEX.H86 -- a real hex file for GENCMD.CMD to convert.
+
+    tests/i86corpus/ can supply a .CMD to load but nothing to FEED a
+    corpus binary, and GENCMD is the one of the four whose input is not a
+    command line: it reads FILENAME.H86 and writes FILENAME.CMD.  Without
+    an .H86 the furthest it can be driven is "CANNOT OPEN SOURCE", which
+    tests the default FCB and nothing else.
+
+    So this is a program, hand-assembled here so the encodings stay
+    visible, in the small model GENCMD will infer from the segments the
+    records name:
+
+	code, at CS:0000		data, at DS:0100
+	    mov dx,0100h		    "I86HEX OK", CR, LF, '$'
+	    mov cl,9   ; print string
+	    int 0E0h
+	    mov cl,0   ; system reset
+	    int 0E0h
+
+    DS:0100 and not DS:0000 because the small model puts the base page at
+    DS:0000 (src/cmd/i86load.c i86hdr), so the first 256 bytes of a data
+    group are not the program's to use.  INT 0E0h because that is the
+    CP/M-86 BDOS entry and therefore our seam.
+
+    The point of choosing a program that PRINTS is that the .CMD GENCMD
+    writes can then be loaded and run by this same shim, so the round
+    trip is checked by its output and not by re-reading the header we
+    would have written ourselves.
+    """
+    a = Asm(0)
+    a.b(0xba, 0x00, 0x01)               # mov dx,0100h
+    a.b(0xb1, 0x09)                     # mov cl,9      -- print string
+    a.b(0xcd, 0xe0)                     # int 0E0h
+    a.b(0xb1, 0x00)                     # mov cl,0      -- system reset
+    a.b(0xcd, 0xe0)                     # int 0E0h
+    msg = b'I86HEX OK\r\n$'
+    hexf = h86rec(H86_START, 0, bytes(4))
+    hexf += h86group(H86_CODE, 0, a.code())
+    hexf += h86group(H86_DATA, 0x100, msg)
+    hexf += h86rec(H86_EOF, 0, b'')
+    # A CP/M text file ends with ^Z and is a whole number of 128-byte
+    # records; GENCMD reads it with sequential reads and stops at the ^Z.
+    hexf += b'\x1a'
+    if len(hexf) % 128:
+        hexf += b'\x1a' * (128 - len(hexf) % 128)
+    return hexf, msg
+
+
+# --------------------------------------------------------------------- main
+
+def main(argv):
+    if len(argv) != 2:
+        sys.exit("usage: mkcmdfix.py <destdir>")
+    d = argv[1]
+    if not os.path.isdir(d):
+        os.makedirs(d)
+    man = []
+    n = 0
+
+    def load(name, groups, expect, keys='', images=None, cut=None):
+        write(d, name, groups, images, cut)
+        man.append("LOAD %s %s %s" % (name, expect, keys))
+
+    # ---- K1: the two refusals no real .CMD can produce.  All 15 files in
+    # DRI's cpm86pc drop carry A-Base 0 and no group over 4,096 paragraphs
+    # (the merged sweep's measurement), so this is the whole evidence there
+    # is that the check fires at all.
+    load('ABASE.CMD', [(G_CODE, 8, 0x0800, 8, 0)], 'CE_BASE')
+    # An in-file overlap is not representable: a group's image offset is
+    # DERIVED from the G-Lengths before it, in descriptor order, so the
+    # images tile the file by construction.  The only overlap the format
+    # can express is two absolute groups claiming the same paragraphs, and
+    # the first A-Base refuses before the second is read.
+    load('OVERLAP.CMD', [(G_CODE, 16, 0x1000, 16, 0),
+                         (G_DATA, 16, 0x1008, 16, 0)], 'CE_BASE')
+    load('BIGLEN.CMD', [(G_CODE, MAXPAR + 1, 0, MAXPAR + 1, 0)], 'CE_BIG')
+    load('BIGMIN.CMD', [(G_CODE, 8, 0, 5000, 0)], 'CE_BIG')
+    load('BIGMAX.CMD', [(G_CODE, 8, 0, 8, 9000)], 'CE_BIG')
+
+    # ---- malformed files.  SHORTHDR.CMD is 40 bytes that are not a
+    # header at all -- a truncated copy, or something misnamed -- and it is
+    # why i86hdr() checks its own length before it reads a descriptor.
+    # Without that check the missing 88 bytes are whatever the caller's
+    # buffer held, and the refusal is "no code group": a statement about a
+    # header we never had.  Every other short file is caught later anyway,
+    # by the images not fitting; this one is not.
+    load('SHORTHDR.CMD', [], 'CE_TRUNC', cut=40)
+    # And the same file one byte longer than a header, so that the LATER
+    # check is the one that fires: the descriptors are real, the image is
+    # not there.
+    load('HDRONLY.CMD', [(G_CODE, 8, 0, 8, 0)], 'CE_TRUNC', cut=HDR)
+    load('PASTEOF.CMD', [(G_CODE, 100, 0, 100, 0)], 'CE_TRUNC',
+         cut=HDR + PARA)
+    load('SHCODE.CMD', [(G_CODE, 8, 0, 8, 0), (G_SHCODE, 8, 0, 8, 0)],
+         'CE_FORM')
+    load('FORM12.CMD', [(G_CODE, 8, 0, 8, 0), (12, 8, 0, 8, 0)], 'CE_FORM')
+    load('DUPCODE.CMD', [(G_CODE, 8, 0, 8, 0), (G_CODE, 8, 0, 8, 0)],
+         'CE_DUP')
+    load('NOCODE.CMD', [(G_DATA, 8, 0, 8, 0)], 'CE_NOCODE')
+
+    # ---- valid, and at the edges of galloc()'s rule.
+    load('GMAX0.CMD', [(G_CODE, 5, 0, 5, 0), (G_DATA, 5, 0, 200, 0)],
+         'CE_OK', 'model=small entry=0 ng=2 alloc=%d,%d need=288'
+         % (MAXPAR, MAXPAR))
+    # The same file with a G-Max that says something: the ask is
+    # honoured, and it is neither G-Min nor the whole segment.
+    load('GMAX300.CMD', [(G_CODE, 5, 0, 5, 900), (G_DATA, 5, 0, 200, 300)],
+         'CE_OK', 'model=small entry=0 ng=2 alloc=900,300 need=288')
+    # Exactly one segment is legal; one paragraph more is CE_BIG above.
+    load('FULLSEG.CMD', [(G_CODE, 8, 0, MAXPAR, MAXPAR)], 'CE_OK',
+         'model=8080 entry=0x100 ng=1 alloc=4096 need=256')
+    # G-Max BELOW G-Min.  G-Min is what the program needs and G-Max what it
+    # will accept, so the two cannot both be honoured; the loader follows
+    # G-Min and does not cap.  Pinned because it is a choice, not a law --
+    # and it is the one direction galloc()'s growth must not go.
+    load('MAXLT.CMD', [(G_CODE, 8, 0, 8, 0), (G_DATA, 4, 0, 64, 10)],
+         'CE_OK', 'model=small entry=0 ng=2 alloc=%d,64 need=320' % MAXPAR)
+    # A declared group that supplies and needs nothing still gets memory:
+    # galloc() never returns zero, so CE_EMPTY cannot fire.  With G-Max 0
+    # on both groups that is the whole segment each.
+    load('ZEROLEN.CMD', [(G_CODE, 4, 0, 4, 0), (G_DATA, 0, 0, 0, 0)],
+         'CE_OK', 'model=small entry=0 ng=2 alloc=%d,%d need=192'
+         % (MAXPAR, MAXPAR))
+
+    # ---- the four that run.
+    img, exp = p_8080()
+    # G-Min far above G-Length, the way every DRI utility is built: the
+    # difference is BSS, and here it is also where the stack goes.
+    write(d, 'RUN8080.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
+    man.append("RUN RUN8080.CMD X_HALT " + exp)
+
+    code, data, exp = p_small()
+    write(d, 'RUNSMALL.CMD',
+          [(G_CODE, npar(code), 0, npar(code), 0),
+           (G_DATA, npar(data), 0, 512, 0)], [code, data])
+    man.append("RUN RUNSMALL.CMD X_HALT " + exp)
+
+    img, exp = p_refuse(0xa4, 'movsb: a real instruction we do not run')
+    write(d, 'RUNUNIMP.CMD', [(G_CODE, npar(img), 0, 64, 0)], [img])
+    man.append("RUN RUNUNIMP.CMD X_UNIMP " + exp)
+
+    img, exp = p_refuse(0xd6, '0xd6: no 8086 instruction at all')
+    write(d, 'RUNBAD.CMD', [(G_CODE, npar(img), 0, 64, 0)], [img])
+    man.append("RUN RUNBAD.CMD X_BAD " + exp)
+
+    # ---- the multi-group one, which is both a host fixture and a target
+    # gate.  Five groups: code and data with images, and an extra, a stack
+    # and an auxiliary group that supply no bytes at all -- G-Length 0 --
+    # because what they are for is ADDRESS SPACE.  G-Max 0 on each, so
+    # galloc() gives each the whole 64 KB segment it owns; the guest's
+    # writes at 0x200-0x400 are inside every one of them.
+    code, data, exp = p_multi()
+    write(d, 'I86MG.CMD',
+          [(G_CODE, npar(code), 0, npar(code), 0),
+           (G_DATA, npar(data), 0, 512, 0),
+           (G_EXTRA, 0, 0, 256, 0),
+           (G_STACK, 0, 0, 256, 0),
+           (G_AUX1, 0, 0, 256, 0)], [code, data])
+    man.append("LOAD I86MG.CMD CE_OK model=large entry=0 ng=5 "
+               "alloc=%d,%d,%d,%d,%d" % ((MAXPAR,) * 5))
+    man.append("RUN I86MG.CMD X_INT " + exp)
+
+    # ---- and the one fixture that is not a .CMD: GENCMD's input.
+    hexf, msg = p_hex()
+    open(os.path.join(d, 'I86HEX.H86'), 'wb').write(hexf)
+
+    n = len(man)
+    fp = open(os.path.join(d, 'MANIFEST'), 'w')
+    fp.write("# generated by tools/mkcmdfix.py -- do not edit\n")
+    for line in man:
+        fp.write(line.rstrip() + "\n")
+    fp.close()
+    print("mkcmdfix: %d fixtures in %s, plus I86HEX.H86 (%d bytes)"
+          % (n, d, len(hexf)))
+
+
+main(sys.argv)

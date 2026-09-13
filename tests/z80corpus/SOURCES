@@ -1,0 +1,29 @@
+tests/z80corpus/ -- .COM files tests/z80test.c reads.  Test input, nothing else.
+
+PIP.COM, DUMP.COM, SUBMIT.COM and SAVE.COM are Digital Research's own CP/M 3
+programs, unmodified, from the cpm3bin drop of the Unofficial CP/M Web Site
+(cpm3bin.zip, "CP/M 3 BINARY w/YEAR 2000 fixes").  Licensed by the 9 July 2022
+grant from Bryan Sparks (President, DRDOS, Inc.) at
+<http://cpm.z80.de/license.html>, which carries no distribution restriction and
+which cpm.z80.de states covers the whole archive.
+
+They are 8080 code.  Nothing on this machine executes them in the ordinary way
+and nothing stages them onto a disk image: our utilities are native Z8000
+programs -- src/cmd/pip.c and src/cmd/stat.c are DRI's sources rebuilt as .Z8K,
+and they beat anything a shim can interpret.  The CP/M-80 shim exists so that
+FOREIGN software runs here, not as a way of acquiring a PIP we already have.
+
+Each of the four answers a different question:
+
+  PIP.COM     8,632 B  the gate.  A file copy is a known-answer test: the
+                       verdict is a byte-for-byte cmp, which is the only kind
+                       of verdict that catches a silently short copy.
+  DUMP.COM      960 B  first light.  The smallest DRI program that opens a
+                       file, reads it and prints something checkable.
+  SUBMIT.COM  5,376 B  a GENCOM-bound .COM: first byte 0xC9, one RSX.  The
+                       loader has to refuse this by name rather than execute
+                       the header record's RET and exit looking successful.
+  SAVE.COM    1,792 B  an RSX-ONLY file: 0xC9 at the image base too, so there
+                       is no program in it at all.  loader3.asm:253 is the
+                       code that exists to tell these apart, and this is the
+                       file that exercises the distinction.

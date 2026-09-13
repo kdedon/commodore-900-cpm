@@ -18,6 +18,7 @@ EXTERN UBYTE	conin();	/* Console Input function	*/
 EXTERN 		cookdout();	/* Cooked console output routine */
 EXTERN UBYTE	rawconio();	/* Raw console I/O		*/
 EXTERN		prt_line();	/* Print line until delimiter	*/
+EXTERN		cookdrun();	/* Print a run of characters	*/
 EXTERN		readline();	/* Buffered console read	*/
 EXTERN		seldsk();	/* Select disk			*/
 EXTERN BOOLEAN	openfile();	/* Open File			*/
@@ -51,6 +52,8 @@ EXTERN UWORD	set_label();	/* set directory label	    (fcn 100)	*/
 EXTERN UWORD	get_label();	/* return dir label data    (fcn 101)	*/
 EXTERN UWORD	rd_stamps();	/* read file date stamps    (fcn 102)	*/
 EXTERN UWORD	trunf();	/* truncate file	    (fcn 99)	*/
+EXTERN UWORD	fexists();	/* file$exists: is the name taken?	*/
+EXTERN UWORD	ckwild();	/* check$wild: is there a `?' in it?	*/
 EXTERN		upd_stamp();	/* write a file's update stamp		*/
 EXTERN UBYTE	*scbstampa();	/* address of the SCB @DATE group	*/
 
@@ -217,6 +220,11 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    break;
 
 	  case 15:  tmp_sel(&temp);		/* open file */
+		    if ( ckwild(temp.fptr, 0) )	/* check$wild (:3924)	*/
+		    {
+			rtnval = 0xff;
+			break;
+		    }
 		    temp.fptr->extent = 0;
 		    temp.fptr->s2 = 0;
 		    rtnval = dirscan(openfile, temp.fptr, 0);
@@ -274,10 +282,28 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    temp.fptr->s2 = 0;
 		    temp.fptr->rcdcnt = 0;
 			/* Zero extent, S1, S2, rcrdcnt. create zeros rest */
+		    if ( ckwild(temp.fptr, 0)	/* check$wild (:4241)	*/
+			 || fexists(temp.fptr, 0) )
+			/* `call open' then the extent test (:4248-4258):
+			   a make onto a name that is already there is
+			   error 8, not a second directory entry	*/
+		    {
+			rtnval = 0xff;
+			break;
+		    }
 		    rtnval = dirscan(create, temp.fptr, 8);
 		    break;
 
 	  case 23:  tmp_sel(&temp);		/* rename file */
+		    if ( ckwild(temp.fptr, 1)	/* check$wild BOTH names
+						   (:1803 and :1817)	*/
+			 || fexists(temp.fptr, 16) )
+			/* the search at :1820-1821: the new name must not
+			   already exist	*/
+		    {
+			rtnval = 0xff;
+			break;
+		    }
 		    rtnval = dirscan(rename, temp.fptr, 2);
 		    break;
 
@@ -299,6 +325,11 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    /* break; */
 
 	  case 30:  tmp_sel(&temp);		/* set file attributes */
+		    if ( ckwild(temp.fptr, 0) )	/* check$wild (:4445)	*/
+		    {
+			rtnval = 0xff;
+			break;
+		    }
 		    rtnval = dirscan(set_attr, temp.fptr, 2);
 		    break;
 
@@ -486,6 +517,36 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 }					/* end xbdos */
 
 
+
+MLOCAL UWORD wildname(p)	/* chk$wild (bdos30.asm:1775-1778) */
+
+REG UBYTE *p;			/* the 11 name-and-type bytes	*/
+{
+    REG WORD i;
+
+    for (i = 0; i < 11; i++)
+	if ( (UBWORD(p[i]) & 0x7f) == '?' ) return(TRUE);
+    return(FALSE);
+}
+
+
+UWORD ckwild(fcbp, both)
+
+REG struct fcb *fcbp;
+REG WORD both;			/* also check the name at FCB+16 */
+{
+    BSETUP
+
+    if ( wildname(&(fcbp->fname[0]))
+	 || (both && wildname((UBYTE *)&(fcbp->dskmap.small[1]))) )
+    {
+	seterr(9, UBWORD(GBL.curdsk));	/* set$aret, bdos30.asm:1774 */
+	return(TRUE);
+    }
+    return(FALSE);
+}
+
+
 /*****************************************************
 **
 ** tmp_sel(temptr) -- temporarily select disk
@@ -551,6 +612,7 @@ XADDR ptr;
 	UBYTE	buf[UPRTCHUNK];
 	REG UWORD i;
 	BOOLEAN done;
+	BSETUP
 
 	/* Pull the string across in chunks with one cpy_in() apiece instead
 	   of one mem_cpy() per byte -- glue.s's bdcall is a direct call now,
@@ -564,6 +626,9 @@ XADDR ptr;
 	    cpy_in(ptr, buf, UPRTCHUNK);
 	    ptr += UPRTCHUNK;
 	    for (i = 0; i < UPRTCHUNK; i++)
+		if (buf[i] == GBL.delim) break;
+	    done = (i < UPRTCHUNK);
+	    if (i != 0) cookdrun(buf, i);
 	} while (!done);
 }
 

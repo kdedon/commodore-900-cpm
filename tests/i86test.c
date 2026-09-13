@@ -1,0 +1,3583 @@
+/*
+ * i86test.c -- host tests for the CP/M-86 shim's 8086 decoder, executor,
+ * .CMD loader and INT 0E0h seam (src/cmd/i86dec.c, i86exec.c, i86load.c,
+ * i86bdos.c).
+ *
+ * Build: cc -DHOSTCC -o i86test i86test.c ../src/cmd/i86dec.c \
+ *		../src/cmd/i86exec.c ../src/cmd/i86load.c ../src/cmd/i86bdos.c
+ *
+ */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <signal.h>			/* the prefix section's deadline */
+#include <unistd.h>
+
+#include "../src/cmd/i86.h"
+
+/* The native character control block functions 111 and 112 take. */
+struct sccb {
+	char	*a;
+	i16	n;
+};
+
+
+/* The command tail sections 6 and 7 load with; tools/mkcmdfix.py writes
+ * the same string, and RUN8080.CMD reads its length back out of the base
+ * page it lands in. */
+#define FIXTAIL "B:FIX.DAT"
+
+static int nfail, ntest;
+
+static void fail(const char *what, long got, long want)
+{
+	printf("FAIL %-40s got %ld (0x%lx) want %ld (0x%lx)\n",
+		what, got, (unsigned long)got, want, (unsigned long)want);
+	nfail++;
+}
+
+static void chk(const char *what, long got, long want)
+{
+	ntest++;
+	if (got != want)
+		fail(what, got, want);
+}
+
+/* ================================================================== */
+/* 1. lengths							      */
+/* ================================================================== */
+
+/*
+ * Transcribed from the 8086 encoding by hand, not generated from the
+ * decoder -- a table the decoder produced would agree with it by
+ * construction and prove nothing.  Each row is the byte string, its
+ * length, and the mnemonic i86mnem() must name.
+ *
+ * The rows chosen are the ones where a length can go wrong: every mod
+ * field, the mod=00/rm=110 direct form that is the only two-byte
+ * displacement in an otherwise displacement-free mod, the sign-extended
+ * 0x83 immediate against the full 0x81 one, the F6/F7 group where /0
+ * carries an immediate and /2../7 do not, the FF group, prefixes, and
+ * the far forms.
+ */
+struct lrow {
+	unsigned char b[8];
+	int n;			/* bytes present in b[]			*/
+	int len;		/* the length i86dec must report	*/
+	const char *m;
+};
+
+static struct lrow lrows[] = {
+	/* --- mod r/m, all four mods, on one opcode --- */
+	{{0x8b, 0x00}, 2, 2, "mov"},			/* mov ax,[bx+si]  */
+	{{0x8b, 0x06, 0x34, 0x12}, 4, 4, "mov"},	/* mov ax,[0x1234] */
+	{{0x8b, 0x40, 0x08}, 3, 3, "mov"},		/* mov ax,[bx+si+8]*/
+	{{0x8b, 0x80, 0x34, 0x12}, 4, 4, "mov"},	/* mov ax,[bx+si+d16] */
+	{{0x8b, 0xc3}, 2, 2, "mov"},			/* mov ax,bx	   */
+	/* --- the direct form is mod=00 rm=110 and nothing else --- */
+	{{0x8b, 0x46, 0x04}, 3, 3, "mov"},		/* mov ax,[bp+4]   */
+	{{0x8b, 0x86, 0x34, 0x12}, 4, 4, "mov"},	/* mov ax,[bp+d16] */
+	/* --- immediates --- */
+	{{0x04, 0x7f}, 2, 2, "add"},			/* add al,imm8	   */
+	{{0x05, 0x34, 0x12}, 3, 3, "add"},		/* add ax,imm16	   */
+	{{0x80, 0x3e, 0x00, 0x01, 0x20}, 5, 5, "cmp"},	/* cmp [d16],imm8  */
+	{{0x81, 0x3e, 0x00, 0x01, 0x34, 0x12}, 6, 6, "cmp"},
+	{{0x83, 0xc4, 0x06}, 3, 3, "add"},		/* add sp,+6	   */
+	{{0xc6, 0x06, 0x00, 0x01, 0x41}, 5, 5, "mov"},	/* mov [d16],imm8  */
+	{{0xc7, 0x06, 0x00, 0x01, 0x34, 0x12}, 6, 6, "mov"},
+	{{0xb0, 0x1a}, 2, 2, "mov"},
+	{{0xb8, 0x34, 0x12}, 3, 3, "mov"},
+	/* --- F6/F7: /0 carries an immediate, /2../7 do not --- */
+	{{0xf6, 0xc3, 0x01}, 3, 3, "test"},		/* test bl,1	   */
+	{{0xf7, 0xc3, 0x34, 0x12}, 4, 4, "test"},	/* test bx,0x1234  */
+	{{0xf6, 0xd3}, 2, 2, "not"},
+	{{0xf7, 0xdb}, 2, 2, "neg"},
+	{{0xf7, 0xe3}, 2, 2, "mul"},
+	{{0xf7, 0xfb}, 2, 2, "idiv"},
+	{{0xf6, 0x16, 0x00, 0x01}, 4, 4, "not"},	/* not byte [d16]  */
+	/* --- FF and FE groups --- */
+	{{0xff, 0x36, 0x00, 0x01}, 4, 4, "push"},
+	{{0xff, 0x06, 0x00, 0x01}, 4, 4, "inc"},
+	{{0xff, 0xd3}, 2, 2, "call"},
+	{{0xff, 0x1e, 0x00, 0x01}, 4, 4, "call"},	/* far indirect	   */
+	{{0xfe, 0xc0}, 2, 2, "inc"},
+	/* --- branches --- */
+	{{0x74, 0x10}, 2, 2, "je"},
+	{{0xeb, 0xfe}, 2, 2, "jmp"},
+	{{0xe9, 0x34, 0x12}, 3, 3, "jmp"},
+	{{0xe8, 0x34, 0x12}, 3, 3, "call"},
+	{{0xea, 0x00, 0x01, 0x00, 0x20}, 5, 5, "jmp"},	/* far direct	   */
+	{{0x9a, 0x00, 0x01, 0x00, 0x20}, 5, 5, "call"},
+	{{0xc2, 0x04, 0x00}, 3, 3, "ret"},
+	{{0xc3}, 1, 1, "ret"},
+	{{0xcb}, 1, 1, "retf"},
+	{{0xca, 0x04, 0x00}, 3, 3, "retf"},
+	/* --- segment things --- */
+	{{0x8c, 0xd9}, 2, 2, "mov"},			/* mov cx,ds	   */
+	{{0x8e, 0xd1}, 2, 2, "mov"},			/* mov ss,cx	   */
+	{{0xc4, 0x5e, 0x06}, 3, 3, "les"},
+	{{0xc5, 0x5e, 0x06}, 3, 3, "lds"},
+	{{0x06}, 1, 1, "push"},
+	{{0x1f}, 1, 1, "pop"},
+	/* --- prefixes add exactly their own length --- */
+	{{0x2e, 0x8c, 0x16, 0x5b, 0x00}, 5, 5, "mov"},	/* mov cs:[d16],ss */
+	{{0xf3, 0xa4}, 2, 2, "movs"},
+	{{0xf2, 0xae}, 2, 2, "scas"},
+	{{0xf0, 0x26, 0x8b, 0x07}, 4, 4, "mov"},	/* two prefixes	   */
+	/* --- shifts: the count is in the opcode, never in a byte --- */
+	{{0xd1, 0xe0}, 2, 2, "shl"},
+	{{0xd3, 0xd8}, 2, 2, "rcr"},
+	{{0xd0, 0x2e, 0x00, 0x01}, 4, 4, "shr"},
+	/* --- one-byte oddments --- */
+	{{0x90}, 1, 1, "nop"},
+	{{0x98}, 1, 1, "cbw"},
+	{{0x99}, 1, 1, "cwd"},
+	{{0x9c}, 1, 1, "pushf"},
+	{{0x27}, 1, 1, "daa"},
+	{{0xd7}, 1, 1, "xlat"},
+	{{0xcd, 0xe0}, 2, 2, "int"},
+	{{0xcc}, 1, 1, "int"},
+	{{0xd4, 0x0a}, 2, 2, "aam"},
+	{{0xd5, 0x0a}, 2, 2, "aad"},
+	{{0xf4}, 1, 1, "hlt"},
+	{{0xfc}, 1, 1, "cld"},
+	{{0x8d, 0x26, 0x84, 0x01}, 4, 4, "lea"},	/* PIP's prologue  */
+	/* --- the 8086's holes, honoured rather than idealised --- */
+	{{0x0f}, 1, 1, "pop"},				/* 0F is POP CS	   */
+	{{0x62, 0x10}, 2, 2, "jb"},			/* 62 aliases 72   */
+	{{0x82, 0xc3, 0x01}, 3, 3, "add"},		/* 82 aliases 80   */
+	{{0xd8, 0x06, 0x00, 0x01}, 4, 4, "esc"},
+};
+#define NLROWS (sizeof lrows / sizeof lrows[0])
+
+static void t_lengths(void)
+{
+	static char seg[65536];
+	struct i86in in;
+	unsigned i;
+	int n;
+	char nm[64];
+
+	for (i = 0; i < NLROWS; i++) {
+		memset(seg, 0, 16);
+		memcpy(seg, lrows[i].b, lrows[i].n);
+		n = i86dec(seg, (i16)0, &in);
+		sprintf(nm, "len[%u] %02x %02x", i, lrows[i].b[0],
+			lrows[i].b[1]);
+		chk(nm, n, lrows[i].len);
+		chk(nm, in.len, lrows[i].len);
+		ntest++;
+		if (strcmp(i86mnem(&in), lrows[i].m) != 0) {
+			printf("FAIL %-40s got \"%s\" want \"%s\"\n",
+				nm, i86mnem(&in), lrows[i].m);
+			nfail++;
+		}
+	}
+}
+
+/*
+ * Every one of the 256 opcode bytes must decode to SOMETHING with a
+ * length of at least one, and the length must not run past the eight
+ * bytes any 8086 instruction can occupy.  This is the property that
+ * makes a linear sweep terminate, and it is worth asserting separately
+ * from the table above because the table cannot cover 256 rows.
+ */
+static void t_allbytes(void)
+{
+	static char seg[65536];
+	struct i86in in;
+	int op, n, nbad;
+
+	nbad = 0;
+	for (op = 0; op < 256; op++) {
+		memset(seg, 0, 16);
+		seg[0] = (char)op;
+		n = i86dec(seg, (i16)0, &in);
+		ntest++;
+		if (n < 1 || n > 8) {
+			printf("FAIL opcode %02x length %d\n", op, n);
+			nfail++;
+		}
+		if (in.op == I_BAD)
+			nbad++;
+	}
+	/* 0xD6 (SALC) and 0xF1 are the only bytes with no instruction
+	 * behind them; 0xF1 reaches the default arm because it is
+	 * consumed as a LOCK prefix and then the following zero byte
+	 * decodes as ADD.  So exactly one byte is I_BAD standing alone. */
+	chk("bytes with no instruction", nbad, 1);
+}
+
+/* ================================================================== */
+/* 2. flags, differentially					      */
+/* ================================================================== */
+
+/*
+ * The reference.  Written from the definitions, in 32-bit arithmetic,
+ * with no shared expression with i86exec.c's lazy formulae -- the whole
+ * value of a differential is that the two sides were arrived at
+ * separately.  AF here is "was there a carry out of bit 3", computed by
+ * doing the low nibble's arithmetic on its own; i86exec.c gets it from
+ * a^b^r, which is the same fact reached the other way round.
+ */
+#define A_ADD 0
+#define A_OR  1
+#define A_ADC 2
+#define A_SBB 3
+#define A_AND 4
+#define A_SUB 5
+#define A_XOR 6
+#define A_CMP 7
+
+static int refpar(unsigned v)
+{
+	int n = 0;
+	v &= 0xff;
+	while (v) { n += v & 1; v >>= 1; }
+	return ((n & 1) == 0);
+}
+
+static unsigned refflags(int aop, int w, unsigned a, unsigned b, int cin,
+			 unsigned *rp)
+{
+	unsigned msk = w ? 0xffffu : 0xffu;
+	unsigned msb = w ? 0x8000u : 0x80u;
+	long sa, sb, sr;
+	unsigned r;
+	unsigned f = 0;
+
+	a &= msk;
+	b &= msk;
+	sa = (a & msb) ? (long)a - (long)(msk + 1) : (long)a;
+	sb = (b & msb) ? (long)b - (long)(msk + 1) : (long)b;
+
+	switch (aop) {
+	case A_ADD: cin = 0;			/* fall through	*/
+	case A_ADC:
+		r = (a + b + cin) & msk;
+		if ((unsigned long)a + b + cin > msk)
+			f |= F_CF;
+		if ((a & 15) + (b & 15) + cin > 15)
+			f |= F_AF;
+		sr = sa + sb + cin;
+		if (sr > (long)(msb - 1) || sr < -(long)msb)
+			f |= F_OF;
+		break;
+	case A_SUB: case A_CMP: cin = 0;	/* fall through	*/
+	case A_SBB:
+		r = (a - b - cin) & msk;
+		if ((unsigned long)b + cin > a)
+			f |= F_CF;
+		if ((unsigned)(b & 15) + cin > (a & 15))
+			f |= F_AF;
+		sr = sa - sb - cin;
+		if (sr > (long)(msb - 1) || sr < -(long)msb)
+			f |= F_OF;
+		break;
+	case A_AND: r = (a & b) & msk; break;
+	case A_OR:  r = (a | b) & msk; break;
+	default:    r = (a ^ b) & msk; break;
+	}
+	if (r == 0)
+		f |= F_ZF;
+	if (r & msb)
+		f |= F_SF;
+	if (refpar(r))
+		f |= F_PF;
+	*rp = r;
+	return (f);
+}
+
+/*
+ * Drive one ALU instruction through i86step and read the flags back.
+ * `aop' is the 8086's own sub-op number, so the encoding is 0x80|w with
+ * reg = aop, which is the form the executor reaches by the widest path
+ * (mod r/m plus an immediate plus a lazy record plus a materialisation).
+ */
+static char fseg[65536];
+static struct i86 fm;
+
+static unsigned run_alu(int aop, int w, unsigned a, unsigned b, int cin,
+			unsigned *rp)
+{
+	struct i86in in;
+	int i;
+
+	memset(&fm, 0, sizeof fm);
+	for (i = 0; i < 4; i++)
+		fm.sb[i] = fseg;
+	fm.lz = LZ_NONE;
+	fm.fl = (i16)(F_ONES | (cin ? F_CF : 0));
+	fm.ip = 0;
+	fm.r[R_AX] = (i16)a;
+	/* 80 /aop c0  ib   -- AL, imm8      (mod=3, rm=0)
+	 * 81 /aop c0  iw   -- AX, imm16 */
+	fseg[0] = (char)(w ? 0x81 : 0x80);
+	fseg[1] = (char)(0xc0 | (aop << 3));
+	fseg[2] = (char)(b & 0xff);
+	if (w)
+		fseg[3] = (char)((b >> 8) & 0xff);
+	i86step(&fm, &in);
+	*rp = (unsigned)(w ? (fm.r[R_AX] & 0xffff) : (fm.r[R_AX] & 0xff));
+	return ((unsigned)(i86flags(&fm) & F_LAZY));
+}
+
+static void t_flags_byte(void)
+{
+	static int ops[6] = { A_ADD, A_ADC, A_SUB, A_SBB, A_AND, A_XOR };
+	unsigned a, b, gf, wf, gr, wr;
+	int o, cin, bad;
+	char nm[64];
+
+	for (o = 0; o < 6; o++) {
+		bad = 0;
+		for (cin = 0; cin < 2; cin++) {
+			for (a = 0; a < 256; a++) {
+				for (b = 0; b < 256; b++) {
+					gf = run_alu(ops[o], 0, a, b, cin, &gr);
+					wf = refflags(ops[o], 0, a, b, cin, &wr);
+					if (gf != wf || gr != wr) {
+						if (bad++ < 4)
+						  printf("FAIL alu%d b a=%02x "
+							"b=%02x c=%d: r %02x/%02x "
+							"f %03x/%03x\n",
+							ops[o], a, b, cin,
+							gr, wr, gf, wf);
+					}
+				}
+			}
+		}
+		ntest++;
+		sprintf(nm, "flags byte aop=%d (131072 cases)", ops[o]);
+		if (bad) {
+			printf("FAIL %s: %d mismatches\n", nm, bad);
+			nfail++;
+		}
+	}
+}
+
+/*
+ * Words, sampled rather than exhausted: 4 G cases would take hours and
+ * buy nothing the byte sweep did not, because the only thing that
+ * changes with width is the mask and the sign bit.  The spread is
+ * chosen for the boundaries -- zero, one, the sign bit either side, the
+ * top, and a couple of values with interesting nibbles.
+ */
+static void t_flags_word(void)
+{
+	static unsigned v[] = {
+		0x0000, 0x0001, 0x000f, 0x0010, 0x007f, 0x0080, 0x00ff,
+		0x0100, 0x7ffe, 0x7fff, 0x8000, 0x8001, 0xfffe, 0xffff,
+		0x1234, 0xabcd, 0x5a5a, 0xa5a5
+	};
+	static int ops[8] = { A_ADD, A_OR, A_ADC, A_SBB,
+			      A_AND, A_SUB, A_XOR, A_CMP };
+	unsigned gf, wf, gr, wr;
+	int o, cin, i, j, bad;
+
+	bad = 0;
+	for (o = 0; o < 8; o++)
+		for (cin = 0; cin < 2; cin++)
+			for (i = 0; i < 18; i++)
+				for (j = 0; j < 18; j++) {
+					gf = run_alu(ops[o], 1, v[i], v[j],
+						     cin, &gr);
+					wf = refflags(ops[o], 1, v[i], v[j],
+						      cin, &wr);
+					if (ops[o] == A_CMP)
+						gr = wr;   /* stores nothing */
+					if (gf != wf || gr != wr) {
+						if (bad++ < 6)
+						  printf("FAIL aluw%d a=%04x "
+							"b=%04x c=%d: r "
+							"%04x/%04x f %03x/%03x\n",
+							ops[o], v[i], v[j], cin,
+							gr, wr, gf, wf);
+					}
+				}
+	ntest++;
+	if (bad) {
+		printf("FAIL flags word: %d mismatches\n", bad);
+		nfail++;
+	}
+}
+
+/*
+ * INC and DEC are the one place the 8086's flag rules are not uniform:
+ * they set the other five and leave CF exactly as they found it.  A
+ * lazy scheme is precisely where that gets lost -- the record has to be
+ * folded before the new one replaces it -- so it gets its own sweep
+ * over every byte value and both carry states.
+ */
+static void t_incdec(void)
+{
+	struct i86in in;
+	unsigned a, gf, wf, wr;
+	int cin, isdec, bad, i;
+
+	bad = 0;
+	for (isdec = 0; isdec < 2; isdec++)
+		for (cin = 0; cin < 2; cin++)
+			for (a = 0; a < 256; a++) {
+				memset(&fm, 0, sizeof fm);
+				for (i = 0; i < 4; i++)
+					fm.sb[i] = fseg;
+				fm.lz = LZ_NONE;
+				fm.fl = (i16)(F_ONES | (cin ? F_CF : 0));
+				fm.r[R_AX] = (i16)a;
+				fseg[0] = (char)0xfe;		/* FE /0, /1 */
+				fseg[1] = (char)(isdec ? 0xc8 : 0xc0);
+				i86step(&fm, &in);
+				gf = (unsigned)(i86flags(&fm) & F_LAZY);
+				wf = refflags(isdec ? A_SUB : A_ADD, 0,
+					      a, 1, 0, &wr);
+				wf &= ~F_CF;
+				if (cin)
+					wf |= F_CF;
+				if (gf != wf
+				 || (unsigned)(fm.r[R_AX] & 0xff) != wr) {
+					if (bad++ < 4)
+						printf("FAIL %s a=%02x c=%d: "
+							"r %02x/%02x f %03x/%03x\n",
+							isdec ? "dec" : "inc",
+							a, cin,
+							fm.r[R_AX] & 0xff, wr,
+							gf, wf);
+				}
+			}
+	ntest++;
+	if (bad) {
+		printf("FAIL inc/dec: %d mismatches\n", bad);
+		nfail++;
+	}
+}
+
+/* NEG is SUB from zero, and its CF rule ("set unless the operand was
+ * zero") is the one people get wrong, so it is swept too. */
+static void t_neg(void)
+{
+	struct i86in in;
+	unsigned a, gf, wf, wr;
+	int bad, i;
+
+	bad = 0;
+	for (a = 0; a < 256; a++) {
+		memset(&fm, 0, sizeof fm);
+		for (i = 0; i < 4; i++)
+			fm.sb[i] = fseg;
+		fm.lz = LZ_NONE;
+		fm.fl = F_ONES;
+		fm.r[R_AX] = (i16)a;
+		fseg[0] = (char)0xf6;
+		fseg[1] = (char)0xd8;			/* neg al	*/
+		i86step(&fm, &in);
+		gf = (unsigned)(i86flags(&fm) & F_LAZY);
+		wf = refflags(A_SUB, 0, 0, a, 0, &wr);
+		if (gf != wf || (unsigned)(fm.r[R_AX] & 0xff) != wr) {
+			if (bad++ < 4)
+				printf("FAIL neg a=%02x: r %02x/%02x "
+					"f %03x/%03x\n", a,
+					fm.r[R_AX] & 0xff, wr, gf, wf);
+		}
+	}
+	ntest++;
+	if (bad) {
+		printf("FAIL neg: %d mismatches\n", bad);
+		nfail++;
+	}
+}
+
+/* ================================================================== */
+/* 3. execution							      */
+/* ================================================================== */
+
+static char xseg[65536];
+static struct i86 xm;
+
+static void xsetup(void)
+{
+	int i;
+
+	memset(xseg, 0, sizeof xseg);
+	memset(&xm, 0, sizeof xm);
+	for (i = 0; i < 4; i++) {
+		xm.sb[i] = xseg;
+		xm.sr[i] = 0x1000;
+	}
+	xm.lz = LZ_NONE;
+	xm.fl = F_ONES;
+	xm.ip = 0x100;
+	xm.r[R_SP] = 0xff00;
+	i86nseg = 1;
+	i86spar[0] = 0x1000;
+	i86sbase[0] = xseg;
+}
+
+static int xstep(void)
+{
+	struct i86in in;
+
+	return (i86step(&xm, &in));
+}
+
+static void t_exec(void)
+{
+
+	/* --- mov r16,imm / mov [mem],r16 / mov r16,[mem] --- */
+	xsetup();
+	xseg[0x100] = (char)0xb8; xseg[0x101] = 0x34; xseg[0x102] = 0x12;
+	chk("mov ax,imm rc", xstep(), X_OK);
+	chk("mov ax,imm", xm.r[R_AX] & 0xffff, 0x1234);
+	chk("mov ax,imm ip", xm.ip & 0xffff, 0x103);
+
+	xsetup();
+	xm.r[R_AX] = 0xbeef;
+	xseg[0x100] = (char)0xa3; xseg[0x101] = 0x00; xseg[0x102] = 0x20;
+	chk("mov [d16],ax rc", xstep(), X_OK);
+	chk("mov [d16],ax lo", xseg[0x2000] & 0xff, 0xef);
+	chk("mov [d16],ax hi", xseg[0x2001] & 0xff, 0xbe);
+
+	xsetup();
+	xseg[0x2000] = 0x21; xseg[0x2001] = 0x43;
+	xseg[0x100] = (char)0xa1; xseg[0x101] = 0x00; xseg[0x102] = 0x20;
+	chk("mov ax,[d16]", (xstep(), xm.r[R_AX] & 0xffff), 0x4321);
+
+	/* --- the mod=01 [bp+d8] form, which defaults to SS --- */
+	xsetup();
+	xm.r[R_BP] = 0x3000;
+	xseg[0x3004] = 0x77; xseg[0x3005] = 0x66;
+	xseg[0x100] = (char)0x8b; xseg[0x101] = 0x56; xseg[0x102] = 0x04;
+	chk("mov dx,[bp+4]", (xstep(), xm.r[R_DX] & 0xffff), 0x6677);
+
+	/* --- push/pop, and the stack really moves --- */
+	xsetup();
+	xm.r[R_BX] = 0xcafe;
+	xseg[0x100] = 0x53;			/* push bx		*/
+	chk("push bx rc", xstep(), X_OK);
+	chk("push bx sp", xm.r[R_SP] & 0xffff, 0xfefe);
+	chk("push bx mem", ((xseg[0xfefe] & 0xff)
+			  | ((xseg[0xfeff] & 0xff) << 8)), 0xcafe);
+	xseg[0x101] = 0x59;			/* pop cx		*/
+	chk("pop cx rc", xstep(), X_OK);
+	chk("pop cx", xm.r[R_CX] & 0xffff, 0xcafe);
+	chk("pop cx sp", xm.r[R_SP] & 0xffff, 0xff00);
+
+	/* --- call/ret, the pair the corpus leans on hardest --- */
+	xsetup();
+	xseg[0x100] = (char)0xe8; xseg[0x101] = 0x0d; xseg[0x102] = 0x00;
+	chk("call rel rc", xstep(), X_OK);
+	chk("call rel ip", xm.ip & 0xffff, 0x110);
+	chk("call rel pushed", ((xseg[0xfefe] & 0xff)
+			      | ((xseg[0xfeff] & 0xff) << 8)), 0x103);
+	xseg[0x110] = (char)0xc2; xseg[0x111] = 0x04; xseg[0x112] = 0x00;
+	chk("ret 4 rc", xstep(), X_OK);
+	chk("ret 4 ip", xm.ip & 0xffff, 0x103);
+	chk("ret 4 sp", xm.r[R_SP] & 0xffff, 0xff04);
+
+	/* --- a backward short jump, the loop shape --- */
+	xsetup();
+	xm.ip = 0x110;
+	xseg[0x110] = (char)0xeb; xseg[0x111] = (char)0xee;	/* -18	*/
+	chk("jmp short back", (xstep(), xm.ip & 0xffff), 0x100);
+
+	/* --- Jcc taken and not taken off a real compare --- */
+	xsetup();
+	xm.r[R_AX] = 5;
+	xseg[0x100] = 0x3c; xseg[0x101] = 0x05;		/* cmp al,5	*/
+	xseg[0x102] = 0x74; xseg[0x103] = 0x10;		/* je +0x10	*/
+	xstep();
+	chk("je taken", (xstep(), xm.ip & 0xffff), 0x114);
+	xsetup();
+	xm.r[R_AX] = 4;
+	xseg[0x100] = 0x3c; xseg[0x101] = 0x05;
+	xseg[0x102] = 0x74; xseg[0x103] = 0x10;
+	xstep();
+	chk("je not taken", (xstep(), xm.ip & 0xffff), 0x104);
+
+	/* --- LOOP decrements CX and JCXZ does not --- */
+	xsetup();
+	xm.r[R_CX] = 3;
+	xseg[0x100] = (char)0xe2; xseg[0x101] = (char)0xfe;
+	chk("loop rc", xstep(), X_OK);
+	chk("loop cx", xm.r[R_CX] & 0xffff, 2);
+	chk("loop ip", xm.ip & 0xffff, 0x100);
+	xsetup();
+	xm.r[R_CX] = 1;
+	xseg[0x100] = (char)0xe2; xseg[0x101] = (char)0xfe;
+	xstep();
+	chk("loop falls through", xm.ip & 0xffff, 0x102);
+	xsetup();
+	xm.r[R_CX] = 5;
+	xseg[0x100] = (char)0xe3; xseg[0x101] = 0x10;
+	xstep();
+	chk("jcxz leaves cx", xm.r[R_CX] & 0xffff, 5);
+	chk("jcxz not taken", xm.ip & 0xffff, 0x102);
+
+	/* --- LEA computes the address and touches no memory --- */
+	xsetup();
+	xm.r[R_BX] = 0x0200; xm.r[R_SI] = 0x0030;
+	xseg[0x100] = (char)0x8d; xseg[0x101] = 0x40; xseg[0x102] = 0x04;
+	chk("lea ax,[bx+si+4]", (xstep(), xm.r[R_AX] & 0xffff), 0x234);
+
+	/* --- XCHG both ways --- */
+	xsetup();
+	xm.r[R_AX] = 0x1111; xm.r[R_BX] = 0x2222;
+	xseg[0x100] = (char)0x93;			/* xchg ax,bx	*/
+	xstep();
+	chk("xchg ax", xm.r[R_AX] & 0xffff, 0x2222);
+	chk("xchg bx", xm.r[R_BX] & 0xffff, 0x1111);
+
+	/* --- the byte register file: AH is the top of AX --- */
+	xsetup();
+	xm.r[R_AX] = 0x1234;
+	xseg[0x100] = (char)0xb4; xseg[0x101] = (char)0xab;	/* mov ah,ab */
+	xstep();
+	chk("mov ah,imm", xm.r[R_AX] & 0xffff, 0xab34);
+	xseg[0x102] = (char)0xb0; xseg[0x103] = (char)0xcd;	/* mov al,cd */
+	xstep();
+	chk("mov al,imm", xm.r[R_AX] & 0xffff, 0xabcd);
+
+	/* --- shifts: count 1, count from CL, and count 0 --- */
+	xsetup();
+	xm.r[R_AX] = 0x8001;
+	xseg[0x100] = (char)0xd1; xseg[0x101] = (char)0xe0;	/* shl ax,1 */
+	xstep();
+	chk("shl ax,1", xm.r[R_AX] & 0xffff, 0x0002);
+	chk("shl ax,1 cf", (i86flags(&xm) & F_CF) != 0, 1);
+	xsetup();
+	xm.r[R_AX] = 0x1000; xm.r[R_CX] = 4;
+	xseg[0x100] = (char)0xd3; xseg[0x101] = (char)0xe8;	/* shr ax,cl */
+	xstep();
+	chk("shr ax,cl", xm.r[R_AX] & 0xffff, 0x0100);
+	xsetup();
+	xm.r[R_AX] = 0x1234; xm.r[R_CX] = 0;
+	xm.fl = (i16)(F_ONES | F_CF);
+	xseg[0x100] = (char)0xd3; xseg[0x101] = (char)0xe0;
+	xstep();
+	chk("shl by 0 leaves value", xm.r[R_AX] & 0xffff, 0x1234);
+	chk("shl by 0 leaves cf", (i86flags(&xm) & F_CF) != 0, 1);
+	/* SAR of a negative keeps its sign; SHR of the same does not */
+	xsetup();
+	xm.r[R_AX] = 0xff00; xm.r[R_CX] = 4;
+	xseg[0x100] = (char)0xd3; xseg[0x101] = (char)0xf8;	/* sar ax,cl */
+	xstep();
+	chk("sar keeps sign", xm.r[R_AX] & 0xffff, 0xfff0);
+	xsetup();
+	xm.r[R_AX] = 0xff00; xm.r[R_CX] = 4;
+	xseg[0x100] = (char)0xd3; xseg[0x101] = (char)0xe8;
+	xstep();
+	chk("shr does not", xm.r[R_AX] & 0xffff, 0x0ff0);
+	/* RCR moves the carry in at the top */
+	xsetup();
+	xm.r[R_AX] = 0x0000;
+	xm.fl = (i16)(F_ONES | F_CF);
+	xseg[0x100] = (char)0xd1; xseg[0x101] = (char)0xd8;	/* rcr ax,1 */
+	xstep();
+	chk("rcr brings cf in", xm.r[R_AX] & 0xffff, 0x8000);
+	chk("rcr sends 0 out", (i86flags(&xm) & F_CF) != 0, 0);
+
+	/* --- MUL and DIV, both widths --- */
+	xsetup();
+	xm.r[R_AX] = 0x0102; xm.r[R_BX] = 0x0304;
+	xseg[0x100] = (char)0xf7; xseg[0x101] = (char)0xe3;	/* mul bx */
+	xstep();
+	chk("mul bx ax", xm.r[R_AX] & 0xffff, 0x0a08);
+	chk("mul bx dx", xm.r[R_DX] & 0xffff, 0x0003);
+	chk("mul bx cf", (i86flags(&xm) & F_CF) != 0, 1);
+	xsetup();
+	xm.r[R_AX] = 0x000a; xm.r[R_BX] = 0x0003;
+	xseg[0x100] = (char)0xf6; xseg[0x101] = (char)0xe3;	/* mul bl */
+	xstep();
+	chk("mul bl ax", xm.r[R_AX] & 0xffff, 0x001e);
+	chk("mul bl cf", (i86flags(&xm) & F_CF) != 0, 0);
+	xsetup();
+	xm.r[R_AX] = 100; xm.r[R_DX] = 0; xm.r[R_BX] = 7;
+	xseg[0x100] = (char)0xf7; xseg[0x101] = (char)0xf3;	/* div bx */
+	xstep();
+	chk("div bx quot", xm.r[R_AX] & 0xffff, 14);
+	chk("div bx rem", xm.r[R_DX] & 0xffff, 2);
+	xsetup();
+	xm.r[R_AX] = (i16)-100; xm.r[R_DX] = (i16)0xffff; xm.r[R_BX] = 7;
+	xseg[0x100] = (char)0xf7; xseg[0x101] = (char)0xfb;	/* idiv bx */
+	xstep();
+	chk("idiv bx quot", (short)xm.r[R_AX], -14);
+	chk("idiv bx rem", (short)xm.r[R_DX], -2);
+	/* divide by zero is INT 0, and IP must be back at the divide */
+	xsetup();
+	xm.r[R_BX] = 0;
+	xseg[0x100] = (char)0xf7; xseg[0x101] = (char)0xf3;
+	chk("div0 rc", xstep(), X_INT);
+	chk("div0 vector", i86intno, 0);
+	chk("div0 ip restored", xm.ip & 0xffff, 0x100);
+
+	/* --- CBW and CWD --- */
+	xsetup();
+	xm.r[R_AX] = 0x00f0;
+	xseg[0x100] = (char)0x98;
+	chk("cbw negative", (xstep(), xm.r[R_AX] & 0xffff), 0xfff0);
+	xsetup();
+	xm.r[R_AX] = 0x0070;
+	xseg[0x100] = (char)0x98;
+	chk("cbw positive", (xstep(), xm.r[R_AX] & 0xffff), 0x0070);
+	xsetup();
+	xm.r[R_AX] = 0x8000;
+	xseg[0x100] = (char)0x99;
+	chk("cwd negative", (xstep(), xm.r[R_DX] & 0xffff), 0xffff);
+
+	/* --- PUSHF/POPF round-trip, including the always-one bits --- */
+	xsetup();
+	xm.r[R_AX] = 0xffff;
+	xseg[0x100] = 0x04; xseg[0x101] = 0x01;		/* add al,1 -> CF */
+	xseg[0x102] = (char)0x9c;			/* pushf	*/
+	xstep(); xstep();
+	chk("pushf ones", ((xseg[0xfefe] & 0xff)
+			 | ((xseg[0xfeff] & 0xff) << 8)) & F_ONES, F_ONES);
+	chk("pushf cf", (((xseg[0xfefe] & 0xff)) & F_CF) != 0, 1);
+	xseg[0x103] = (char)0x9d;			/* popf		*/
+	xstep();
+	chk("popf cf", (i86flags(&xm) & F_CF) != 0, 1);
+	chk("popf sp", xm.r[R_SP] & 0xffff, 0xff00);
+
+	/* --- LAHF/SAHF move the low byte only --- */
+	xsetup();
+	xm.fl = (i16)(F_ONES | F_CF | F_ZF);
+	xseg[0x100] = (char)0x9f;			/* lahf		*/
+	xstep();
+	chk("lahf ah", ((xm.r[R_AX] >> 8) & 0xd5), (F_CF | F_ZF));
+
+	/* --- CLC/STC/CMC/CLD/STD --- */
+	xsetup();
+	xseg[0x100] = (char)0xf9;			/* stc		*/
+	xseg[0x101] = (char)0xf5;			/* cmc		*/
+	xstep();
+	chk("stc", (i86flags(&xm) & F_CF) != 0, 1);
+	xstep();
+	chk("cmc", (i86flags(&xm) & F_CF) != 0, 0);
+	xsetup();
+	xseg[0x100] = (char)0xfd;			/* std		*/
+	xstep();
+	chk("std", (i86flags(&xm) & F_DF) != 0, 1);
+
+	/* --- XLAT --- */
+	xsetup();
+	xm.r[R_BX] = 0x2000; xm.r[R_AX] = 0x0003;
+	xseg[0x2003] = 0x5a;
+	xseg[0x100] = (char)0xd7;
+	chk("xlat", (xstep(), xm.r[R_AX] & 0xff), 0x5a);
+
+	/* --- INT leaves the vector and stops --- */
+	xsetup();
+	xseg[0x100] = (char)0xcd; xseg[0x101] = (char)0xe0;
+	chk("int e0 rc", xstep(), X_INT);
+	chk("int e0 vector", i86intno, 0xe0);
+	chk("int e0 ip past", xm.ip & 0xffff, 0x102);
+
+	/* --- HLT stops without advancing --- */
+	xsetup();
+	xseg[0x100] = (char)0xf4;
+	chk("hlt rc", xstep(), X_HALT);
+	chk("hlt ip", xm.ip & 0xffff, 0x100);
+
+	/* --- an unimplemented but real instruction refuses, and does
+	 * not advance IP: a refusal has to be able to name its own
+	 * address, which is the whole reason the decoder is complete --- */
+	xsetup();
+	xseg[0x100] = (char)0xa4;			/* movsb	*/
+	chk("movsb refused", xstep(), X_UNIMP);
+	chk("movsb ip", xm.ip & 0xffff, 0x100);
+	xsetup();
+	xseg[0x100] = (char)0xd6;			/* SALC		*/
+	chk("salc is not an instruction", xstep(), X_BAD);
+}
+
+/*
+ * The segment-register check, kill criterion K3.  Writing a paragraph
+ * the shim handed out succeeds and rebinds the host base; writing one
+ * it did not is X_SEGESC, the counter moves, and -- this is the part
+ * that matters -- NOTHING ELSE CHANGES.  A partial write here is the
+ * silent-data-corruption failure the plan says must not exist.
+ */
+static char oseg[65536];
+
+/* The i86segnew hook, for the one test that needs it: it answers with a
+ * segment of its own for any paragraph at all, which is the policy a
+ * target build with a spare 64 KB page could adopt. */
+static i16 hookpar;
+
+static char *hookseg(par)
+i16 par;
+{
+	hookpar = par;
+	return (oseg);
+}
+
+static void t_segcheck(void)
+{
+	int rc;
+
+	xsetup();
+	i86nseg = 2;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	i86spar[1] = 0x2000; i86sbase[1] = oseg;
+	i86nsegslow = 0;
+
+	xm.r[R_CX] = 0x2000;
+	xseg[0x100] = (char)0x8e; xseg[0x101] = (char)0xc1;	/* mov es,cx */
+	chk("assigned seg rc", xstep(), X_OK);
+	chk("assigned seg par", xm.sr[S_ES] & 0xffff, 0x2000);
+	ntest++;
+	if (xm.sb[S_ES] != oseg)
+		fail("assigned seg base", 1, 0);
+	chk("assigned seg no escape", (long)i86nsegslow, 0);
+
+	xsetup();
+	i86nseg = 2;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	i86spar[1] = 0x2000; i86sbase[1] = oseg;
+	i86nsegslow = 0;
+	xm.r[R_CX] = 0xd000;		/* dBASE II's absolute literal	*/
+	xseg[0x100] = (char)0x8e; xseg[0x101] = (char)0xc1;
+	rc = xstep();
+	chk("absolute seg refused", rc, X_SEGESC);
+	chk("absolute seg reported", i86segbad & 0xffff, 0xd000);
+	chk("absolute seg counted", (long)i86nsegbad, 1);
+	chk("absolute seg not slow", (long)i86nsegslow, 0);
+	chk("absolute seg unchanged", xm.sr[S_ES] & 0xffff, 0x1000);
+	chk("absolute seg ip restored", xm.ip & 0xffff, 0x100);
+
+	/* POP ES of an unassigned paragraph must not consume the stack:
+	 * a refusal the guest could be resumed past has to leave the
+	 * machine exactly as it found it. */
+	xsetup();
+	i86nseg = 1;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	i86nsegslow = 0;
+	xm.r[R_SP] = 0xfefe;
+	xseg[0xfefe] = 0x40; xseg[0xfeff] = 0x00;	/* the PC BIOS	*/
+	xseg[0x100] = 0x07;				/* pop es	*/
+	chk("pop es refused", xstep(), X_SEGESC);
+	chk("pop es sp intact", xm.r[R_SP] & 0xffff, 0xfefe);
+	chk("pop es reported", i86segbad & 0xffff, 0x0040);
+
+	/* MOV CS,x is not an instruction on any x86; it must refuse
+	 * rather than take the segment check's word for it. */
+	xsetup();
+	xseg[0x100] = (char)0x8e; xseg[0x101] = (char)0xc9;	/* mov cs,cx */
+	chk("mov cs refused", xstep(), X_UNIMP);
+}
+
+/*
+ * E1s, the slow path itself.  The case it exists for is pointer
+ * normalisation -- (seg, off) -> (seg + off/16, off & 15) -- which
+ * produces a paragraph INSIDE a segment we hold, and which no DRI, no
+ * dBASE II and no WordStar binary was ever seen doing
+ * (CPM86-SHIM-FEASIBILITY.md §1.3).  So this is a test of code the
+ * corpus does not reach, written because the corpus is not the world
+ * and because the failure mode without it is silent.
+ *
+ * Three things have to hold: the biased window addresses the right
+ * bytes, a reference that runs off the end of the host segment is a
+ * refusal rather than a wrap, and rebinding the slot to a real base
+ * clears the bias again.
+ */
+static void t_segslow(void)
+{
+	int i;
+
+	xsetup();
+	i86nseg = 2;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	i86spar[1] = 0x2000; i86sbase[1] = oseg;
+	i86nsegslow = i86nsegbad = 0;
+
+	for (i = 0; i < 0x40; i++)
+		oseg[0x100 + i] = (char)(0xa0 + i);
+
+	/* DS := 0x2010, ten paragraphs into the segment we handed out at
+	 * 0x2000, which is what normalising (0x2000, 0x0100) gives. */
+	xm.r[R_CX] = 0x2010;
+	xseg[0x100] = (char)0x8e; xseg[0x101] = (char)0xd9;	/* mov ds,cx */
+	chk("slow rc", xstep(), X_OK);
+	chk("slow counted", (long)i86nsegslow, 1);
+	chk("slow not bad", (long)i86nsegbad, 0);
+	chk("slow par readback", xm.sr[S_DS] & 0xffff, 0x2010);
+	chk("slow bias", xm.so[S_DS] & 0xffff, 0x100);
+
+	/* MOV AL,[0] now reads oseg[0x100], the byte the guest means. */
+	xseg[0x102] = (char)0xa0; xseg[0x103] = 0x00; xseg[0x104] = 0x00;
+	chk("slow read rc", xstep(), X_OK);
+	chk("slow read byte", xm.r[R_AX] & 0xff, 0xa0);
+
+	/* MOV AL,[0xFFF0] is 0x100 + 0xFFF0 = 0x100F0, past the end of a
+	 * 64 KB host segment.  The guest means the paragraph after the
+	 * segment, which belongs to something else, so this refuses --
+	 * and it must not wrap round to oseg[0xF0]. */
+	oseg[0xf0] = (char)0x5a;
+	xm.r[R_AX] = 0;
+	xseg[0x105] = (char)0xa0; xseg[0x106] = (char)0xf0;
+	xseg[0x107] = (char)0xff;
+	chk("slow window rc", xstep(), X_WINDOW);
+	chk("slow window ip restored", xm.ip & 0xffff, 0x105);
+	chk("slow window slot", xm.fseg, S_DS);
+	chk("slow window off", xm.foff & 0xffff, 0xfff0);
+	chk("slow window did not wrap", xm.r[R_AX] & 0xff, 0);
+
+	/* i86addr() is the seam's view of the same window: 16 bytes at
+	 * 0xFFF0 do not fit, one byte at 0xFEFF does. */
+	ntest++;
+	if (i86addr(&xm, S_DS, (i16)0xfff0, 16L) != (char *)0)
+		fail("i86addr past end", 1, 0);
+	ntest++;
+	if (i86addr(&xm, S_DS, (i16)0x0000, 1L) != &oseg[0x100])
+		fail("i86addr biased base", 1, 0);
+	ntest++;
+	if (i86addr(&xm, S_ES, (i16)0xff80, 128L) != &xseg[0xff80])
+		fail("i86addr unbiased top", 1, 0);
+	ntest++;
+	if (i86addr(&xm, S_ES, (i16)0xff81, 128L) != (char *)0)
+		fail("i86addr unbiased past top", 1, 0);
+
+	/* Rebinding to a paragraph we did hand out clears the bias. */
+	xm.ip = 0x200;
+	xm.r[R_CX] = 0x2000;
+	xseg[0x200] = (char)0x8e; xseg[0x201] = (char)0xd9;
+	chk("rebind rc", xstep(), X_OK);
+	chk("rebind bias cleared", xm.so[S_DS] & 0xffff, 0);
+
+	/* A biased CS is refused before a byte is decoded: i86dec()
+	 * wraps at the guest's 64 KB and would read past the host
+	 * segment's end doing it. */
+	xsetup();
+	i86nseg = 1;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	xm.so[S_CS] = 0x10;
+	chk("biased cs refused", xstep(), X_WINDOW);
+	chk("biased cs slot", xm.fseg, S_CS);
+
+	/* And the hook: an absolute literal nothing contains becomes
+	 * whatever the segment owner says it is.  With no hook it is
+	 * X_SEGESC (tested above); with one it is a segment. */
+	xsetup();
+	i86nseg = 1;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	i86nsegslow = i86nsegbad = 0;
+	i86segnew = hookseg;
+	hookpar = 0;
+	xm.r[R_CX] = 0xd000;
+	xseg[0x100] = (char)0x8e; xseg[0x101] = (char)0xc1;	/* mov es,cx */
+	chk("hook rc", xstep(), X_OK);
+	chk("hook saw paragraph", hookpar & 0xffff, 0xd000);
+	chk("hook counted slow", (long)i86nsegslow, 1);
+	ntest++;
+	if (xm.sb[S_ES] != oseg)
+		fail("hook base", 1, 0);
+	i86segnew = 0;
+}
+
+/* ================================================================== */
+/* 4. the loader						      */
+/* ================================================================== */
+
+static void mkgrp(char *h, int i, int form, int len, int base, int min, int max)
+{
+	h[i * 9] = (char)form;
+	h[i * 9 + 1] = (char)(len & 0xff);
+	h[i * 9 + 2] = (char)((len >> 8) & 0xff);
+	h[i * 9 + 3] = (char)(base & 0xff);
+	h[i * 9 + 4] = (char)((base >> 8) & 0xff);
+	h[i * 9 + 5] = (char)(min & 0xff);
+	h[i * 9 + 6] = (char)((min >> 8) & 0xff);
+	h[i * 9 + 7] = (char)(max & 0xff);
+	h[i * 9 + 8] = (char)((max >> 8) & 0xff);
+}
+
+static void t_multi(void);		/* section 4b, below		*/
+
+static void t_loader(void)
+{
+	char h[CMD_HDR];
+	struct i86cmd c;
+	struct i86 m;
+	char *dseg;
+
+	/* --- an 8080-model header: one code group, G-Max zero --- */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 882, 0, 888, 0);
+	chk("8080 hdr", i86hdr(h, (i32)(128 + 882 * 16), &c), CE_OK);
+	chk("8080 model", c.model, M_8080);
+	chk("8080 entry", c.entry, 0x100);
+	chk("8080 ng", c.ng, 1);
+	/* G-Min exceeds G-Length: DDT86's real numbers.  The allocation
+	 * is at LEAST G-Min, or the guest's BSS lands outside it -- and
+	 * here it is more, because DDT86's G-Max is 0 and a group that
+	 * names no maximum gets the segment it owns (galloc()). */
+	chk("8080 alloc grows past G-Min", c.g[0].npar, 4096);
+	chk("8080 file offset", (long)c.g[0].foff, 128);
+
+	/* --- a small-model header: PIP's real numbers --- */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 379, 0, 379, 0);
+	mkgrp(h, 1, G_DATA, 84, 0, 640, 2176);
+	chk("small hdr", i86hdr(h, (i32)7552, &c), CE_OK);
+	chk("small model", c.model, M_SMALL);
+	chk("small entry", c.entry, 0);
+	/* Code: G-Max 0, so the whole segment.  Data: G-Max 2,176, which
+	 * is under a segment and is therefore exactly what it gets --
+	 * this pair is the one place the two arms of galloc()'s growth
+	 * are told apart by real numbers. */
+	chk("small code alloc", c.g[0].npar, 4096);
+	chk("small data alloc", c.g[1].npar, 2176);
+	chk("small data offset", (long)c.g[1].foff, 128 + 379 * 16);
+	chk("small need", (long)c.need, 128 + 379 * 16 + 84 * 16);
+
+	/* --- G-Max = 0 is "no maximum", not "no memory" --- */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_DATA, 5, 0, 200, 0);
+	chk("gmax0 hdr", i86hdr(h, (i32)(128 + 15 * 16), &c), CE_OK);
+	chk("gmax0 alloc", c.g[1].npar, 4096);
+	/* and a G-Max that says something is honoured as the ask, not
+	 * ignored in favour of G-Min */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_DATA, 5, 0, 200, 300);
+	chk("gmax300 hdr", i86hdr(h, (i32)(128 + 15 * 16), &c), CE_OK);
+	chk("gmax300 alloc", c.g[1].npar, 300);
+	/* G-Max below G-Min does not shrink the allocation */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_DATA, 5, 0, 200, 50);
+	chk("gmax under gmin hdr", i86hdr(h, (i32)(128 + 15 * 16), &c),
+	    CE_OK);
+	chk("gmax under gmin alloc", c.g[1].npar, 200);
+
+	/* --- K1, both halves --- */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0x40, 10, 0);
+	chk("K1 nonzero A-Base", i86hdr(h, (i32)100000, &c), CE_BASE);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_DATA, 10, 0, 5000, 0);
+	chk("K1 over 64K by G-Min", i86hdr(h, (i32)100000, &c), CE_BIG);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 5000, 0, 5000, 0);
+	chk("K1 over 64K by G-Length", i86hdr(h, (i32)100000, &c), CE_BIG);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_DATA, 10, 0, 10, 9000);
+	chk("K1 over 64K by G-Max", i86hdr(h, (i32)100000, &c), CE_BIG);
+	/* 4,096 paragraphs is exactly one segment and must be allowed:
+	 * WordStar declares 4,095 and a 4,096 would be legal too. */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 100, 0, 4096, 4096);
+	chk("exactly 64K allowed", i86hdr(h, (i32)100000, &c), CE_OK);
+
+	/* --- the other refusals --- */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_DATA, 10, 0, 10, 0);
+	chk("no code group", i86hdr(h, (i32)100000, &c), CE_NOCODE);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_SHCODE, 10, 0, 10, 0);
+	chk("shared code refused", i86hdr(h, (i32)100000, &c), CE_FORM);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
+	mkgrp(h, 1, G_CODE, 10, 0, 10, 0);
+	chk("duplicate form refused", i86hdr(h, (i32)100000, &c), CE_DUP);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 379, 0, 379, 0);
+	mkgrp(h, 1, G_DATA, 84, 0, 640, 2176);
+	chk("truncated file refused", i86hdr(h, (i32)1000, &c), CE_TRUNC);
+	/* trailing padding to the 128-byte record is NOT truncation --
+	 * every DRI .CMD has some, PIP has 16 bytes of it */
+	chk("padding is not truncation",
+	    i86hdr(h, (i32)(128 + 379 * 16 + 84 * 16 + 16), &c), CE_OK);
+
+	/* --- placement and the base page --- */
+	dseg = (char *)malloc(65536);
+	memset(dseg, 0, 65536);
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 379, 0, 379, 0);
+	mkgrp(h, 1, G_DATA, 84, 0, 640, 2176);
+	i86hdr(h, (i32)7552, &c);
+	memset(&m, 0, sizeof m);
+	i86nseg = 2;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	i86spar[1] = 0x2000; i86sbase[1] = dseg;
+	chk("place small", i86place(&c, &m, 2), CE_OK);
+	chk("place cs", m.sr[S_CS] & 0xffff, 0x1000);
+	chk("place ds", m.sr[S_DS] & 0xffff, 0x2000);
+	chk("place ss follows ds", m.sr[S_SS] & 0xffff, 0x2000);
+	chk("place es follows ds", m.sr[S_ES] & 0xffff, 0x2000);
+	chk("place ip", m.ip & 0xffff, 0);
+
+	i86bpage(&c, &m, S_DS, "A:VERIFY.OUT=A:VERIFY.IN");
+	chk("bpage code base", (dseg[0] & 0xff) | ((dseg[1] & 0xff) << 8),
+	    0x1000);
+	chk("bpage code len", (dseg[2] & 0xff) | ((dseg[3] & 0xff) << 8),
+	    4096);
+	chk("bpage data base", (dseg[4] & 0xff) | ((dseg[5] & 0xff) << 8),
+	    0x2000);
+	chk("bpage data len", (dseg[6] & 0xff) | ((dseg[7] & 0xff) << 8),
+	    2176);
+	chk("bpage tail len", dseg[0x80] & 0xff, 24);
+	ntest++;
+	if (memcmp(dseg + 0x81, "A:VERIFY.OUT=A:VERIFY.IN", 24) != 0)
+		fail("bpage tail text", 1, 0);
+	chk("bpage tail terminated", dseg[0x81 + 24] & 0xff, 0);
+	free(dseg);
+
+	/* the 8080 model points every segment register at the one group */
+	memset(h, 0, sizeof h);
+	mkgrp(h, 0, G_CODE, 882, 0, 888, 0);
+	i86hdr(h, (i32)(128 + 882 * 16), &c);
+	memset(&m, 0, sizeof m);
+	i86nseg = 1;
+	i86spar[0] = 0x1000; i86sbase[0] = xseg;
+	chk("place 8080", i86place(&c, &m, 1), CE_OK);
+	chk("place 8080 cs", m.sr[S_CS] & 0xffff, 0x1000);
+	chk("place 8080 ds", m.sr[S_DS] & 0xffff, 0x1000);
+	chk("place 8080 ss", m.sr[S_SS] & 0xffff, 0x1000);
+	chk("place 8080 es", m.sr[S_ES] & 0xffff, 0x1000);
+	/* and IP, which is the whole difference between the two models */
+	chk("place 8080 ip", m.ip & 0xffff, 0x100);
+
+	t_multi();
+}
+
+/* ================================================================== */
+/* 4b. the compact and large models -- a SYNTHESISED multi-group .CMD  */
+/* ================================================================== */
+
+/*
+ * There is no compact or large .CMD in this tree to read.  All 15 files
+ * in the cpm86pc drop are small model or 8080 (tests/i86corpus/SOURCES
+ * and the -c sweep), so the only honest way to test the path is to BUILD
+ * the header here, from the layout src/cmd/i86load.c documents, and say
+ * so -- which is also why nothing binary is shipped for it.
+ *
+ * What is asserted is the mapping i86place() promises: one segment per
+ * declared group, assigned densely in the order code, data, extra,
+ * stack, aux 1-4; CS, DS, ES and SS bound to the groups that name them
+ * with the small model's fallbacks intact; an auxiliary group given a
+ * segment and NO register, reachable only through the base page's group
+ * table; and CE_NSEG rather than a silent overlap when the caller has
+ * fewer segments than the file has groups.
+ *
+ * mg() builds one and returns the header length, so every case below is
+ * a header and a set of expectations and nothing else.
+ */
+static long mg(char *h, const int *forms, const int *lens,
+	       const int *mins, const int *maxs, int n)
+{
+	long flen;
+	int i;
+
+	memset(h, 0, CMD_HDR);
+	flen = CMD_HDR;
+	for (i = 0; i < n; i++) {
+		mkgrp(h, i, forms[i], lens[i], 0, mins[i], maxs[i]);
+		flen += (long)lens[i] * CMD_PARA;
+	}
+	return (flen);
+}
+
+/* One group-table entry of the base page: base paragraph and length. */
+static void chkbp(const char *what, const char *ds, int e, int base, int len)
+{
+	char w[64];
+
+	sprintf(w, "%s base", what);
+	chk(w, (ds[e] & 0xff) | ((ds[e + 1] & 0xff) << 8), base);
+	sprintf(w, "%s paragraphs", what);
+	chk(w, (ds[e + 2] & 0xff) | ((ds[e + 3] & 0xff) << 8), len);
+}
+
+static void t_multi(void)
+{
+	static char h[CMD_HDR];
+	static char seg[CMD_NGRP][65536];
+	struct i86cmd c;
+	struct i86 m;
+	long flen;
+	int i;
+
+	static const int lf[5] = { G_CODE, G_DATA, G_EXTRA, G_STACK, G_AUX1 };
+	static const int ll[5] = { 2, 2, 1, 1, 1 };
+	static const int lm[5] = { 2, 2, 1, 64, 1 };
+	static const int lx[5] = { 0, 100, 200, 0, 300 };
+
+	static const int cf[4] = { G_CODE, G_DATA, G_EXTRA, G_STACK };
+	static const int cl[4] = { 3, 2, 1, 1 };
+	static const int cm[4] = { 3, 2, 1, 1 };
+	static const int cx[4] = { 0, 0, 0, 0 };
+
+	static const int sf[2] = { G_CODE, G_STACK };
+	static const int sl[2] = { 1, 1 };
+	static const int sm[2] = { 1, 32 };
+	static const int sx[2] = { 0, 0 };
+
+	static const int af[2] = { G_CODE, G_AUX2 };
+	static const int al[2] = { 1, 1 };
+	static const int am[2] = { 1, 1 };
+	static const int ax[2] = { 0, 64 };
+
+	for (i = 0; i < CMD_NGRP; i++) {
+		i86spar[i] = (i16)(0x1000 * (i + 1));
+		i86sbase[i] = seg[i];
+		memset(seg[i], 0, 256);
+	}
+	i86nseg = CMD_NGRP;
+
+	/* ---- the large model: five groups, one of them auxiliary ---- */
+	flen = mg(h, lf, ll, lm, lx, 5);
+	chk("large hdr", i86hdr(h, (i32)flen, &c), CE_OK);
+	chk("large model", c.model, M_LARGE);
+	chk("large ng", c.ng, 5);
+	chk("large entry", c.entry, 0);
+	/* galloc() is unchanged and is asserted here anyway, because a
+	 * group's paragraph count is what the guest reads out of the base
+	 * page: G-Max 0 gets the whole segment, a stated G-Max is the ask,
+	 * and G-Min still wins when it is higher. */
+	chk("large code alloc", c.g[0].npar, 4096);
+	chk("large data alloc", c.g[1].npar, 100);
+	chk("large extra alloc", c.g[2].npar, 200);
+	chk("large stack alloc", c.g[3].npar, 4096);
+	chk("large aux1 alloc", c.g[4].npar, 300);
+	chk("large aux1 offset", (long)c.g[4].foff,
+	    128 + (2 + 2 + 1 + 1) * 16);
+
+	/* Four segments is one short of five groups, and the answer is a
+	 * refusal.  Before this change it was CE_OK with the extra group
+	 * still pointing at the data group's segment. */
+	memset(&m, 0, sizeof m);
+	chk("large refused with four", i86place(&c, &m, 4), CE_NSEG);
+
+	memset(&m, 0, sizeof m);
+	chk("large place", i86place(&c, &m, 5), CE_OK);
+	chk("large cs", m.sr[S_CS] & 0xffff, 0x1000);
+	chk("large ds", m.sr[S_DS] & 0xffff, 0x2000);
+	chk("large es is its own group", m.sr[S_ES] & 0xffff, 0x3000);
+	chk("large ss is its own group", m.sr[S_SS] & 0xffff, 0x4000);
+	chk("large ip", m.ip & 0xffff, 0);
+	chk("large warm-boot segment is the stack group",
+	    m.wseg & 0xffff, 0x4000);
+	/* Four distinct host segments in the four registers: the whole
+	 * point of the compact and large models, and the thing the old
+	 * code could not do. */
+	ntest++;
+	if (m.sb[S_CS] == m.sb[S_DS] || m.sb[S_DS] == m.sb[S_ES]
+	 || m.sb[S_ES] == m.sb[S_SS] || m.sb[S_CS] == m.sb[S_SS])
+		fail("large four distinct host segments", 1, 0);
+	chk("large code slot", c.g[0].sidx, 0);
+	chk("large data slot", c.g[1].sidx, 1);
+	chk("large extra slot", c.g[2].sidx, 2);
+	chk("large stack slot", c.g[3].sidx, 3);
+	/* The auxiliary group: a segment of its own, and no register. */
+	chk("large aux1 slot", c.g[4].sidx, 4);
+	chk("large aux1 paragraph", c.g[4].par & 0xffff, 0x5000);
+	chk("large aux1 has no register", c.g[4].seg, S_NONE);
+	ntest++;
+	if (i86sbase[c.g[4].sidx] != seg[4])
+		fail("large aux1 host segment", 1, 0);
+	/* ... so the base page is the only way the guest can learn it,
+	 * which is what the group table at 0x00-0x1F is for. */
+	i86bpage(&c, &m, S_DS, "");
+	chkbp("large bpage code", seg[1], 0x00, 0x1000, 4096);
+	chkbp("large bpage data", seg[1], 0x04, 0x2000, 100);
+	chkbp("large bpage extra", seg[1], 0x08, 0x3000, 200);
+	chkbp("large bpage stack", seg[1], 0x0c, 0x4000, 4096);
+	chkbp("large bpage aux1", seg[1], 0x10, 0x5000, 300);
+	/* and the four entries no group filled are still zero */
+	chkbp("large bpage aux2", seg[1], 0x14, 0, 0);
+	chkbp("large bpage aux4", seg[1], 0x1c, 0, 0);
+	/* A paragraph in the table resolves even though no register
+	 * holds it -- this is what the guest's `mov es,[0x10]' does. */
+	ntest++;
+	if (i86resolve((i16)0x5000) != seg[4])
+		fail("large aux1 resolves", 1, 0);
+
+	/* ---- the compact model: four groups, no auxiliary ---- */
+	flen = mg(h, cf, cl, cm, cx, 4);
+	chk("compact hdr", i86hdr(h, (i32)flen, &c), CE_OK);
+	chk("compact model", c.model, M_COMPACT);
+	chk("compact ng", c.ng, 4);
+	memset(&m, 0, sizeof m);
+	chk("compact refused with three", i86place(&c, &m, 3), CE_NSEG);
+	memset(&m, 0, sizeof m);
+	chk("compact place", i86place(&c, &m, 4), CE_OK);
+	chk("compact cs", m.sr[S_CS] & 0xffff, 0x1000);
+	chk("compact ds", m.sr[S_DS] & 0xffff, 0x2000);
+	chk("compact es", m.sr[S_ES] & 0xffff, 0x3000);
+	chk("compact ss", m.sr[S_SS] & 0xffff, 0x4000);
+
+	/* ---- density: a stack group with no extra group takes slot 1 ----
+	 * Not slot 3.  A mapping keyed on the form rather than on what the
+	 * file declares would ask this machine for four segments to place
+	 * two groups, and this machine has seven. */
+	flen = mg(h, sf, sl, sm, sx, 2);
+	chk("code+stack hdr", i86hdr(h, (i32)flen, &c), CE_OK);
+	chk("code+stack model", c.model, M_COMPACT);
+	memset(&m, 0, sizeof m);
+	chk("code+stack place with two", i86place(&c, &m, 2), CE_OK);
+	chk("code+stack stack slot", c.g[1].sidx, 1);
+	chk("code+stack ss", m.sr[S_SS] & 0xffff, 0x2000);
+	/* No data group, so DS falls back to the code group and the base
+	 * page still has somewhere to live. */
+	chk("code+stack ds falls back to code", m.sr[S_DS] & 0xffff, 0x1000);
+	chk("code+stack es follows ds", m.sr[S_ES] & 0xffff, 0x1000);
+
+	/* ---- an auxiliary group with no extra and no stack ---- */
+	flen = mg(h, af, al, am, ax, 2);
+	chk("code+aux2 hdr", i86hdr(h, (i32)flen, &c), CE_OK);
+	chk("code+aux2 model", c.model, M_LARGE);
+	memset(&m, 0, sizeof m);
+	chk("code+aux2 place with two", i86place(&c, &m, 2), CE_OK);
+	chk("code+aux2 slot", c.g[1].sidx, 1);
+	chk("code+aux2 paragraph", c.g[1].par & 0xffff, 0x2000);
+	chk("code+aux2 has no register", c.g[1].seg, S_NONE);
+	chk("code+aux2 ds is the code group", m.sr[S_DS] & 0xffff, 0x1000);
+	/* aux2's table entry is the SECOND of the four, at 0x14 */
+	memset(seg[0], 0, 256);
+	i86bpage(&c, &m, S_CS, "");
+	chkbp("code+aux2 bpage code", seg[0], 0x00, 0x1000, 4096);
+	chkbp("code+aux2 bpage aux2", seg[0], 0x14, 0x2000, 64);
+
+	/* ---- eight groups: the format's ceiling, which the HOST can
+	 * place and this machine cannot.  Seven logical segments exist
+	 * (src/bios/pgalloc.c) and src/cmd/i86.c spends one of them
+	 * staging the file, so the target's ceiling is six; the loader's
+	 * is whatever it is handed.  Asserted here so that the two
+	 * numbers are written down in a place that fails when they
+	 * change. ---- */
+	{
+		static const int ef[8] = { G_CODE, G_DATA, G_EXTRA, G_STACK,
+					   G_AUX1, G_AUX2, G_AUX3, G_AUX4 };
+		static const int el[8] = { 1, 1, 1, 1, 1, 1, 1, 1 };
+		static const int em[8] = { 1, 1, 1, 1, 1, 1, 1, 1 };
+		static const int ex[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+		flen = mg(h, ef, el, em, ex, 8);
+		chk("eight hdr", i86hdr(h, (i32)flen, &c), CE_OK);
+		chk("eight ng", c.ng, 8);
+		chk("eight model", c.model, M_LARGE);
+		memset(&m, 0, sizeof m);
+		chk("eight refused with six", i86place(&c, &m, 6), CE_NSEG);
+		memset(&m, 0, sizeof m);
+		chk("eight refused with seven", i86place(&c, &m, 7), CE_NSEG);
+		memset(&m, 0, sizeof m);
+		chk("eight placed with eight", i86place(&c, &m, 8), CE_OK);
+		for (i = 0; i < 8; i++) {
+			char w[64];
+			sprintf(w, "eight slot %d", i);
+			chk(w, c.g[i].sidx, i);
+		}
+		chk("eight aux4 paragraph", c.g[7].par & 0xffff, 0x8000);
+	}
+	chk("CE_NSEG has a sentence", (long)(i86cerr(CE_NSEG)[0] != 0), 1);
+}
+
+/* ================================================================== */
+/* 5. the corpus sweep (by hand; no make target may reach it)	      */
+/* ================================================================== */
+
+static const char *gform(int f)
+{
+	static const char *n[] = { "-", "code", "data", "extra", "stack",
+				   "aux1", "aux2", "aux3", "aux4", "shcode" };
+	return (f >= 0 && f <= 9 ? n[f] : "?");
+}
+
+/* The classes i86exec.c decodes and deliberately refuses.  Kept here
+ * rather than exported, so that the sweep's "what stage one cannot run
+ * yet" number is a statement made by the TEST about the executor and
+ * not one the executor makes about itself. */
+static int unimp(int op)
+{
+	return (op == I_STRING || op == I_CALLF || op == I_RETF
+	     || op == I_JMPF || op == I_IRET || op == I_INTO
+	     || op == I_ESC || op == I_IO || op == I_WAIT
+	     || op == I_NIMPL);
+}
+
+#define NMN 80
+
+static int sweep(const char *path)
+{
+	static char seg[65536];
+	static const char *mnname[NMN];
+	static long mncount[NMN];
+	struct i86cmd c;
+	struct i86in in;
+	FILE *fp;
+	long flen;
+	char h[CMD_HDR];
+	int rc, i, n, nmn;
+	i16 ip;
+	long ninsn, badn, nunimp;
+
+	fp = fopen(path, "rb");
+	if (!fp) {
+		printf("%s: cannot open\n", path);
+		return (1);
+	}
+	fseek(fp, 0L, SEEK_END);
+	flen = ftell(fp);
+	fseek(fp, 0L, SEEK_SET);
+	if (fread(h, 1, CMD_HDR, fp) != CMD_HDR) {
+		printf("%s: short header\n", path);
+		fclose(fp);
+		return (1);
+	}
+	rc = i86hdr(h, (i32)flen, &c);
+	printf("%-28s %6ld bytes  %s  %s\n", path, flen,
+		rc == CE_OK ? (c.model == M_8080 ? "8080 " : "small")
+			    : "     ",
+		i86cerr(rc));
+	for (i = 0; i < CMD_NGRP; i++)
+		if (c.g[i].form)
+			printf("      [%d] %-6s len=%5u base=%5u min=%5u "
+				"max=%5u -> alloc %5u par at file+%ld\n",
+				i, gform(c.g[i].form), c.g[i].len,
+				c.g[i].base, c.g[i].min, c.g[i].max,
+				c.g[i].npar, (long)c.g[i].foff);
+	if (rc != CE_OK) {
+		fclose(fp);
+		return (1);
+	}
+	if (flen > (long)c.need)
+		printf("      %ld bytes of trailing padding (to a 128-byte "
+			"record)\n", flen - (long)c.need);
+
+	memset(seg, 0, sizeof seg);
+	fseek(fp, (long)c.g[0].foff, SEEK_SET);
+	n = (int)fread(seg, 1, (size_t)c.g[0].len * CMD_PARA, fp);
+	fclose(fp);
+	for (i = 0; i < NMN; i++)
+		mncount[i] = 0;
+	nmn = 0;
+	badn = 0;
+	ninsn = 0;
+	nunimp = 0;
+	ip = (i16)(c.model == M_8080 ? 0x100 : 0);
+	while ((long)(unsigned)ip < (long)n) {
+		i86dec(seg, ip, &in);
+		if (in.op == I_BAD)
+			badn++;
+		else {
+			const char *mn = i86mnem(&in);
+			for (i = 0; i < nmn; i++)
+				if (strcmp(mnname[i], mn) == 0)
+					break;
+			if (i == nmn && nmn < NMN)
+				mnname[nmn++] = mn;
+			if (i < NMN)
+				mncount[i]++;
+			if (unimp(in.op))
+				nunimp++;
+		}
+		ninsn++;
+		ip = (i16)(ip + in.len);
+	}
+	printf("      %ld instructions, %d distinct mnemonics, %ld "
+		"undecodable bytes\n", ninsn, nmn, badn);
+	printf("      %ld instructions (%ld%%) are in a class stage one "
+		"does not execute\n", nunimp,
+		ninsn ? nunimp * 100 / ninsn : 0L);
+	printf("     ");
+	for (i = 0; i < nmn; i++)
+		printf(" %s=%ld", mnname[i], mncount[i]);
+	printf("\n");
+	return (0);
+}
+
+/* ================================================================== */
+/* 6. loading real files: the corpus in tests/i86corpus/		      */
+/* ================================================================== */
+
+/*
+ * tests/i86corpus/ holds four of Digital Research's own CP/M-86 programs
+ * -- PIP, ED, GENCMD and SUBMIT, taken from the cpm86pc drop of CP/M-86
+ * 1.0 and unmodified.  They are covered by the 9 July 2022 DRDOS, Inc.
+ * grant (Bryan Sparks; cpm.z80.de/license.html), which carries no
+ * distribution restriction.
+ *
+ * They are TEST INPUT, and nothing else.  Nothing here is staged onto a
+ * disk image, and none of it is a program this system means to run: our
+ * utilities are native Z8000 code -- src/cmd/pip.c and src/cmd/stat.c are
+ * DRI's own sources rebuilt as .Z8K, and they will beat anything the shim
+ * interprets, forever (CPM86-STAGE-ONE.md §2.4).  PIP.CMD earns its place
+ * for one reason: a file copy is a known-answer test, so when the INT 0E0h
+ * seam exists, `cmp' can decide whether the shim worked.
+ *
+ * What a real file can test is that the loader reads what a real header
+ * says.  What it cannot test is every refusal: all four are small-model,
+ * all carry A-Base 0, none is malformed.  build/cmdfix/ is that half,
+ * generated by tools/mkcmdfix.py at test time.  Both go through the SAME
+ * three calls below, so the path that reads PIP is the path that has to
+ * refuse a 40-byte file.
+ */
+
+struct ld {
+	struct i86cmd c;
+	struct i86 m;
+	long	flen;
+	char	*img;
+};
+
+/*
+ * Eight, not two: a .CMD header can describe eight groups and the
+ * compact and large models actually use them (src/cmd/i86load.c
+ * i86place()).  The corpus needs two and gets two -- ldplace() below
+ * hands i86place() exactly as many segments as the file has groups, so
+ * a small-model file is placed against the same i86nseg = 2 and the same
+ * paragraphs 0x1000/0x2000 it always was, and nothing about the corpus
+ * runs moves.  THE MACHINE cannot supply eight; see i86place()'s comment
+ * and docs/cpm/docs/run/E1.md.  The host can, so the host is where the
+ * general case is tested.
+ */
+static char lseg[CMD_NGRP][65536];
+
+static int ldread(const char *path, struct ld *L)
+{
+	FILE *fp;
+	char h[CMD_HDR];
+	long n;
+
+	memset(L, 0, sizeof *L);
+	fp = fopen(path, "rb");
+	if (fp == 0)
+		return (-1);
+	fseek(fp, 0L, SEEK_END);
+	L->flen = ftell(fp);
+	fseek(fp, 0L, SEEK_SET);
+	L->img = (char *)malloc((size_t)L->flen + 1);
+	n = (long)fread(L->img, 1, (size_t)L->flen, fp);
+	fclose(fp);
+	if (n != L->flen)
+		return (-1);
+	/* A short file is read into a ZEROED header buffer and its real
+	 * length handed to i86hdr(), which is the only honest way to ask
+	 * "is this a header at all": the bytes that are not there must not
+	 * be whatever the buffer held last. */
+	memset(h, 0, sizeof h);
+	memcpy(h, L->img, (size_t)(L->flen < CMD_HDR ? L->flen : CMD_HDR));
+	return (i86hdr(h, (i32)L->flen, &L->c));
+}
+
+static void ldfree(struct ld *L)
+{
+	if (L->img)
+		free(L->img);
+	L->img = 0;
+}
+
+/*
+ * Place the groups, copy their images in, build the base page, and put
+ * the stack at the top of the allocation -- the whole of what a loader
+ * does between "the header is good" and "start the guest".  One 64 KB
+ * host segment per declared group -- i86place()'s own rule -- so a
+ * small-model file gets the two it always got and a large-model one gets
+ * as many as it declares.
+ *
+ * The images are copied through g->sidx and NOT through g->seg, because
+ * an auxiliary group has a segment and no segment register: g->seg is
+ * S_NONE for it and i86sbase[g->sidx] is the only handle there is.  The
+ * target gate (src/cmd/i86.c) copies them the same way for the same
+ * reason.
+ */
+static int ldplace(struct ld *L, const char *tail)
+{
+	register struct i86grp *g;
+	int i, rc, slot, n;
+	long np;
+
+	n = L->c.ng < 1 ? 1 : L->c.ng;
+	if (n > CMD_NGRP)
+		n = CMD_NGRP;
+	for (i = 0; i < n; i++) {
+		memset(lseg[i], 0, sizeof lseg[i]);
+		i86spar[i] = (i16)(0x1000 * (i + 1));
+		i86sbase[i] = lseg[i];
+	}
+	i86nseg = n;
+	L->m.fl = F_ONES;
+	L->m.lz = LZ_NONE;
+	rc = i86place(&L->c, &L->m, n);
+	if (rc != CE_OK)
+		return (rc);
+	for (i = 0; i < CMD_NGRP; i++) {
+		g = &L->c.g[i];
+		if (g->form == G_NONE || g->form > G_AUX4)
+			continue;
+		memcpy(i86sbase[g->sidx], L->img + g->foff,
+			(size_t)g->len * CMD_PARA);
+	}
+	/* The base page goes at the base of the group DS names -- the data
+	 * group in the small model, the one group in the 8080 model, where
+	 * it lands on the 256 zero bytes the image supplies for it. */
+	slot = L->c.model == M_8080 ? S_CS : S_DS;
+	i86bpage(&L->c, &L->m, slot, (char *)tail);
+	np = 0;
+	for (i = 0; i < CMD_NGRP; i++)
+		if (L->c.g[i].form && L->c.g[i].seg == slot)
+			np = L->c.g[i].npar;
+	if (np == 0)
+		np = L->c.g[0].npar;
+	L->m.r[R_SP] = (i16)(np >= CMD_MAXPAR ? 0xfffe : np * CMD_PARA);
+	return (CE_OK);
+}
+
+static int ldrun(struct ld *L, long maxstep, long *nstep)
+{
+	struct i86in in;
+	int rc;
+	long k;
+
+	for (k = 0; k < maxstep; k++) {
+		rc = i86step(&L->m, &in);
+		if (rc != X_OK) {
+			*nstep = k + 1;
+			return (rc);
+		}
+	}
+	*nstep = k;
+	return (X_OK);
+}
+
+/* Decode the code group end to end and count what comes out: instructions,
+ * bytes that are not an instruction, and instructions in a class stage one
+ * refuses.  Same walk as the -c sweep, but the numbers are asserted. */
+static void ldsweep(struct ld *L, long *ninsn, long *nbad, long *nunimp)
+{
+	struct i86in in;
+	long n;
+	i16 ip;
+
+	*ninsn = *nbad = *nunimp = 0;
+	n = (long)L->c.g[0].len * CMD_PARA;
+	ip = (i16)(L->c.model == M_8080 ? 0x100 : 0);
+	while ((long)(unsigned)ip < n) {
+		i86dec(L->m.sb[S_CS], ip, &in);
+		if (in.op == I_BAD)
+			(*nbad)++;
+		else if (unimp(in.op))
+			(*nunimp)++;
+		(*ninsn)++;
+		ip = (i16)(ip + in.len);
+	}
+}
+
+/*
+ * The four files, and every number here was measured with the -c sweep
+ * and then written down -- none of it is a guess about the format.
+ *
+ * All four are small-model with G-Max 0 in the code group, which is the
+ * shape i86load.c's two findings describe: G-Min above G-Length in every
+ * one of them (PIP supplies 84 paragraphs of data and asks for 640), and
+ * G-Max 0 in every code group, meaning "no maximum" and not "no memory".
+ * Each file is longer than its groups, because a .CMD is padded to a
+ * 128-byte CP/M record; that padding is not truncation.
+ *
+ * The two `npar' columns are the only ones here that are not read out of
+ * the file: they are what galloc() grants, and every one of them moved on
+ * 2026-09-04 when galloc() started growing a group toward G-Max.  Every
+ * code group has G-Max 0 and so gets the whole segment (4,096); the data
+ * groups get their G-Max where they state one -- PIP 2,176, ED 4,095,
+ * GENCMD 4,080 -- and the segment where they do not, which is SUBMIT.
+ *
+ * The instruction counts are the decoder's, not objdump's -- the
+ * cross-check against `objdump -m i8086' over these code groups is in the
+ * merged commit's message and needs objdump, so it cannot live here.  What
+ * lives here is the property that matters for a linear sweep: not one byte
+ * of DRI's code fails to decode.  The `unimp' column is the measurement
+ * CPM86-STAGE-ONE.md 2.3 scoped stage one on: PIP and ED contain zero
+ * instructions stage one refuses, GENCMD and SUBMIT one each, and both are
+ * an IN.
+ */
+struct crow {
+	const char *name;
+	long	flen, need, ninsn;
+	int	nunimp;
+	int	clen, cmin, cmax, cnpar;
+	int	dlen, dmin, dmax, dnpar;
+	long	pstep;		/* instructions from entry to the first INT */
+	int	pip;		/* and where it is			*/
+};
+
+static struct crow crows[] = {
+	{"PIP.CMD",    7552, 7536, 2487, 0, 379, 379,    0, 4096,
+					  84, 640, 2176, 2176, 1581, 0x001b},
+	{"ED.CMD",     9472, 9360, 3119, 0, 485, 485,    0, 4096,
+					  92, 256, 4095, 4095,   25, 0x006b},
+	{"GENCMD.CMD", 5760, 5648, 1357, 1, 211, 211,    0, 4096,
+					 134, 688, 4080, 4080,  515, 0x0029},
+	{"SUBMIT.CMD", 3968, 3936,  435, 1,  65,  65,    0, 4096,
+					 173, 173,    0, 4096, 1625, 0x006b},
+	{0}
+};
+
+static char nmbuf[128];
+
+static const char *nm(const char *a, const char *b)
+{
+	sprintf(nmbuf, "%s %s", a, b);
+	return (nmbuf);
+}
+
+static void t_corpus(const char *dir)
+{
+	struct crow *r;
+	struct ld L;
+	char path[512];
+	long ninsn, nbad, nunimp, nstep;
+	int rc;
+
+	for (r = crows; r->name; r++) {
+		sprintf(path, "%s/%s", dir, r->name);
+		rc = ldread(path, &L);
+		if (rc < 0) {
+			fail(nm(r->name, "unreadable"), 0, 0);
+			continue;
+		}
+		chk(nm(r->name, "rc"), rc, CE_OK);
+		chk(nm(r->name, "file length"), L.flen, r->flen);
+		if (rc != CE_OK) {
+			ldfree(&L);
+			continue;
+		}
+		chk(nm(r->name, "model"), L.c.model, M_SMALL);
+		chk(nm(r->name, "entry"), L.c.entry, 0);
+		chk(nm(r->name, "ng"), L.c.ng, 2);
+		chk(nm(r->name, "need"), (long)L.c.need, r->need);
+		ntest++;
+		if (L.flen <= (long)L.c.need)
+			fail(nm(r->name, "record padding"), L.flen, r->need);
+		chk(nm(r->name, "code form"), L.c.g[0].form, G_CODE);
+		chk(nm(r->name, "code A-Base"), L.c.g[0].base, 0);
+		chk(nm(r->name, "code G-Length"), L.c.g[0].len, r->clen);
+		chk(nm(r->name, "code G-Min"), L.c.g[0].min, r->cmin);
+		chk(nm(r->name, "code G-Max"), L.c.g[0].max, r->cmax);
+		chk(nm(r->name, "code alloc"), L.c.g[0].npar, r->cnpar);
+		chk(nm(r->name, "code at file+128"), (long)L.c.g[0].foff, 128);
+		chk(nm(r->name, "data form"), L.c.g[1].form, G_DATA);
+		chk(nm(r->name, "data A-Base"), L.c.g[1].base, 0);
+		chk(nm(r->name, "data G-Length"), L.c.g[1].len, r->dlen);
+		chk(nm(r->name, "data G-Min"), L.c.g[1].min, r->dmin);
+		chk(nm(r->name, "data G-Max"), L.c.g[1].max, r->dmax);
+		chk(nm(r->name, "data alloc"), L.c.g[1].npar, r->dnpar);
+		chk(nm(r->name, "data offset"), (long)L.c.g[1].foff,
+			128 + (long)r->clen * 16);
+		/* G-Min above G-Length is DRI's own shape, in all four */
+		ntest++;
+		if (L.c.g[1].min < L.c.g[1].len)
+			fail(nm(r->name, "data G-Min >= G-Length"), 0, 0);
+
+		chk(nm(r->name, "place"), ldplace(&L, FIXTAIL), CE_OK);
+		chk(nm(r->name, "cs"), L.m.sr[S_CS] & 0xffff, 0x1000);
+		chk(nm(r->name, "ds"), L.m.sr[S_DS] & 0xffff, 0x2000);
+		chk(nm(r->name, "ip"), L.m.ip & 0xffff, 0);
+		/* the base page the guest will read, over a real header */
+		chk(nm(r->name, "bpage data paragraphs"),
+			(L.m.sb[S_DS][6] & 0xff)
+			| ((L.m.sb[S_DS][7] & 0xff) << 8), r->dnpar);
+		ldsweep(&L, &ninsn, &nbad, &nunimp);
+		chk(nm(r->name, "instructions"), ninsn, r->ninsn);
+		chk(nm(r->name, "undecodable bytes"), nbad, 0);
+		chk(nm(r->name, "refused classes"), nunimp, r->nunimp);
+		/*
+		 * And then RUN it, from the entry point the loader chose,
+		 * until it asks the operating system for something.
+		 *
+		 * All four reach INT 0E0h -- the CP/M-86 BDOS entry -- with
+		 * no refusal and no undecodable byte on the way, which is
+		 * the strongest statement this file can make before the
+		 * seam behind that INT exists: the image was placed where
+		 * the program expects it, the base page it reads is the one
+		 * we built, and its whole prologue executes.  ED gets there
+		 * in 25 instructions and SUBMIT in 1,625.
+		 *
+		 * PIP's count moves with the command tail, because it
+		 * scans it: an empty tail costs one instruction fewer.
+		 * FIXTAIL is what makes this number reproducible.
+		 */
+		rc = (int)ldrun(&L, 100000L, &nstep);
+		chk(nm(r->name, "prologue rc"), rc, X_INT);
+		chk(nm(r->name, "prologue vector"), i86intno, 0xe0);
+		chk(nm(r->name, "prologue steps"), nstep, r->pstep);
+		chk(nm(r->name, "prologue ip"), L.m.ip & 0xffff, r->pip);
+		ldfree(&L);
+	}
+}
+
+/* ================================================================== */
+/* 7. the generated fixtures (tools/mkcmdfix.py)			      */
+/* ================================================================== */
+
+struct nmap {
+	const char *n;
+	int	v;
+};
+
+static struct nmap cemap[] = {
+	{"CE_OK", CE_OK}, {"CE_NOCODE", CE_NOCODE}, {"CE_BASE", CE_BASE},
+	{"CE_BIG", CE_BIG}, {"CE_FORM", CE_FORM}, {"CE_TRUNC", CE_TRUNC},
+	{"CE_EMPTY", CE_EMPTY}, {"CE_DUP", CE_DUP}, {0, 0}
+};
+
+static struct nmap xmap[] = {
+	{"X_OK", X_OK}, {"X_UNIMP", X_UNIMP}, {"X_BAD", X_BAD},
+};
+
+static struct nmap segmap[] = {
+	{"es", S_ES}, {"cs", S_CS}, {"ss", S_SS}, {"ds", S_DS}, {0, 0}
+};
+
+static struct nmap regmap[] = {
+	{"ax", R_AX}, {"cx", R_CX}, {"dx", R_DX}, {"bx", R_BX},
+	{"sp", R_SP}, {"bp", R_BP}, {"si", R_SI}, {"di", R_DI}, {0, 0}
+};
+
+static int lookup(struct nmap *t, const char *s)
+{
+	for (; t->n; t++)
+		if (strcmp(t->n, s) == 0)
+			return (t->v);
+	return (-1);
+}
+
+/* "key=value" -> value, or 0 with *got clear. */
+static long kval(const char *tok, const char *key, int *got)
+{
+	int n;
+
+	n = (int)strlen(key);
+	*got = 0;
+	if (strncmp(tok, key, (size_t)n) != 0 || tok[n] != '=')
+		return (0);
+	*got = 1;
+	return (strtol(tok + n + 1, (char **)0, 0));
+}
+
+static int nfix;
+
+static void fixline(const char *dir, char *line)
+{
+	char *tok[32];
+	char path[512];
+	struct ld L;
+	const char *name;
+	char *p, *q;
+	long v, nstep;
+	int nt, i, want, rc, got, sg;
+
+	nt = 0;
+	for (p = strtok(line, " \t\r\n"); p && nt < 32;
+	     p = strtok((char *)0, " \t\r\n")) {
+		if (*p == '#')
+			break;
+		tok[nt++] = p;
+	}
+	if (nt == 0 || tok[0][0] == '#')
+		return;
+	if (nt < 3) {
+		fail("fixture manifest line", nt, 3);
+		return;
+	}
+	name = tok[1];
+	sprintf(path, "%s/%s", dir, name);
+	nfix++;
+
+	if (strcmp(tok[0], "LOAD") == 0) {
+		want = lookup(cemap, tok[2]);
+		if (want < 0) {
+			fail(nm(name, "unknown CE_* name"), 0, 0);
+			return;
+		}
+		rc = ldread(path, &L);
+		if (rc < 0) {
+			fail(nm(name, "unreadable"), 0, 0);
+			return;
+		}
+		chk(nm(name, "load rc"), rc, want);
+		/* the refusal has to be able to say why, in words */
+		ntest++;
+		if (i86cerr(rc) == 0 || *i86cerr(rc) == 0)
+			fail(nm(name, "refusal text"), 0, 0);
+		for (i = 3; i < nt; i++) {
+			if (strncmp(tok[i], "model=", 6) == 0) {
+				const char *mn = tok[i] + 6;
+				int mv = strcmp(mn, "8080") == 0 ? M_8080
+				       : strcmp(mn, "small") == 0 ? M_SMALL
+				       : strcmp(mn, "compact") == 0 ? M_COMPACT
+				       : strcmp(mn, "large") == 0 ? M_LARGE
+				       : -1;
+				if (mv < 0)
+					fail(nm(name, "unknown model name"),
+						0, 0);
+				else
+					chk(nm(name, "model"), L.c.model, mv);
+			}
+			v = kval(tok[i], "entry", &got);
+			if (got)
+				chk(nm(name, "entry"), L.c.entry, v);
+			v = kval(tok[i], "ng", &got);
+			if (got)
+				chk(nm(name, "ng"), L.c.ng, v);
+			v = kval(tok[i], "need", &got);
+			if (got)
+				chk(nm(name, "need"), (long)L.c.need, v);
+			if (strncmp(tok[i], "alloc=", 6) == 0) {
+				q = tok[i] + 6;
+				for (sg = 0; sg < CMD_NGRP && *q; sg++) {
+					while (sg < CMD_NGRP
+					     && L.c.g[sg].form == G_NONE)
+						sg++;
+					v = strtol(q, &q, 0);
+					chk(nm(name, "alloc"),
+						L.c.g[sg].npar, v);
+					if (*q == ',')
+						q++;
+				}
+			}
+		}
+		ldfree(&L);
+		return;
+	}
+	if (strcmp(tok[0], "RUN") != 0) {
+		fail("fixture manifest verb", 0, 0);
+		return;
+	}
+
+	want = lookup(xmap, tok[2]);
+	if (want < 0) {
+		fail(nm(name, "unknown X_* name"), 0, 0);
+		return;
+	}
+	rc = ldread(path, &L);
+	if (rc < 0) {
+		fail(nm(name, "unreadable"), 0, 0);
+		return;
+	}
+	chk(nm(name, "run load"), rc, CE_OK);
+	if (rc != CE_OK) {
+		ldfree(&L);
+		return;
+	}
+	chk(nm(name, "run place"), ldplace(&L, FIXTAIL), CE_OK);
+	nstep = 0;
+	rc = ldrun(&L, 1000L, &nstep);
+	chk(nm(name, "run rc"), rc, want);
+	for (i = 3; i < nt; i++) {
+		v = kval(tok[i], "ip", &got);
+		if (got)
+			chk(nm(name, "ip"), L.m.ip & 0xffff, v);
+		v = kval(tok[i], "steps", &got);
+		if (got)
+			chk(nm(name, "steps"), nstep, v);
+		for (sg = 0; regmap[sg].n; sg++) {
+			v = kval(tok[i], regmap[sg].n, &got);
+			if (got)
+				chk(nm(name, regmap[sg].n),
+					L.m.r[regmap[sg].v] & 0xffff, v);
+		}
+		if (strncmp(tok[i], "w=", 2) == 0) {
+			q = tok[i] + 2;
+			p = strchr(q, ':');
+			if (p == 0) {
+				fail(nm(name, "w= syntax"), 0, 0);
+				continue;
+			}
+			*p = 0;
+			sg = lookup(segmap, q);
+			q = p + 1;
+			v = strtol(q, &q, 0);	/* offset */
+			if (sg < 0 || *q != ':')
+				fail(nm(name, "w= syntax"), 0, 0);
+			else
+				chk(nm(name, "memory word"),
+					(L.m.sb[sg][v] & 0xff)
+					| ((L.m.sb[sg][v + 1] & 0xff) << 8),
+					strtol(q + 1, (char **)0, 0));
+		}
+	}
+	ldfree(&L);
+}
+
+static void t_fixtures(const char *dir)
+{
+	char path[512];
+	char line[512];
+	FILE *fp;
+
+	sprintf(path, "%s/MANIFEST", dir);
+	fp = fopen(path, "r");
+	if (fp == 0) {
+		fail("fixture manifest missing (run tools/mkcmdfix.py)", 0, 0);
+		return;
+	}
+	nfix = 0;
+	while (fgets(line, sizeof line, fp))
+		fixline(dir, line);
+	fclose(fp);
+	/* An empty fixture set must not report success: the generator can
+	 * fail and leave a directory behind (tests/relcheck.sh's rule). */
+	ntest++;
+	if (nfix < 15)
+		fail("fixtures found", nfix, 15);
+}
+
+/* ================================================================== */
+/* 8. the INT 0E0h seam (src/cmd/i86bdos.c)			      */
+/* ================================================================== */
+
+/*
+ * i86bdos.c reaches the native BDOS through exactly one function,
+ * i86sys(), and that is the seam's own seam: on the target it is one
+ * line around __bdos(), and here it is whatever this file wants it to
+ * be.  Two things want different ones.
+ *
+ *   8a asserts the MAPPING.  A recording i86sys() writes down the
+ *	function, the value and the address it was handed, so every
+ *	claim about the calling convention -- DL for a byte, DS:DX for
+ *	an FCB, 36 bytes of it, function 12 answered without a call at
+ *	all, function 26 and 51 recomputing one native address between
+ *	them -- is a check with a number rather than a paragraph.
+ *
+ *   8b RUNS PIP.  A stub CP/M behind the same i86sys() gives the guest
+ *	a small in-memory disk, and the gate's own command line is
+ *	handed to DRI's PIP.CMD: copy a file, then compare the copy with
+ *	the original, byte for byte.  It is CPM86-STAGE-ONE.md §5.3
+ *	step 1 -- "run PIP against it on the host, with the BDOS calls
+ *	stubbed to the host filesystem" -- and it is the cheapest thing
+ *	in the plan that can still return "no", because it converts the
+ *	static 40-mnemonic count into a dynamic one and because a file
+ *	copy is a known-answer test.
+ *
+ * It is NOT the gate.  Gate M1'a is this same command on the emulator
+ * through the real BDOS, and nothing here can stand in for it: the
+ * whole point of §5.1 is that host C passing is not a target verdict.
+ */
+
+
+/* ---- 7c: the two default FCBs, which the CCP fills in ---- */
+
+/*
+ * i86bpage() builds the base page, and until a SECOND real binary ran
+ * it left 0x5C and 0x6C as the 256 zero bytes it had cleared.  PIP
+ * parses its own command tail, so nothing noticed.  SUBMIT.CMD and
+ * GENCMD.CMD both open the FCB the CCP is supposed to have filled in,
+ * and against an all-zero one they open a nameless file and print
+ * "No 'SUB' File Present" / "CANNOT OPEN SOURCE".
+ *
+ * The rules asserted here are the ones src/ccp/ccp.c already
+ * implements for native programs -- delim(), true_char(), fill_fcb() --
+ * because a guest and a native program on the same machine should be
+ * handed the same FCB for the same tail.
+ */
+static char fcbseg[65536];
+
+static void bpfcb(const char *tail)
+{
+	static struct i86cmd c;
+	static struct i86 m;
+
+	memset(&c, 0, sizeof c);
+	memset(&m, 0, sizeof m);
+	memset(fcbseg, 0xee, 256);
+	c.model = M_SMALL;
+	m.sb[S_DS] = fcbseg;
+	i86bpage(&c, &m, S_DS, (char *)tail);
+}
+
+/* One FCB: the drive byte and the 11 blank-padded name bytes. */
+static void chkfcb(const char *what, int off, int drive, const char *name)
+{
+	char w[64];
+	int i;
+
+	sprintf(w, "%s drive", what);
+	chk(w, (long)(fcbseg[off] & 0xff), (long)drive);
+	for (i = 0; i < 11; i++) {
+		sprintf(w, "%s [%d]", what, i);
+		chk(w, (long)(fcbseg[off + 1 + i] & 0xff), (long)(name[i] & 0xff));
+	}
+}
+
+static void t_fcb(void)
+{
+	/* The gate's own tail.  One blank-separated token, so the `='
+	 * ends FCB1's name and FCB2 stays blank -- which is exactly why
+	 * PIP parses the tail itself instead of using these. */
+	bpfcb(" I86OUT.TXT=I86IN.TXT");
+	chkfcb("fcb1 pip", 0x5c, 0, "I86OUT  TXT");
+	chkfcb("fcb2 pip", 0x6c, 0, "           ");
+
+	/* A bare name with no extension: the one SUBMIT is given, and
+	 * the one an all-zero base page turned into a nameless file. */
+	bpfcb(" I86SUB");
+	chkfcb("fcb1 submit", 0x5c, 0, "I86SUB     ");
+
+	/* Two tokens, two drives.  Drive 0 is the default drive, which
+	 * is what DRI's CCP leaves for a guest to find. */
+	bpfcb(" B:X.Y A:LONGNAME.EXTRA");
+	chkfcb("fcb1 drive B", 0x5c, 2, "X       Y  ");
+	chkfcb("fcb2 drive A", 0x6c, 1, "LONGNAMEEXT");
+
+	/* `*' becomes `?' and is NOT consumed, so it fills its field. */
+	bpfcb(" *.*");
+	chkfcb("fcb1 star", 0x5c, 0, "???????????");
+	bpfcb(" A*.C?D");
+	chkfcb("fcb1 partial star", 0x5c, 0, "A???????C?D");
+
+	/* Lower case folds up, the way the CCP folds the whole line. */
+	bpfcb(" hello.h86");
+	chkfcb("fcb1 lower case", 0x5c, 0, "HELLO   H86");
+
+	/* No tail at all, and a drive with no name: both are blank
+	 * names on the named drive, not garbage. */
+	bpfcb("");
+	chkfcb("fcb1 empty tail", 0x5c, 0, "           ");
+	chkfcb("fcb2 empty tail", 0x6c, 0, "           ");
+	bpfcb(" C:");
+	chkfcb("fcb1 drive only", 0x5c, 3, "           ");
+
+	/* The rest of FCB1 -- ex, s1, s2, rc at 0x68-0x6B -- must be
+	 * zero, and the tail must still be where it was. */
+	bpfcb(" I86SUB");
+	chk("fcb1 ex", (long)(fcbseg[0x68] & 0xff), 0);
+	chk("fcb1 rc", (long)(fcbseg[0x6b] & 0xff), 0);
+	chk("tail length survived", (long)(fcbseg[0x80] & 0xff), 7);
+	chk("tail text survived", (long)(fcbseg[0x81] & 0xff), ' ');
+}
+
+/* ---- the backend switch ---- */
+
+#define SYS_REC	0		/* record the call, answer sysret	*/
+#define SYS_CPM	1		/* the stub CP/M below			*/
+
+static int sysmode = SYS_REC;
+static int sysret;		/* what the recording backend answers	*/
+static int slast_fn;		/* what it was last handed		*/
+static i16 slast_val;
+static char *slast_addr;
+static int sncall;
+
+static int stub(int fn, i16 val, char *addr);
+
+int i86sys(fn, val, addr)
+int fn;
+i16 val;
+char *addr;
+{
+	sncall++;
+	slast_fn = fn;
+	slast_val = val;
+	slast_addr = addr;
+	if (sysmode == SYS_CPM)
+		return (stub(fn, val, addr));
+	return (sysret);
+}
+
+/* ---- 8a: the mapping ---- */
+
+static char bseg[65536];	/* the guest's data segment		*/
+static char cseg[65536];	/* ... and its code segment		*/
+static struct i86 bm;
+
+/* A guest sitting at CS:0 with DS a segment of its own, which is the
+ * shape i86place() gives a small-model .CMD. */
+static void bsetup(void)
+{
+	memset(bseg, 0, sizeof bseg);
+	memset(cseg, 0, sizeof cseg);
+	memset(&bm, 0, sizeof bm);
+	bm.sb[S_CS] = cseg;
+	bm.sr[S_CS] = 0x1000;
+	bm.sb[S_DS] = bm.sb[S_SS] = bm.sb[S_ES] = bseg;
+	bm.sr[S_DS] = bm.sr[S_SS] = bm.sr[S_ES] = 0x2000;
+	bm.lz = LZ_NONE;
+	bm.fl = F_ONES;
+	bm.ip = 0;
+	bm.r[R_SP] = 0xff00;
+	i86nseg = 2;
+	i86spar[0] = 0x1000; i86sbase[0] = cseg;
+	i86spar[1] = 0x2000; i86sbase[1] = bseg;
+	sysmode = SYS_REC;
+	sysret = 0;
+	sncall = 0;
+	slast_fn = -1;
+	slast_val = 0;
+	slast_addr = 0;
+	i86bdosinit(&bm);
+}
+
+/* Put CL and DX where a CP/M-86 program puts them, raise the interrupt
+ * the way the guest's `int 0E0h' does, and service it. */
+static int bcall(int fn, i16 dx)
+{
+	bm.r[R_CX] = (i16)fn;
+	bm.r[R_DX] = dx;
+	i86intno = 0xe0;
+	return (i86bdos(&bm));
+}
+
+static void t_seam(void)
+{
+	int rc;
+
+	/* The DMA address a program starts with: DS:0080, the base
+	 * page's own buffer, set before the first instruction runs. */
+	bsetup();
+	chk("init dma call", sncall, 1);
+	chk("init dma fn", slast_fn, 26);
+	ntest++;
+	if (slast_addr != &bseg[0x80])
+		fail("init dma addr", 1, 0);
+	chk("init dma off", i86dmaoff & 0xffff, 0x80);
+	chk("init dma seg", i86dmaseg & 0xffff, 0x2000);
+
+	/* Byte parameter: DL, not DX -- and console output is
+	 * COLLECTED, so DL goes into the batch and the native BDOS
+	 * sees nothing until something flushes it.  That is the whole
+	 * of the fn 111 change, asserted at the seam. */
+	bsetup();
+	chk("conout rc", bcall(2, (i16)0x4841), B_RUN);
+	chk("conout reached no BDOS of its own", slast_fn, 26);
+	chk("... and cost no gate crossing", sncall, 1);
+	chk("conout flushes as one call", i86oflush(), 1);
+	chk("... which is function 111", slast_fn, 111);
+	chk("... with no value parameter", slast_val & 0xffff, 0);
+	{
+		struct sccb *c = (struct sccb *)slast_addr;
+
+		chk("... a block of one character", c->n & 0xffff, 1);
+		chk("... which is DL, not DX", c->a[0] & 0xff, 0x41);
+	}
+	chk("an empty batch flushes nothing", i86oflush(), 0);
+
+	/* Anything else the guest asks for flushes first, so what the
+	 * console shows stays in the order the guest wrote it. */
+	bsetup();
+	bcall(2, (i16)0x42);
+	bcall(11, (i16)0);			/* console status	*/
+	chk("a pending batch went out before the next function",
+		slast_fn, 11);
+	chk("... which is two calls, 111 then 11", sncall, 3);
+
+	/* Word parameter: the whole of DX. */
+	bsetup();
+	chk("reset drive rc", bcall(37, (i16)0x0003), B_RUN);
+	chk("reset drive val", slast_val & 0xffff, 0x0003);
+
+	/* The result lands in AL, AX and BX, and the high byte of a CP/M
+	 * 3 error return survives -- CP/M-86 uses AH for the same thing. */
+	bsetup();
+	sysret = 0x09ff;
+	bcall(20, (i16)0x100);
+	chk("result ax", bm.r[R_AX] & 0xffff, 0x09ff);
+	chk("result bx", bm.r[R_BX] & 0xffff, 0x09ff);
+
+	/* An FCB goes by REFERENCE: the address handed to the native
+	 * BDOS is the guest's own bytes, not a copy of them. */
+	bsetup();
+	bseg[0x180] = 0x03;
+	chk("open rc", bcall(15, (i16)0x180), B_RUN);
+	chk("open fn", slast_fn, 15);
+	ntest++;
+	if (slast_addr != &bseg[0x180])
+		fail("open addr", 1, 0);
+	chk("open fcb not copied", slast_addr[0] & 0xff, 0x03);
+
+	/* ... and it is checked for length.  36 bytes at 0xFFDC fit;
+	 * at 0xFFDD they do not, and the call never leaves. */
+	bsetup();
+	chk("fcb at limit", bcall(15, (i16)0xffdc), B_RUN);
+	bsetup();
+	chk("fcb past limit", bcall(15, (i16)0xffdd), B_ADDR);
+	chk("fcb past limit no call", sncall, 1);	/* the init only	*/
+	chk("fcb past limit fn", i86bdosfn, 15);
+
+	/* Rename takes two FCBs in one block, and the check has to know
+	 * that: 52 bytes, not 36. */
+	bsetup();
+	chk("rename at limit", bcall(23, (i16)0xffcc), B_RUN);
+	bsetup();
+	chk("rename past limit", bcall(23, (i16)0xffcd), B_ADDR);
+
+	/* Function 9 scans for its own terminator before the native
+	 * BDOS can scan past the end of the segment looking for it. */
+	bsetup();
+	strcpy(&bseg[0x200], "hello$");
+	chk("printstr rc", bcall(9, (i16)0x200), B_RUN);
+	ntest++;
+	if (slast_addr != &bseg[0x200])
+		fail("printstr addr", 1, 0);
+	bsetup();
+	memset(&bseg[0xff00], 'x', 0x100);	/* no `$' to the end	*/
+	chk("printstr unterminated", bcall(9, (i16)0xff00), B_ADDR);
+
+	/* A console buffer is as long as its own first byte says. */
+	bsetup();
+	bseg[0xfff0] = 13;			/* 13 + 2 = 15 > 16	*/
+	chk("conbuf fits", bcall(10, (i16)0xfff0), B_RUN);
+	bsetup();
+	bseg[0xfff0] = 14;			/* 14 + 2 = 16, exactly	*/
+	chk("conbuf exact", bcall(10, (i16)0xfff0), B_RUN);
+	bsetup();
+	bseg[0xfff0] = 15;
+	chk("conbuf past limit", bcall(10, (i16)0xfff0), B_ADDR);
+
+	/* Function 12 is answered here and never reaches the native
+	 * BDOS, which reports 0x2031 -- CP/M 3, a level no 1982 .CMD has
+	 * seen.  K4, and PLAN.md D1 is the same failure from the other
+	 * side. */
+	bsetup();
+	sysret = 0x2031;
+	chk("version rc", bcall(12, (i16)0), B_RUN);
+	chk("version ax", bm.r[R_AX] & 0xffff, 0x2022);
+	chk("version bx", bm.r[R_BX] & 0xffff, 0x2022);
+	chk("version no call", sncall, 1);		/* the init only	*/
+
+	/* Function 0 is the guest terminating.  It must NOT reach our
+	 * function 0, which is warmboot() and does not return. */
+	bsetup();
+	chk("reset rc", bcall(0, (i16)0), B_EXIT);
+	chk("reset no call", sncall, 1);
+
+	/* The DMA address, in the two halves CP/M-86 splits it into.
+	 * Setting the offset keeps the base; setting the base keeps the
+	 * offset; either one re-issues ONE native call. */
+	bsetup();
+	chk("dma off rc", bcall(26, (i16)0x400), B_RUN);
+	chk("dma off fn", slast_fn, 26);
+	ntest++;
+	if (slast_addr != &bseg[0x400])
+		fail("dma off addr", 1, 0);
+	chk("dma off calls", sncall, 2);
+	chk("dma base rc", bcall(51, (i16)0x1000), B_RUN);
+	ntest++;
+	if (slast_addr != &cseg[0x400])
+		fail("dma base addr", 1, 0);
+
+	/* A DMA base we never handed out is K3's finding arriving
+	 * through the other door. */
+	bsetup();
+	chk("dma base unknown", bcall(51, (i16)0xb800), B_SEG);
+	chk("dma base reported", i86segbad & 0xffff, 0xb800);
+
+	/* A DMA buffer that would run off the end of the segment is
+	 * refused before the BDOS writes 128 bytes into the next one. */
+	bsetup();
+	chk("dma off at limit", bcall(26, (i16)0xff80), B_RUN);
+	bsetup();
+	chk("dma off past limit", bcall(26, (i16)0xff81), B_ADDR);
+
+	/* The functions stage one refuses by name, each for a reason in
+	 * the file's own comment: two return operating-system addresses
+	 * an 8086 has no way to hold, two are MP/M's, and the four above
+	 * 40 are CP/M-86's own memory and load calls. */
+	bsetup(); chk("fn 27 refused", bcall(27, (i16)0), B_FN);
+	bsetup(); chk("fn 31 refused", bcall(31, (i16)0), B_FN);
+	bsetup(); chk("fn 38 refused", bcall(38, (i16)0), B_FN);
+	bsetup(); chk("fn 50 refused", bcall(50, (i16)0), B_FN);
+	bsetup(); chk("fn 52 refused", bcall(52, (i16)0), B_FN);
+	bsetup(); chk("fn 53 refused", bcall(53, (i16)0), B_FN);
+	bsetup(); chk("fn 59 refused", bcall(59, (i16)0), B_FN);
+	chk("refused fn recorded", i86bdosfn, 59);
+
+	/* Any other interrupt is a refusal that says which, and vector 0
+	 * -- the divide error i86exec.c raises -- is distinguished from
+	 * a vector the guest asked for. */
+	bsetup();
+	i86intno = 0x21;
+	chk("foreign vector", i86bdos(&bm), B_VEC);
+	i86intno = 0;
+	chk("divide error", i86bdos(&bm), B_TRAP);
+	i86intno = 0xe0;
+
+	/* The whole thing driven by a real INT instruction rather than
+	 * by setting i86intno: MOV CL,2 / MOV DL,'Z' / INT 0E0h. */
+	bsetup();
+	cseg[0] = (char)0xb1; cseg[1] = 0x02;		/* mov cl,2	*/
+	cseg[2] = (char)0xb2; cseg[3] = 'Z';		/* mov dl,'Z'	*/
+	cseg[4] = (char)0xcd; cseg[5] = (char)0xe0;	/* int 0e0h	*/
+	{
+		struct i86in in;
+		chk("int step 1", i86step(&bm, &in), X_OK);
+		chk("int step 2", i86step(&bm, &in), X_OK);
+		rc = i86step(&bm, &in);
+		chk("int step 3", rc, X_INT);
+		chk("int vector", i86intno, 0xe0);
+		chk("int ip past", bm.ip & 0xffff, 6);
+		chk("int serviced", i86bdos(&bm), B_RUN);
+		chk("int flushes as one call", i86oflush(), 1);
+		chk("int fn", slast_fn, 111);
+		chk("int val", ((struct sccb *)slast_addr)->a[0] & 0xff,
+			'Z');
+	}
+}
+
+/* ---- 8b: a stub CP/M, and DRI's PIP running on it ---- */
+
+/*
+ * Eight files, each a name and a byte count, all in memory.  This is
+ * not a filesystem: it is the smallest thing that answers the calls a
+ * copy makes, so that the ANSWER can be checked.  Everything it does
+ * not implement returns 0xFF and is counted, and the counts are
+ * printed -- an unimplemented call that PIP relies on shows up as a
+ * failed copy plus a number saying which function it was.
+ */
+#define SF_MAX	8
+#define SF_CAP	16384
+
+struct sfile {
+	char	name[11];	/* 8 + 3, blank padded, upper case	*/
+	int	used;
+	long	len;		/* bytes; CP/M rounds to 128		*/
+	char	d[SF_CAP];
+};
+
+static struct sfile sdisk[SF_MAX];
+static char *sdma;		/* the native "DMA address"		*/
+static long sfncount[113];	/* every function the seam reached	*/
+static char scon[8192];		/* the guest's console output		*/
+static int sconn;
+static int ssearch;		/* search-next cursor			*/
+static char ssname[11];
+
+static void sputc(int c)
+{
+	if (sconn < (int)sizeof scon - 1)
+		scon[sconn++] = (char)c;
+}
+
+/* An FCB name is 11 bytes with the high bits used as attributes; a
+ * comparison has to mask them, and a search has to honour `?'. */
+static int smatch(const char *a, const char *b, int wild)
+{
+	int i;
+
+	for (i = 0; i < 11; i++) {
+		if (wild && b[i] == '?')
+			continue;
+		if ((a[i] & 0x7f) != (b[i] & 0x7f))
+			return (0);
+	}
+	return (1);
+}
+
+static struct sfile *sfind(const char *nm)
+{
+	int i;
+
+	for (i = 0; i < SF_MAX; i++)
+		if (sdisk[i].used && smatch(sdisk[i].name, nm, 0))
+			return (&sdisk[i]);
+	return (0);
+}
+
+static struct sfile *smake(const char *nm)
+{
+	int i;
+
+	for (i = 0; i < SF_MAX; i++)
+		if (!sdisk[i].used) {
+			memcpy(sdisk[i].name, nm, 11);
+			sdisk[i].used = 1;
+			sdisk[i].len = 0;
+			return (&sdisk[i]);
+		}
+	return (0);
+}
+
+/* The record a sequential call is at: extent * 128 + current record. */
+/*
+ * Write an FCB's random record field the way OUR BDOS writes it, which
+ * is not the way an 8086's does: r0 at offset 33 is the HIGH byte
+ * (src/bdos/fileio.c setran/fsize, "the same big-endian bytes").  This
+ * stub had it little-endian -- the GUEST's order -- so it cancelled
+ * against the seam's missing translation and the two ends agreed here
+ * while they would have disagreed on the machine.  The Z80 lane's gate
+ * caught exactly that, on the emulator, after months of the same host
+ * run passing (src/cmd/i86bdos.c ranswap).
+ */
+static void sranset(char *f, long r)
+{
+	f[33] = (char)((r >> 16) & 1);
+	f[34] = (char)((r >> 8) & 0xff);
+	f[35] = (char)(r & 0xff);
+}
+
+static long srec(const char *f)
+{
+	return ((long)(f[12] & 0x1f) * 128L + (long)(f[32] & 0x7f));
+}
+
+static void sbump(char *f)
+{
+	int cr;
+
+	cr = (f[32] & 0x7f) + 1;
+	if (cr > 127) {
+		cr = 0;
+		f[12] = (char)((f[12] & 0xff) + 1);
+	}
+	f[32] = (char)cr;
+}
+
+/*
+ * One record, sequential: src/bdos/bdosrw.c bdosrw()'s sequential arm
+ * flattened onto this stub's flat files, lifted out of the switch below
+ * so that multio() has something to loop on.
+ */
+static int srw1(int fn, char *addr)
+{
+	struct sfile *f;
+	long r, n;
+
+	f = sfind(addr + 1);
+	if (!f)
+		return (9);
+	r = srec(addr);
+	if (fn == 20) {
+		if (r * 128L >= f->len)
+			return (1);		/* end of file		*/
+		n = f->len - r * 128L;
+		if (n > 128)
+			n = 128;
+		memset(sdma, 0x1a, 128);
+		memcpy(sdma, f->d + r * 128L, (size_t)n);
+	} else {
+		if ((r + 1) * 128L > (long)SF_CAP)
+			return (2);		/* disk full		*/
+		memcpy(f->d + r * 128L, sdma, 128);
+		if ((r + 1) * 128L > f->len)
+			f->len = (r + 1) * 128L;
+	}
+	sbump(addr);
+	return (0);
+}
+
+/*
+ * MULTI-SECTOR I/O, src/bdos/bdosrw.c multio() to the letter -- the DMA
+ * address advances by one record between transfers and is restored on
+ * exit, and the high byte of a non-physical failure is the number of
+ * records that got through.
+ *
+ * It is here because BDOS FUNCTION 44 USED TO FALL THROUGH TO THIS
+ * STUB'S `default: return 0xff'.  A stub that REFUSES a call the real
+ * BDOS accepts hides whatever the accepted call would have done -- here,
+ * that our BDOS writes count * 128 bytes from the DMA address, which is
+ * the whole of what the seam's DMA check has to cover.  tests/verify.mk
+ * verify-z80pip records the same lesson from the other direction: the
+ * Z80 stub ACCEPTED function 44 and ignored it, and the two machines
+ * then disagreed about a program behaving correctly on both.
+ */
+static int smultcnt = 1;		/* BDOS function 44's count	*/
+
+static int smultio(int fn, char *addr)
+{
+	char *sav_dma;
+	int done, rtn;
+
+	if (smultcnt <= 1)
+		return (srw1(fn, addr));
+
+	sav_dma = sdma;
+	done = 0;
+	rtn = 0;
+	while (done < smultcnt) {
+		rtn = srw1(fn, addr);
+		if (rtn != 0)
+			break;
+		done++;
+		sdma += 128;
+	}
+	sdma = sav_dma;
+	if (rtn == 0)
+		return (0);
+	if ((rtn & 0xff) == 0xff)
+		return (rtn);
+	return ((done << 8) | (rtn & 0xff));
+}
+
+static int stub(int fn, i16 val, char *addr)
+{
+	struct sfile *f;
+	long r, n;
+	int i;
+
+	if (fn >= 0 && fn < (int)(sizeof sfncount / sizeof sfncount[0]))
+		sfncount[fn]++;
+	switch (fn) {
+	case 2:					/* console output	*/
+		sputc(val & 0x7f);
+		return (0);
+	case 9:					/* print string		*/
+		for (i = 0; addr[i] != '$' && i < 4096; i++)
+			sputc(addr[i] & 0x7f);
+		return (0);
+	case 111: {				/* print block to console */
+		/* The native character control block the seam builds
+		 * for a batch of function 2s: {address, count}, with
+		 * the address a host pointer because that is what an
+		 * XADDR is on the target (src/cmd/cpm.h:1-9).  Our
+		 * function 111 is prt_blk() -> cookdrun(), which is
+		 * cookdout(ch, FALSE) per character -- the same thing
+		 * function 2 above does -- so the record it leaves in
+		 * scon[] has to be the same bytes in the same order. */
+		struct sccb *c;
+
+		c = (struct sccb *)addr;
+		for (i = 0; i < (int)c->n; i++)
+			sputc(c->a[i] & 0x7f);
+		return (0);
+	}
+	case 11:				/* console status	*/
+		return (0);
+	case 12:
+		return (0x2031);
+	case 13: case 14: case 28: case 37:
+		return (0);
+	case 25:				/* current disk = A:	*/
+		return (0);
+	case 24:				/* login vector		*/
+		return (1);
+	case 29:				/* read-only vector	*/
+		return (0);
+	case 32:				/* get/set user code	*/
+		return (val == 0xff ? 0 : 0);
+	case 26:				/* set DMA address	*/
+		sdma = addr;
+		return (0);
+	case 15:				/* open			*/
+		f = sfind(addr + 1);
+		if (!f)
+			return (0xff);
+		n = (f->len + 127) / 128 - (long)(addr[12] & 0x1f) * 128L;
+		if (n < 0)
+			n = 0;
+		if (n > 128)
+			n = 128;
+		addr[15] = (char)n;		/* record count		*/
+		return (0);
+	case 22:				/* make			*/
+		f = sfind(addr + 1);
+		if (f)
+			f->used = 0;
+		f = smake(addr + 1);
+		if (!f)
+			return (0xff);
+		addr[12] = 0;
+		addr[15] = 0;
+		return (0);
+	case 16:				/* close			*/
+		return (0);
+	case 30:				/* set file attributes		*/
+		return (0);
+	case 23:				/* rename: old at 1, new at 17	*/
+		f = sfind(addr + 1);
+		if (!f)
+			return (0xff);
+		memcpy(f->name, addr + 17, 11);
+		return (0);
+	case 35:				/* compute file size		*/
+		f = sfind(addr + 1);
+		if (!f)
+			return (0xff);
+		r = (f->len + 127) / 128;
+		sranset(addr, r);
+		return (0);
+	case 36:				/* set random record		*/
+		r = srec(addr);
+		sranset(addr, r);
+		return (0);
+	case 19:				/* delete		*/
+		for (i = 0, n = 0; i < SF_MAX; i++)
+			if (sdisk[i].used && smatch(sdisk[i].name, addr + 1, 1)) {
+				sdisk[i].used = 0;
+				n++;
+			}
+		return (n ? 0 : 0xff);
+	case 17:				/* search first		*/
+		memcpy(ssname, addr + 1, 11);
+		ssearch = 0;
+		/* fall through */
+	case 18:				/* search next		*/
+		for (i = ssearch; i < SF_MAX; i++)
+			if (sdisk[i].used && smatch(sdisk[i].name, ssname, 1)) {
+				ssearch = i + 1;
+				if (sdma) {
+					memset(sdma, 0, 32);
+					memcpy(sdma + 1, sdisk[i].name, 11);
+				}
+				return (0);
+			}
+		ssearch = SF_MAX;
+		return (0xff);
+	case 20:				/* read sequential	*/
+	case 21:				/* write sequential	*/
+		return (smultio(fn, addr));
+	case 44:				/* set multi-sector count */
+		/* src/bdos/bdosmain.c:602-606 exactly: 0 and >128 are
+		 * refused and the count is left alone. */
+		i = val & 0xff;
+		if (i == 0 || i > 128)
+			return (0xff);
+		smultcnt = i;
+		return (0);
+	default:
+		return (0xff);
+	}
+}
+
+/* Turn "VERIFY  IN " out of "VERIFY.IN". */
+static void smkname(char *out, const char *s)
+{
+	int i;
+
+	memset(out, ' ', 11);
+	for (i = 0; i < 8 && *s && *s != '.'; i++)
+		out[i] = *s++;
+	while (*s && *s != '.')
+		s++;
+	if (*s == '.')
+		s++;
+	for (i = 0; i < 3 && *s; i++)
+		out[8 + i] = *s++;
+}
+
+/*
+ * The gate's own command, on the host: copy a file with PIP, then
+ * compare.  The input is 1,024 bytes -- a whole number of CP/M records,
+ * so a correct copy is byte-identical with no ^Z padding to argue
+ * about -- and holds no 0x1A, which PIP would read as end of file.
+ */
+static void t_pip(const char *dir)
+{
+	struct ld L;
+	struct i86in in;
+	char path[512];
+	struct sfile *fi, *fo;
+	long k, nstep;
+	int rc, brc, i, done, bad;
+
+	sprintf(path, "%s/PIP.CMD", dir);
+	rc = ldread(path, &L);
+	if (rc != CE_OK) {
+		printf("i86test: %s: %s -- section 8b skipped\n",
+			path, rc < 0 ? "unreadable" : i86cerr(rc));
+		ldfree(&L);
+		return;
+	}
+	chk("pip place", ldplace(&L, " VERIFY.OUT=VERIFY.IN"), CE_OK);
+
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	fi = &sdisk[0];
+	smkname(fi->name, "VERIFY.IN");
+	fi->used = 1;
+	fi->len = 1024;
+	for (k = 0; k < fi->len; k++)
+		fi->d[k] = (char)(0x20 + ((k * 7 + (k >> 5)) % 0x5e));
+
+	sysmode = SYS_CPM;
+	i86ninsn = i86nflag = 0;
+	i86nsegslow = i86nsegbad = 0;
+	i86bdosinit(&L.m);
+	sysmode = SYS_CPM;
+
+	done = 0;
+	brc = B_RUN;
+	rc = X_OK;
+	for (nstep = 0; nstep < 20000000L; nstep++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_INT)
+			break;
+		brc = i86bdos(&L.m);
+		if (brc == B_RUN)
+			continue;
+		done = 1;
+		break;
+	}
+	/* The same call i86.c makes when its loop ends: a run that
+	 * stopped anywhere but the seam still owes the console whatever
+	 * function 2 had collected. */
+	i86oflush();
+
+	/*
+	 * K2's number, measured rather than assumed
+	 * (CPM86-STAGE-ONE.md §6): "measure the flag-read rate during
+	 * step 1, on the host, for free".  This is that measurement.  A
+	 * rate near 100 % would mean the lazy scheme has degraded to an
+	 * eager one and costs a record keep for nothing.
+	 */
+	printf("i86test: PIP ran %ld instructions, %lu BDOS calls, "
+		"%lu flag materialisations (%ld %% of instructions)\n",
+		nstep, (unsigned long)i86nbdos, (unsigned long)i86nflag,
+		nstep ? (long)((i86nflag * 100L) / (i32)nstep) : 0L);
+	printf("i86test: PIP console: \"");
+	for (i = 0; i < sconn; i++) {
+		if (scon[i] == '\r')
+			continue;
+		if (scon[i] == '\n')
+			printf("\\n");
+		else
+			putchar(scon[i]);
+	}
+	printf("\"\n");
+	printf("i86test: PIP BDOS functions used:");
+	for (i = 0; i < (int)(sizeof sfncount / sizeof sfncount[0]); i++)
+		if (sfncount[i])
+			printf(" %d(%ld)", i, sfncount[i]);
+	printf("\n");
+	if (!done || brc != B_EXIT)
+		printf("i86test: PIP stopped: step %s, seam %s (fn %d)\n",
+			rc == X_OK ? "ok" :
+			rc == X_UNIMP ? "X_UNIMP" :
+			rc == X_BAD ? "X_BAD" :
+			rc == X_HALT ? "X_HALT" :
+			rc == X_SEGESC ? "X_SEGESC" :
+			rc == X_WINDOW ? "X_WINDOW" : "X_INT",
+			i86berr(), i86bdosfn);
+
+	chk("pip exited cleanly", brc, B_EXIT);
+	/* K3, measured on a real program rather than on a disassembly:
+	 * PIP writes segment registers and every value it writes is one
+	 * we handed it, so the slow path never fires and nothing had to
+	 * be refused.  The static census predicted this
+	 * (CPM86-SHIM-FEASIBILITY.md §1.3); this is it happening. */
+	chk("pip no slow segments", (long)i86nsegslow, 0);
+	chk("pip no refused segments", (long)i86nsegbad, 0);
+	smkname(path, "VERIFY.OUT");
+	fo = sfind(path);
+	ntest++;
+	if (fo == 0) {
+		fail("pip made VERIFY.OUT", 0, 1);
+	} else {
+		chk("pip copy length", fo->len, fi->len);
+		bad = 0;
+		for (k = 0; k < fi->len && k < fo->len; k++)
+			if (fo->d[k] != fi->d[k])
+				bad++;
+		chk("pip copy identical", bad, 0);
+	}
+	ldfree(&L);
+}
+
+
+/* ---- 8c: DRI's SUBMIT.CMD, the second real program ---- */
+
+static void t_submit(const char *dir)
+{
+	struct ld L;
+	struct i86in in;
+	char path[512];
+	struct sfile *fi, *fo;
+	FILE *fp;
+	long k, nstep;
+	int rc, brc, i, done, bad;
+	static const char lines[] = "DIR\r\nSTAT\r\n";
+
+	sprintf(path, "%s/SUBMIT.CMD", dir);
+	rc = ldread(path, &L);
+	if (rc != CE_OK) {
+		printf("i86test: %s: %s -- section 8c skipped\n",
+			path, rc < 0 ? "unreadable" : i86cerr(rc));
+		ldfree(&L);
+		return;
+	}
+	chk("submit place", ldplace(&L, " I86SUB"), CE_OK);
+
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	/* One record, ^Z padded, the way a CP/M file with 11 bytes in it
+	 * really sits on a disk. */
+	fi = &sdisk[0];
+	smkname(fi->name, "I86SUB.SUB");
+	fi->used = 1;
+	fi->len = 128;
+	for (k = 0; k < fi->len; k++)
+		fi->d[k] = k < (long)(sizeof lines - 1) ? lines[k] : 0x1a;
+
+	sysmode = SYS_CPM;
+	i86ninsn = i86nflag = 0;
+	i86nsegslow = i86nsegbad = 0;
+	i86bdosinit(&L.m);
+	sysmode = SYS_CPM;
+
+	done = 0;
+	brc = B_RUN;
+	rc = X_OK;
+	for (nstep = 0; nstep < 20000000L; nstep++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_INT)
+			break;
+		brc = i86bdos(&L.m);
+		if (brc == B_RUN)
+			continue;
+		done = 1;
+		break;
+	}
+	/* The same call i86.c makes when its loop ends: a run that
+	 * stopped anywhere but the seam still owes the console whatever
+	 * function 2 had collected. */
+	i86oflush();
+
+	printf("i86test: SUBMIT ran %ld instructions, %lu BDOS calls, "
+		"%lu flag materialisations (%ld %% of instructions)\n",
+		nstep, (unsigned long)i86nbdos, (unsigned long)i86nflag,
+		nstep ? (long)((i86nflag * 100L) / (i32)nstep) : 0L);
+	printf("i86test: SUBMIT console: \"");
+	for (i = 0; i < sconn; i++) {
+		if (scon[i] == '\r')
+			continue;
+		if (scon[i] == '\n')
+			printf("\\n");
+		else
+			putchar(scon[i]);
+	}
+	printf("\"\n");
+	printf("i86test: SUBMIT BDOS functions used:");
+	for (i = 0; i < (int)(sizeof sfncount / sizeof sfncount[0]); i++)
+		if (sfncount[i])
+			printf(" %d(%ld)", i, sfncount[i]);
+	printf("\n");
+		(unsigned)L.m.sr[S_CS], (unsigned)L.m.ip,
+
+	/* The console must be SILENT: every message SUBMIT can print is
+	 * an error, and the one the missing FCB produced was
+	 * "Error On Line 001 No 'SUB' File Present". */
+	chk("submit said nothing", (long)sconn, 0);
+	chk("submit no slow segments", (long)i86nsegslow, 0);
+	chk("submit no refused segments", (long)i86nsegbad, 0);
+
+	/* It read the file the DEFAULT FCB named, which is the whole
+	 * point of picking this binary. */
+	chk("submit opened the .SUB", sfncount[15], 1);
+	chk("submit asked the current disk", sfncount[25], 1);
+	chk("submit asked the user code", sfncount[32], 1);
+	chk("submit closed its output", sfncount[16], 1);
+
+	smkname(path, "$$$.SUB");
+	fo = sfind(path);
+	ntest++;
+	if (fo == 0) {
+		fail("submit made $$$.SUB", 0, 1);
+	} else {
+		/* Two command lines, two records, REVERSED: record 0 is
+		 * the last line of the file.  Byte 0 of each record is
+		 * the length; the text follows. */
+		chk("submit $$$.SUB length", fo->len, 256L);
+		chk("submit record 0 count", (long)(fo->d[0] & 0xff), 4);
+		bad = memcmp(fo->d + 1, "STAT", 4) != 0;
+		chk("submit record 0 text", (long)bad, 0);
+		chk("submit record 1 count", (long)(fo->d[128] & 0xff), 3);
+		bad = memcmp(fo->d + 129, "DIR", 3) != 0;
+		chk("submit record 1 text", (long)bad, 0);
+		/* The bytes themselves, for tests/verify.mk to compare the
+		 * target's copy against.  The tail of each record is
+		 * whatever was in SUBMIT's own buffer, so a byte-for-byte
+		 * match between the two runs says the guest's data group
+		 * was zeroed the same way in both -- which is more than a
+		 * transcribed fixture could ever say.  A failure to write
+		 * it is not a test failure: the host run stands on its own
+		 * and this is a by-product for another target. */
+		fp = fopen("build/i86sub-host.bin", "wb");
+		if (fp) {
+			fwrite(fo->d, 1, (size_t)fo->len, fp);
+			fclose(fp);
+		}
+	}
+	ldfree(&L);
+}
+
+/* ---- 8d: DRI's GENCMD.CMD, and the round trip through our own format ---- */
+
+/*
+ * WHY GENCMD, GIVEN THAT SECTION 8c JUST SAID IT GRADES ITSELF.
+ *
+ * It does, and that is why it is here LAST and why nothing above it
+ * depends on it.  What it buys is the one thing PIP and SUBMIT cannot
+ * say: those two are handed a command line and answer with a file whose
+ * format is somebody else's.  GENCMD is handed a FILE -- Intel hex, in
+ * DRI's dialect -- and answers with a .CMD, which means:
+ *
+ *   - it is the only corpus binary that exercises the loader's input
+ *     format from the far end.  A header this shim wrote for itself
+ *     would prove nothing; a header DRI's own GENCMD wrote, out of hex
+ *     WE supplied, and that our loader then reads and RUNS, closes the
+ *     loop through code neither end wrote.
+ *   - it is the binary that reads the base page's paragraph count and
+ *     ACTS on it.  PIP and SUBMIT read the count and buffer against it;
+ *     GENCMD reads it, decides it is too small, prints "INSUFFICIENT
+ *     MEMORY TO CREATE CMD FILE" and quits after 790 instructions.  It
+ *     is the reason galloc() had to grow a group toward G-Max, and it is
+ *     the only witness in the tree that the growth is not cosmetic.
+ *
+ * Its input is build/cmdfix/I86HEX.H86, built by tools/mkcmdfix.py
+ * p_hex(): a real hex file with real checksums around eleven bytes of
+ * hand-assembled 8086 that prints "I86HEX OK" through INT 0E0h and
+ * exits.  The grading is NOT "the header we read back matches the header
+ * we expected" -- that is the self-grading trap section 8c names.  It
+ * is: load the .CMD GENCMD wrote, run it, and see the string come out of
+ * the console.  A wrong group descriptor, a wrong image offset or a
+ * wrong entry point all fail that, and none of them can be papered over
+ * by our own reader agreeing with our own writer.
+ */
+static void t_gencmd(const char *dir, const char *fixdir)
+{
+	struct ld L;
+	struct i86in in;
+	char path[512];
+	struct sfile *fi, *fo;
+	FILE *fp;
+	long nstep, hlen, clen;
+	int rc, brc, i, done;
+	static char hex[SF_CAP];
+	static char cmd[SF_CAP];
+
+	sprintf(path, "%s/I86HEX.H86", fixdir);
+	fp = fopen(path, "rb");
+	if (fp == 0) {
+		printf("i86test: %s: unreadable -- section 8d skipped\n", path);
+		return;
+	}
+	hlen = (long)fread(hex, 1, sizeof hex, fp);
+	fclose(fp);
+
+	sprintf(path, "%s/GENCMD.CMD", dir);
+	rc = ldread(path, &L);
+	if (rc != CE_OK) {
+		printf("i86test: %s: %s -- section 8d skipped\n",
+			path, rc < 0 ? "unreadable" : i86cerr(rc));
+		ldfree(&L);
+		return;
+	}
+	chk("gencmd place", ldplace(&L, " I86HEX"), CE_OK);
+
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	fi = &sdisk[0];
+	smkname(fi->name, "I86HEX.H86");
+	fi->used = 1;
+	fi->len = hlen;
+	memcpy(fi->d, hex, (size_t)hlen);
+
+	sysmode = SYS_CPM;
+	i86ninsn = i86nflag = 0;
+	i86nsegslow = i86nsegbad = 0;
+	i86bdosinit(&L.m);
+	sysmode = SYS_CPM;
+
+	done = 0;
+	brc = B_RUN;
+	rc = X_OK;
+	for (nstep = 0; nstep < 20000000L; nstep++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_INT)
+			break;
+		brc = i86bdos(&L.m);
+		if (brc == B_RUN)
+			continue;
+		done = 1;
+		break;
+	}
+	/* The same call i86.c makes when its loop ends: a run that
+	 * stopped anywhere but the seam still owes the console whatever
+	 * function 2 had collected. */
+	i86oflush();
+	printf("i86test: GENCMD ran %ld instructions, %lu BDOS calls, "
+		"%lu flag materialisations (%ld %% of instructions)\n",
+		nstep, (unsigned long)i86nbdos, (unsigned long)i86nflag,
+		nstep ? (long)((i86nflag * 100L) / (i32)nstep) : 0L);
+	printf("i86test: GENCMD console: \"");
+	for (i = 0; i < sconn; i++) {
+		if (scon[i] == '\r')
+			continue;
+		if (scon[i] == '\n')
+			printf("\\n");
+		else
+			putchar(scon[i]);
+	}
+	printf("\"\n");
+	printf("i86test: GENCMD BDOS functions used:");
+	for (i = 0; i < (int)(sizeof sfncount / sizeof sfncount[0]); i++)
+		if (sfncount[i])
+			printf(" %d(%ld)", i, sfncount[i]);
+	printf("\n");
+	printf("i86test: GENCMD stopped at cs:ip %04x:%04x, done %d, "
+		"step rc %d, seam %s\n",
+		(unsigned)L.m.sr[S_CS], (unsigned)L.m.ip, done, rc, i86berr());
+
+	/* It exited through BDOS function 0 rather than stopping on
+	 * something we do not implement -- GENCMD is the only one of the
+	 * four corpus binaries that runs to completion. */
+	chk("gencmd exited cleanly", brc, B_EXIT);
+	chk("gencmd instructions", nstep, 75554L);
+	chk("gencmd BDOS calls", (long)i86nbdos, 38L);
+	chk("gencmd no slow segments", (long)i86nsegslow, 0);
+	chk("gencmd no refused segments", (long)i86nsegbad, 0);
+	/* Its own report of what it did, which is also the check that no
+	 * error message got in: every other thing GENCMD prints is one.
+	 * 001B bytes is the 27 the three hex records carry, and four
+	 * 128-byte records is the 512-byte .CMD below. */
+	scon[sconn < (int)sizeof scon ? sconn : (int)sizeof scon - 1] = 0;
+	ntest++;
+	if (strstr(scon, "BYTES READ    001B") == 0
+	    || strstr(scon, "RECORDS WRITTEN 04") == 0)
+		fail("gencmd reported the conversion", 1, 0);
+	/* It read the .H86 the DEFAULT FCB named, without being told the
+	 * extension: GENCMD appends "H86" itself. */
+	chk("gencmd opened the .H86", sfncount[15], 4);
+
+	smkname(path, "I86HEX.CMD");
+	fo = sfind(path);
+	ntest++;
+	if (fo == 0) {
+		fail("gencmd made I86HEX.CMD", 0, 1);
+		ldfree(&L);
+		return;
+	}
+	chk("gencmd .CMD length", fo->len, 512L);
+	clen = fo->len;
+	memcpy(cmd, fo->d, (size_t)clen);
+	printf("i86test: GENCMD wrote %ld bytes of .CMD\n", clen);
+	/* For tests/verify.mk to `cmp' the target's copy against, the way
+	 * build/i86sub-host.bin serves section 8c.  Not a test failure if
+	 * it cannot be written: the host run stands on its own. */
+	fp = fopen("build/i86hex-host.cmd", "wb");
+	if (fp) {
+		fwrite(cmd, 1, (size_t)clen, fp);
+		fclose(fp);
+	}
+	ldfree(&L);
+
+	/*
+	 * THE ROUND TRIP.  Everything above could be true of a GENCMD that
+	 * wrote a plausible header full of wrong numbers; the only reader
+	 * that would catch it is one that does not share our assumptions,
+	 * and there is no such reader here.  So do not read the header --
+	 * RUN it.  The program was written in tools/mkcmdfix.py p_hex() to
+	 * print one string and exit, and the string coming out of the
+	 * console is the statement that GENCMD's group descriptors, image
+	 * offsets and entry point and our loader's reading of them agree.
+	 */
+	fp = fopen("build/i86hex-host.cmd", "rb");
+	if (fp == 0) {
+		printf("i86test: build/i86hex-host.cmd: unwritable -- "
+			"round trip skipped\n");
+		return;
+	}
+	fclose(fp);
+	rc = ldread("build/i86hex-host.cmd", &L);
+	chk("gencmd output loads", rc, CE_OK);
+	if (rc != CE_OK) {
+		ldfree(&L);
+		return;
+	}
+	/* Small model, because the hex named a data segment as well as a
+	 * code one -- read back off GENCMD's header, not asserted from
+	 * our own writer's intent. */
+	chk("gencmd output model", L.c.model, M_SMALL);
+	chk("gencmd output ng", L.c.ng, 2);
+	chk("gencmd output entry", L.c.entry, 0);
+	chk("gencmd output code G-Length", L.c.g[0].len, 1);
+	chk("gencmd output data G-Length", L.c.g[1].len, 17);
+	chk("gencmd output place", ldplace(&L, ""), CE_OK);
+
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	sysmode = SYS_CPM;
+	i86bdosinit(&L.m);
+	sysmode = SYS_CPM;
+	done = 0;
+	brc = B_RUN;
+	rc = X_OK;
+	for (nstep = 0; nstep < 1000L; nstep++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_INT)
+			break;
+		brc = i86bdos(&L.m);
+		if (brc == B_RUN)
+			continue;
+		done = 1;
+		break;
+	}
+	/* The same call i86.c makes when its loop ends: a run that
+	 * stopped anywhere but the seam still owes the console whatever
+	 * function 2 had collected. */
+	i86oflush();
+	scon[sconn < (int)sizeof scon ? sconn : (int)sizeof scon - 1] = 0;
+	printf("i86test: round trip ran %ld instructions, console \"%s\"\n",
+		nstep, scon);
+	chk("round trip exited", brc, B_EXIT);
+	chk("round trip steps", nstep, 4L);
+	ntest++;
+	if (strcmp(scon, "I86HEX OK\r\n") != 0)
+		fail("round trip printed I86HEX OK", 1, 0);
+	ldfree(&L);
+}
+
+/* ==================================================================
+ * THE DMA WINDOW A MULTI-SECTOR TRANSFER ACTUALLY USES.
+ *
+ * i86bdos.c's setdma() validated I86DMA -- 128 bytes, ONE record --
+ * while BDOS function 44 was an ordinary P_BYTE that handed the guest's
+ * record count straight to the native BDOS, whose multio()
+ * (src/bdos/bdosrw.c:327) loops that many times adding SECLEN to the DMA
+ * address between records.  So a guest that said "two records" and put
+ * its DMA offset at 0xff80 -- accepted, because one record ends exactly
+ * at the top of the 64 KB segment -- had 256 bytes written from 0xff80
+ * and the second record landed outside the segment.
+ *
+ * THE RETURN CODE IS NOT THE OBJECT: what matters is whether anything
+ * above the segment was written.  So the guest's data segment here is
+ * the front of a larger array whose tail holds a canary, and the check
+ * is on the canary.  Under -fsanitize=address the same write against
+ * bseg[] aborts the run too (tests/verify.mk verify-shim); this check
+ * does not need that build to see it.
+ */
+
+#define CAN	0x5a			/* the canary byte		*/
+#define CANN	128			/* how much of it there is	*/
+
+static char dseg2[65536 + CANN];	/* the guest's DS, plus a canary */
+
+static int canary(void)			/* first byte written past 64 KB */
+{
+	int i;
+
+	for (i = 0; i < CANN; i++)
+		if ((dseg2[65536 + i] & 0xff) != CAN)
+			return (dseg2[65536 + i] & 0xff);
+	return (-1);
+}
+
+/* bsetup(), with a data segment that has a canary behind it. */
+static void bsetup2(void)
+{
+	memset(dseg2, 0, 65536);
+	memset(dseg2 + 65536, CAN, CANN);
+	memset(cseg, 0, sizeof cseg);
+	memset(&bm, 0, sizeof bm);
+	bm.sb[S_CS] = cseg;
+	bm.sr[S_CS] = 0x1000;
+	bm.sb[S_DS] = bm.sb[S_SS] = bm.sb[S_ES] = dseg2;
+	bm.sr[S_DS] = bm.sr[S_SS] = bm.sr[S_ES] = 0x2000;
+	bm.lz = LZ_NONE;
+	bm.fl = F_ONES;
+	bm.ip = 0;
+	bm.r[R_SP] = 0xff00;
+	i86nseg = 2;
+	i86spar[0] = 0x1000; i86sbase[0] = cseg;
+	i86spar[1] = 0x2000; i86sbase[1] = dseg2;
+	sysmode = SYS_CPM;
+	sncall = 0;
+	slast_fn = -1;
+	smultcnt = 1;
+	sdma = 0;
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	ssearch = 0;
+	i86bdosinit(&bm);
+}
+
+static void t_dmabound(void)
+{
+	struct sfile	*f;
+	long		k;
+	int		rc;
+
+	bsetup2();
+
+	f = &sdisk[0];
+	smkname(f->name, "MULTI.DAT");
+	f->used = 1;
+	f->len = 8L * 128L;
+	for (k = 0; k < f->len; k++)
+		f->d[k] = (char)(0x40 + (int)(k / 128));  /* record N = '@'+N */
+
+	memset(dseg2 + 0x0100, 0, 36);
+	smkname(dseg2 + 0x0100 + 1, "MULTI.DAT");
+	chk("fn 15 opens the multi-sector file", bcall(15, 0x0100), B_RUN);
+
+	/* ---- ONE record ending exactly at the top of the segment is
+	   legal, and the bound must leave it legal. */
+
+	chk("fn 26 accepts a DMA whose one record ends at 0x10000",
+		bcall(26, (i16)0xff80), B_RUN);
+	chk("fn 20 reads one record into the top of the segment",
+		bcall(20, 0x0100), B_RUN);
+	chk("... record 0 is there", (long)(dseg2[0xff80] & 0xff), 0x40L);
+	chk("... its last byte is the segment's last byte",
+		(long)(dseg2[0xffff] & 0xff), 0x40L);
+	chk("... with nothing written above it", (long)canary(), -1L);
+
+	/* ---- TWO records from that same DMA.  THE OBJECT: the second
+	   record must not appear above the segment. */
+
+	chk("fn 44 accepts a count of two", bcall(44, 2), B_RUN);
+	rc = bcall(20, 0x0100);
+	chk("a 2-record fn 20 from 0xff80 writes NOTHING above the guest "
+	    "segment", (long)canary(), -1L);
+	chk("... and is refused as an address error", rc, B_ADDR);
+	chk("... without reaching the native BDOS a second time",
+		sfncount[20], 1L);
+	chk("a 2-record fn 21 from 0xff80 is refused",
+		bcall(21, 0x0100), B_ADDR);
+	chk("... and wrote nothing above the segment", (long)canary(), -1L);
+
+	/* ---- a count of two with room for two still works, which is
+	   the half of this that a blunter fix would have broken. */
+
+	chk("fn 26 moves the DMA down", bcall(26, 0x2000), B_RUN);
+	chk("a 2-record fn 20 with room runs", bcall(20, 0x0100), B_RUN);
+	chk("... record 1 first", (long)(dseg2[0x2000] & 0xff), 0x41L);
+	chk("... record 2 next", (long)(dseg2[0x2000 + 128] & 0xff), 0x42L);
+	chk("... in one guest-visible BDOS call", sfncount[20], 2L);
+
+	/* ---- eight records ending exactly at the top: still legal. */
+
+	chk("fn 44 accepts a count of eight", bcall(44, 8), B_RUN);
+	chk("fn 26 accepts the DMA eight records fit in",
+		bcall(26, (i16)(0x10000L - 8 * 128)), B_RUN);
+	memset(dseg2 + 0x0100, 0, 36);		/* a fresh FCB, record 0 */
+	smkname(dseg2 + 0x0100 + 1, "MULTI.DAT");
+	chk("fn 15 reopens it", bcall(15, 0x0100), B_RUN);
+	chk("an 8-record fn 20 ending at 0x10000 runs",
+		bcall(20, 0x0100), B_RUN);
+	chk("... record 0 at the bottom of the window",
+		(long)(dseg2[0x10000L - 8 * 128] & 0xff), 0x40L);
+	chk("... record 7 at the top", (long)(dseg2[0xff80] & 0xff), 0x47L);
+	chk("... and nothing above it", (long)canary(), -1L);
+
+	/* ---- one more record than fits, by one record. */
+
+	memset(dseg2 + 0x0100, 0, 36);
+	smkname(dseg2 + 0x0100 + 1, "MULTI.DAT");
+	bcall(15, 0x0100);
+	chk("fn 44 accepts a count of nine", bcall(44, 9), B_RUN);
+	chk("a 9-record transfer into an 8-record window is refused",
+		bcall(20, 0x0100), B_ADDR);
+	chk("... having written nothing above the segment",
+		(long)canary(), -1L);
+
+	/* ---- and a REFUSED function 26 or 51 must leave the shim
+	   holding the DMA the native BDOS was actually told. */
+
+	chk("fn 44 back to one record", bcall(44, 1), B_RUN);
+	chk("fn 26 accepts 0x3000", bcall(26, 0x3000), B_RUN);
+	chk("a DMA offset 127 from the top is refused",
+		bcall(26, (i16)(0x10000L - 127)), B_ADDR);
+	chk("... and i86dmaoff still holds the accepted one",
+		(long)(i86dmaoff & 0xffff), 0x3000L);
+	chk("a DMA base we never handed out is refused",
+		bcall(51, 0x7000), B_SEG);
+	chk("... and i86dmaseg still holds the accepted one",
+		(long)(i86dmaseg & 0xffff), 0x2000L);
+	chk("... so the next transfer still works",
+		bcall(20, 0x0100), B_RUN);
+}
+
+/* ==================================================================
+ * THE PREFIX LOOP HAS A BOUND.
+ *
+ * i86dec()'s prefix loop was `for (;;)' with no limit, and its fetch
+ * wraps at 16 bits by design (i86dec.c fb()), so a code segment filled
+ * with 0x26 never left the loop -- the hang was INSIDE one i86dec()
+ * call, where the executor's own step limit never gets a turn.
+ *
+ * The bound is the architectural maximum instruction length, 15 bytes
+ * (Intel SDM Vol. 2, the general instruction format; a longer encoding
+ * raises #UD on a 386 and later).  An 8086 accepted any number, but
+ * nothing LEGAL needs more than three prefixes -- one segment override,
+ * one repeat, one LOCK -- so the cap cannot change what a legal
+ * instruction decodes to, and the checks below say so both ways.
+ *
+ * A hang is not an exit status, so this section puts a deadline on
+ * itself: before the fix the alarm fired and the run failed, which is
+ * the only way an infinite loop reports itself.
+ */
+
+static void deadline(int sig)
+{
+	printf("FAIL %-44s (deadline: i86dec did not return)\n",
+		"the prefix loop terminates");
+	fflush(stdout);
+	_exit(1);
+}
+
+static void t_prefix(void)
+{
+	struct i86in	in;
+	int		i, n;
+
+	signal(SIGALRM, deadline);
+	alarm(10);
+
+	/* A whole segment of segment-override prefixes. */
+	for (i = 0; i < 65536; i++)
+		cseg[i] = (char)0x26;
+	n = i86dec(cseg, (i16)0, &in);
+	chk("a segment of 0x26 decodes to a bad instruction", (long)in.op,
+		(long)I_BAD);
+	ntest++;
+	if (n <= 0 || n > 16)
+		fail("a segment of 0x26 has a bounded length", (long)n, 16L);
+
+	/* The same for each of the other prefix bytes, and for a mixture,
+	 * because the loop took any of them. */
+	for (i = 0; i < 65536; i++)
+		cseg[i] = (char)0xf3;			/* REP		*/
+	i86dec(cseg, (i16)0, &in);
+	chk("a segment of 0xf3 decodes to a bad instruction", (long)in.op,
+		(long)I_BAD);
+	for (i = 0; i < 65536; i++)
+		cseg[i] = (char)0xf0;			/* LOCK		*/
+	i86dec(cseg, (i16)0, &in);
+	chk("a segment of 0xf0 decodes to a bad instruction", (long)in.op,
+		(long)I_BAD);
+	for (i = 0; i < 65536; i++)
+		cseg[i] = (char)(0x26 + 8 * (i & 3));	/* ES CS SS DS	*/
+	i86dec(cseg, (i16)0, &in);
+	chk("a segment of mixed overrides decodes to a bad instruction",
+		(long)in.op, (long)I_BAD);
+
+	/* ---- and now what must NOT change.  Every legal prefix
+	   combination, ahead of a real instruction, decodes exactly as
+	   it did: three prefixes is the most any 8086 instruction has a
+	   use for. */
+
+	memset(cseg, 0, 65536);
+	cseg[0] = (char)0x26;			/* ES:		*/
+	cseg[1] = (char)0x8b;			/* mov ax,[si]	*/
+	cseg[2] = (char)0x04;
+	chk("one override before mov ax,[si] is 3 bytes",
+		(long)i86dec(cseg, (i16)0, &in), 3L);
+	chk("... with the override taken", (long)in.seg, (long)S_ES);
+
+	memset(cseg, 0, 65536);
+	cseg[0] = (char)0xf0;			/* LOCK		*/
+	cseg[1] = (char)0xf3;			/* REP		*/
+	cseg[2] = (char)0x26;			/* ES:		*/
+	cseg[3] = (char)0xa5;			/* movsw	*/
+	chk("LOCK REP ES: movsw is 4 bytes",
+		(long)i86dec(cseg, (i16)0, &in), 4L);
+	chk("... with the override taken", (long)in.seg, (long)S_ES);
+	ntest++;
+	if (!(in.fl & IN_REP))
+		fail("LOCK REP ES: movsw keeps IN_REP", 0, 1);
+	ntest++;
+	if (!(in.fl & IN_LOCK))
+		fail("LOCK REP ES: movsw keeps IN_LOCK", 0, 1);
+
+	/* The last override wins, which is the 8086's own rule and is
+	 * what the loop was there for. */
+	memset(cseg, 0, 65536);
+	cseg[0] = (char)0x26;			/* ES:		*/
+	cseg[1] = (char)0x2e;			/* CS:		*/
+	cseg[2] = (char)0x36;			/* SS:		*/
+	cseg[3] = (char)0x8b;
+	cseg[4] = (char)0x04;
+	chk("three overrides then mov is 5 bytes",
+		(long)i86dec(cseg, (i16)0, &in), 5L);
+	chk("... and the LAST one wins", (long)in.seg, (long)S_SS);
+
+	/* The longest thing the cap must still accept: prefixes up to
+	   the 15-byte architectural limit, opcode included. */
+	memset(cseg, 0, 65536);
+	for (i = 0; i < 14; i++)
+		cseg[i] = (char)0x26;
+	cseg[14] = (char)0x90;			/* nop		*/
+	chk("fourteen prefixes and an opcode still decode to nop",
+		(long)i86dec(cseg, (i16)0, &in), 15L);
+	chk("... as a real instruction", (long)in.op, (long)I_NOP);
+
+	/* One byte more than the limit is not an instruction. */
+	memset(cseg, 0, 65536);
+	for (i = 0; i < 15; i++)
+		cseg[i] = (char)0x26;
+	cseg[15] = (char)0x90;
+	i86dec(cseg, (i16)0, &in);
+	chk("fifteen prefixes and an opcode is not an instruction",
+		(long)in.op, (long)I_BAD);
+
+	alarm(0);
+}
+
+/* ================================================================== */
+
+int main(argc, argv)
+int argc;
+char **argv;
+{
+	int i;
+
+	if (argc > 2 && strcmp(argv[1], "-c") == 0) {
+		for (i = 2; i < argc; i++)
+			sweep(argv[i]);
+		return (0);
+	}
+	/* Both directories are REQUIRED, not optional.  A default that
+	 * skipped sections 6 and 7 when they were not named would turn a
+	 * broken make rule into a smaller passing run, which is the shape
+	 * tests/relcheck.sh refuses for the release disk. */
+	if (argc != 3) {
+		fprintf(stderr, "usage: i86test <corpusdir> <fixturedir>\n");
+		fprintf(stderr, "       i86test -c FILE.CMD ...\n");
+		return (2);
+	}
+
+	t_lengths();
+	t_allbytes();
+	t_flags_byte();
+	t_flags_word();
+	t_incdec();
+	t_neg();
+	t_exec();
+	t_segcheck();
+	t_segslow();
+	t_loader();
+	t_corpus(argv[1]);
+	t_fixtures(argv[2]);
+	t_fcb();
+	t_seam();
+	t_pip(argv[1]);
+	t_submit(argv[1]);
+	t_gencmd(argv[1], argv[2]);
+	t_dmabound();
+	t_prefix();
+
+	printf("i86test: %d checks, %d failures\n", ntest, nfail);
+	/* K2's instruments, reported so that they are known to work.
+	 * The RATE here is meaningless -- this harness reads the flags
+	 * after nearly every instruction it executes, which is the
+	 * opposite of what a program does.  The number that decides K2
+	 * is this ratio taken over a real .CMD run, and that waits for
+	 * the INT 0E0h seam. */
+	if (i86ninsn)
+		printf("i86test: instruments live: %lu instructions, %lu "
+			"flag materialisations\n",
+			(unsigned long)i86ninsn, (unsigned long)i86nflag);
+	return (nfail != 0);
+}

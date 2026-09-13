@@ -22,6 +22,8 @@
 
 #define GBL (*statep)
 				/* If multi-task, state vars are based */
+#define BSETUP  EXTERN struct stvars gbls; \
+		REG struct stvars *statep; \
 	  statep = &gbls;
 				/* set up pointer to state variables */
 			/* This is intended as an example to show the intent */

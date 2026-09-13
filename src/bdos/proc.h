@@ -1,0 +1,2 @@
+
+#define	PNCON		bconcnt()

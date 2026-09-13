@@ -14,6 +14,7 @@
 EXTERN UWORD 	dirscan();	/* directory scanning routine	*/
 EXTERN		dirdrop();	/* forget the directory buffer's record */
 EXTERN UWORD	error();	/* disk error routine		*/
+EXTERN		seterr();	/* record a CP/M 3 error code for the caller */
 EXTERN UWORD	do_phio();	/* packet disk i/o handler	*/
 EXTERN		clraloc();	/* clear bit in allocation vector */
 EXTERN		setaloc();	/* set bit in allocation vector */
@@ -402,9 +403,15 @@ REG struct fcb *fcbp;
 {
     REG UBYTE *p;
     REG WORD i;
+    BSETUP
 
     p = &(fcbp->fname[0]);
     for (i = 0; i < 11; i++)		/* check$wild: no wildcards	*/
+	if ( UBWORD(p[i]) == '?' )
+	{
+	    seterr(9, UBWORD(GBL.curdsk));	/* bdos30.asm:1769-1774	*/
+	    return(0xff);
+	}
     fcbp->extent = 0;
     fcbp->s2 = 0;
 }
@@ -475,6 +482,7 @@ REG struct fcb *fcbp;
 /****************************************
 *  function 101 -- get label mode	*
 ****************************************/
+
 
 UWORD get_label(dsknum)
 
@@ -689,6 +697,35 @@ UBYTE	*p;			/* pointer to pass through to tmp_sel	*/
     }
     cpy_out( GBL.dirbufp, GBL.dmaadr, SECLEN);
     return(rtn);
+}
+
+
+
+UWORD fexists(fcbp, off)
+
+REG struct fcb *fcbp;		/* the caller's FCB		*/
+REG WORD off;			/* 0 = first name, 16 = second	*/
+
+{
+    struct fcb	probe;
+    REG UBYTE	*p;
+    REG UBYTE	*q;
+    REG WORD	i;
+    BSETUP
+
+    probe.drvcode = fcbp->drvcode;	/* copy$user$no (:1786-1788)	*/
+    p = off ? (UBYTE *)&(fcbp->dskmap.small[1]) : &(fcbp->fname[0]);
+    q = &(probe.fname[0]);
+    i = 11;
+    do *q++ = (UBYTE)(*p++ & 0x7f); while (--i);
+			/* the attribute bits are not part of the name:
+			   match() ignores them and so must the probe */
+    probe.extent = 0;
+    probe.s1 = 0;
+    probe.s2 = 0;
+    if ( dirscan(matchit, &probe, 0) == 255 ) return(FALSE);
+    seterr(8, UBWORD(GBL.curdsk));	/* file$exists, bdos30.asm:4371	*/
+    return(TRUE);
 }
 
 
@@ -1018,6 +1055,11 @@ REG struct fcb *fcbp;
 
     p = &(fcbp->fname[0]);
     for (i = 0; i < 11; i++)		/* check$wild			*/
+	if ( UBWORD(p[i]) == '?' )
+	{
+	    seterr(9, UBWORD(GBL.curdsk));	/* bdos30.asm:1769-1774	*/
+	    return(0xff);
+	}
 
     sav[0] = fcbp->ran0;
     sav[1] = fcbp->ran1;

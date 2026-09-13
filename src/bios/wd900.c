@@ -28,6 +28,8 @@
 
 extern outw();
 extern mapseg();
+extern long tickget();		/* src/bios/tick900.c, trap.s	*/
+extern int tickpast();
 
 /*
  * Map the command-block window.  Call once before any wdsec().
@@ -37,14 +39,24 @@ wdinit900()
 	mapseg(WDCBSEG, WDCBPAGE, 2);	/* attr 2 = system read/write */
 }
 
+#define WDWAIT		300L		/* ticks (100 Hz) -- 3 seconds	*/
+
 static wdgo900()
 {
 	register char *cb;
 	register long n;
+	long dl;
 
 	cb = WDCB;
 	outw(WDIO, 1);
+	dl = tickget() + WDWAIT;
 	n = 2000000L;
+	while ((cb[0x0c] & 0xff) == 0xff) {
+		if (--n == 0)
+			break;
+		if ((n & 0xffL) == 0L && tickpast(dl))
+			break;
+	}
 	outw(WDIO, 0);
 }
 

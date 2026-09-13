@@ -24,6 +24,7 @@
 #define	BDOS_WRITESEQ	21	/* write sequential(fcb) -> 0 ok	*/
 #define	BDOS_MAKE	22	/* create file(fcb) -> 255 = full	*/
 #define	BDOS_RENAME	23	/* rename: old fcb at 0, new at 16	*/
+#define	BDOS_SETATTR	30	/* set file attributes(fcb)		*/
 #define	BDOS_SETDMA	26	/* set DMA address			*/
 #define	BDOS_READRAN	33	/* random read(fcb)			*/
 #define	BDOS_WRITERAN	34	/* random write(fcb)			*/
@@ -91,6 +92,27 @@ struct biospb {
 #define	BIOS_WRITE	14	/* write it; 1 = directory write-through */
 #define	BIOS_SECTRAN	16	/* logical -> physical sector		*/
 #define	BIOS_FLUSH	21	/* flush the BIOS buffer cache		*/
+
+/*
+ * Segment allocation, BIOS function 25, and it IS on bioscl()'s allowed
+ * list (sys/iosys.c says why), so a program may reach it through BDOS
+ * function 50 and does not need the raw SC #3 gate.  P1 is one of the
+ * SEG_* subfunctions; P2 is the segment, for SEG_PUT only.
+ *
+ * SEG_GET answers the logical segment number of 64 KB nothing else can
+ * reach -- turn it into a pointer with SEGBASE() -- or 0 when there is
+ * none, which is what the standard 512 KB machine always answers.
+ * Every segment a program holds is released for it at the next warm
+ * boot, so SEG_PUT is for a program that wants one back before it
+ * exits, not for one that is exiting.
+ */
+#define	BIOS_SEGMENT	25	/* allocate/free/count 64 KB segments	*/
+#define	SEG_GET		0L	/* -> segment number, or 0 if none left	*/
+#define	SEG_PUT		1L	/* P2 = segment; -> 1 freed, 0 not ours	*/
+#define	SEG_COUNT	2L	/* -> how many are free right now	*/
+
+/* the XADDR of a segment's first byte: what SEG_GET's answer is for */
+#define	SEGBASE(s)	((long)(s) << 24)
 
 /*
  * BIOCOST-only codes, NOT reachable through function 50: bioscl()

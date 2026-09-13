@@ -213,6 +213,72 @@ BOOLEAN   ctlout;	/* output ^<char> for control chars? */
 }
 
 
+
+MLOCAL runout(p, n)		/* n ordinary characters, batched */
+
+REG UBYTE *p;
+REG UWORD n;
+{
+    REG UWORD k;
+    BSETUP
+
+    while (n != 0)
+    {
+	if (GBL.conmode & CM_NOSTOP)
+	    { brkctr = 0; k = n; }	/* nothing polls: one call	*/
+	else if (UBWORD(brkctr) >= CONBRK_POLL - 1)
+	{				/* this character is a poll	*/
+	    conbrk();
+	    bconout(*p++);
+	    GBL.column++;
+	    n -= 1;
+	    continue;
+	}
+	else
+	{
+	    k = (UWORD)(CONBRK_POLL - 1 - UBWORD(brkctr));
+	    if (k > n) k = n;
+	    brkctr += (UBYTE)k;
+	}
+	bconoutn(p, k);
+	GBL.column += k;
+	p += k;
+	n -= k;
+    }
+}
+
+
+cookdrun(p, n)			/* n characters, cooked, ctlout FALSE */
+
+REG UBYTE *p;
+REG UWORD n;
+{
+    REG UWORD k;
+    BSETUP
+
+    if (GBL.lstecho && !(GBL.conmode & CM_RAW))
+    {		/* ^P is on: every character owes the printer a byte of
+		   its own, so there is no run here to batch */
+	while (n != 0) { cookdout(*p++, FALSE); n -= 1; }
+	return;
+    }
+    while (n != 0)
+    {
+	if (*p < space)
+	{
+	    cookdout(*p++, FALSE);	/* tab, CR, BS, ESC, ...	*/
+	    n -= 1;
+	    continue;
+	}
+	for (k = 0; k < n && p[k] >= space; k++)
+	    ;
+	runout(p, k);
+	p += k;
+	n -= k;
+    }
+}
+
+
 /*****************/
 /* console input */
 /*****************/
@@ -258,8 +324,12 @@ REG UWORD parm;
 prt_line(p)
 REG UBYTE *p;
 {
+    REG UBYTE *q;
     BSETUP
 
+    for (q = p; *q != GBL.delim; q++)
+	;
+    if (q != p) cookdrun(p, (UWORD)(q - p));
 }
 
 
@@ -267,6 +337,15 @@ REG UBYTE *p;
 /* print a block of characters (functions 111 and 112)  */
 /*						       */
 /* The character control block is {address, length}.    */
+/*						       */
+/* The characters are pulled across PRTBCHUNK at a     */
+/* time and handed on as runs.  It used to be one      */
+/* cpy_bi() -- a mem_cpy() call -- per byte, which is  */
+/* the falsifier CONSOLE-DRIVER-DESIGN.md 7/0b names   */
+/* for the function 111 path: the per-byte copy in     */
+/* costs what the batching saves.  uprt_line() had     */
+/* already been chunked for the same reason; this is   */
+/* the same fix, with the same chunk size.	       */
 /* C900 deviation: the address is a 32-bit XADDR, since */
 /* that is what a pointer is here -- the 8080 form is   */
 /* two bytes.  Length stays a word.		       */
@@ -282,10 +361,21 @@ BOOLEAN	toconsole;		/* console (fcn 111) or list (fcn 112)	 */
 	XADDR	cbaddr;		/* address of the characters	*/
 	UWORD	cblen;		/* number of characters		*/
     } ccb;
+#define PRTBCHUNK 32		/* bytes per cpy_in(), as uprt_line	*/
+
+    UBYTE buf[PRTBCHUNK];
     REG UWORD i;
+    REG UWORD n;
 
     cpy_in(ccbp, &ccb, sizeof ccb);
+    while (ccb.cblen != 0)
     {
+	n = (ccb.cblen > PRTBCHUNK) ? PRTBCHUNK : ccb.cblen;
+	cpy_in(ccb.cbaddr, buf, n);
+	ccb.cbaddr += (long)n;
+	ccb.cblen -= n;
+	if (toconsole) cookdrun(buf, n);
+	else for (i = 0; i < n; i++) blstout(buf[i]);
     }
 }
 

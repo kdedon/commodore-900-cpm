@@ -138,9 +138,28 @@ int main()
 	chain();
 	report("ucase", UCASE_COUNT);
 
+	/*  A file to protect: function 22 is not intercepted by anything,
+	    so the open that follows it always succeeds and the counters
+	    below do not depend on what is on the disk.
+
+	    The make is made SILENT rather than preceded by a delete,
+	    because GUARD.TXT can already be there: PROT.RSX refuses
+	    function 19 without the BDOS ever seeing it, so once a run
+	    with PROT resident has been through `delete guard' the file
+	    survives into the next run, and the BDOS now answers a make
+	    onto an existing name with error 8 (file$exists,
+	    ref/cpm3/bdos30.asm:4371-4372).  That is the right answer and
+	    it costs this program nothing -- the file exists either way,
+	    which is all the open needs -- but under the default error
+	    mode it would put a `File Exists' report in the middle of the
+	    transcript.  A delete of our own would be the other fix and
+	    is the wrong one: PROT counts deletes, so it would change the
+	    number this program exists to print.  */
+	__bdos(BDOS_ERRMODE, (long) ERRMODE_RETURN);
 	mkfcb(GUARD, &fcb);
 	__bdos(BDOS_MAKE, (long) &fcb);
 	__bdos(BDOS_CLOSE, (long) &fcb);
+	__bdos(BDOS_ERRMODE, (long) ERRMODE_DEFAULT);
 
 	fileop("open guard", BDOS_OPEN, GUARD);
 	fileop("open nosuch", BDOS_OPEN, "NOSUCH.XXX");

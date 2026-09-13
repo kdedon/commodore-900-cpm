@@ -83,6 +83,8 @@ LONG	p1, p2;			/* its two LONG parameters		*/
 	case 16:		/* SECTRAN			*/
 	case 21:		/* FLUSH			*/
 	case 23:		/* TIME -- the only route to the chip */
+	case 25:		/* SEGMENT -- likewise, for 64 KB	*/
+	case 29:		/* CONCNT -- how many consoles exist	*/
 	case 24:		/* TICK -- see the table (N2)		*/
 	case 28:		/* CONDEV -- see the table (N2)		*/
 	case 31:		/* AUXIST -- see the table (N2)		*/

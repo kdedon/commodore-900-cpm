@@ -51,7 +51,11 @@ EXTERN  VOID	ccpabort();		/* sys/ccprun.c: cancel the CCP's
 GLOBAL UBYTE serial[6] = { 'C', '9', '0', '0', '0', '1' };
 
 
+
+MLOCAL BYTE *errmsg[9] =
 {
+    "Disk I/O$", "Read/Only Disk$", "Read/Only File$", "Invalid Drive$",
+    "? in Filename$"
 };
 
 
@@ -255,6 +259,7 @@ seterr(code, dsk)
     long form -- unless the program asked for the mode that keeps the
     console quiet  */
 
+REG UWORD code;			/* CP/M 3 error code 1..9	*/
 UWORD	  dsk;			/* drive the error is on	*/
 {
     REG UBYTE *p;
@@ -267,6 +272,7 @@ UWORD	  dsk;			/* drive the error is on	*/
     prt_line("\r\nCP/M Error On $");
     conout(dsk + 'A');
     prt_line(" : $");
+    if (code < 1 || code > 9 || errmsg[code-1] == (BYTE *)NULL) code = 1;
     prt_line(errmsg[code-1]);
     prt_line("\r\nBDOS Function = $");
     i = UBWORD(GBL.curfx);

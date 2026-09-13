@@ -38,6 +38,7 @@ int c;
 
 #define putchar(c)	hostput(c)
 #define VSET(off, ch)	(vram[off] = (ch))
+#define VMOVE(d, s, n)	memmove(&vram[d], &vram[s], (size_t)(n))
 #define SCRST		scr
 
 #include "../src/bios/crsr.c"
@@ -90,6 +91,15 @@ int ch;
 	for (r = 0; r < NR; r++)
 		for (c = 0; c < NC; c++)
 			vram[r * 0xa0 + c * 2] = ch;
+}
+
+static fillrows()	/* row r gets the character 'A' + r */
+{
+	int r, c;
+
+	for (r = 0; r < NR; r++)
+		for (c = 0; c < NC; c++)
+			vram[r * 0xa0 + c * 2] = 'A' + r;
 }
 
 static int cell(r, c)
@@ -255,12 +265,91 @@ static lrtests()
 	feed("\033Y8o\033B\033C");	/* row 24, col 79 */
 	eqscr(0x0018004fL, "LR: the bottom-right corner clamps both ways");
 
+	/* An unclaimed sequence still reaches the SCREEN as its two bytes.
+	   It no longer reaches the ROM: this layer stores the cells itself,
+	   which is what BvidCHR would have done with them anyway, so the
+	   assertion moves from the putchar stream to the cells.  What DOES
+	   reach the ROM is one NUL per cellpark(). */
 	reset(CK_LR);
 	feed("\033&Q");
+	eqcell(5, 5, 033, "LR: an unclaimed escape reaches the screen ...");
+	eqcell(5, 6, '&', "LR: ... with its argument ...");
+	eqcell(5, 7, 'Q', "LR: ... and the text after it");
+	eqscr(0x00050008L, "LR: ... leaving the cursor past all three");
 
 	/* CAN abandons a half-typed address */
 	reset(CK_LR);
 	feed("\033Y\030AB");
+	eqcell(5, 5, 'A', "LR: CAN abandons ESC Y before it moves anything");
+	eqcell(5, 6, 'B', "LR: ... and the following text is text again");
+	eqscr(0x00050007L, "LR: ... two columns on from where it started");
+
+	/* CR and BS are this layer's arithmetic now, not the ROM's */
+	reset(CK_LR);
+	feed("\r");
+	eqscr(0x00050000L, "LR: CR goes to column 0 of the same row");
+
+	reset(CK_LR);
+	feed("\b");
+	eqscr(0x00050004L, "LR: BS steps back one column");
+
+	reset(CK_LR);
+	feed("\033Y% \b");		/* row 5, column 0 */
+	eqscr(0x00050000L, "LR: BS at column 0 stays there");
+
+	/* LF is CR+LF, as ROM putchar's own expansion was */
+	reset(CK_LR);
+	feed("\033Y%*\n");		/* row 5, column 10 */
+	eqscr(0x00060000L, "LR: LF drops a row and returns to column 0");
+
+	/* the right margin is HELD: writing column 79 does not wrap yet */
+	reset(CK_LR);
+	feed("\033Y n");		/* row 0, column 78 */
+	feed("AB");
+	eqcell(0, 78, 'A', "LR: the last two columns of a row fill ...");
+	eqcell(0, 79, 'B', "LR: ... to column 79 ...");
+	eqscr(0x0000004fL, "LR: ... and the cursor waits ON column 79");
+	feed(" C");
+	eqcell(1, 0, ' ', "LR: the next character wraps to the row below");
+	eqcell(1, 1, 'C', "LR: ... and the one after it follows");
+	eqscr(0x00010002L, "LR: ... with the cursor on row 1");
+
+	/* wrapping off the bottom row scrolls the screen */
+	reset(CK_LR);
+	fillrows();
+	feed("\033Y8n");		/* row 24, column 78 */
+	feed("XYZ");
+	eqcell(0, 0, 'B', "LR: a wrap off the bottom rolls row 1 up to row 0");
+	eqcell(23, 0, 'Y', "LR: ... and row 24 up to row 23 ...");
+	eqcell(23, 78, 'X', "LR: ... carrying what was just written there");
+	eqcell(24, 0, 'Z', "LR: the wrapped character lands on the new row");
+	blankrun(24, 1, NC - 1, "LR: ... and the rest of that row is blank");
+	eqscr(0x00180001L, "LR: ... with the cursor after it");
+
+	/* so does a LF on the bottom row */
+	reset(CK_LR);
+	fillrows();
+	feed("\033Y8 \n");		/* row 24, column 0, then LF */
+	eqcell(0, 0, 'B', "LR: LF on the bottom row scrolls instead of falling off");
+	eqcell(23, 0, 'Y', "LR: ... rolling the old bottom row up");
+	blankrun(24, 0, NC, "LR: ... and blanking the row it uncovered");
+	eqscr(0x00180000L, "LR: ... leaving the cursor on the bottom row");
+
+	/* a run is one cellput and ONE hardware-cursor park, not n of them */
+	reset(CK_LR);
+	crsrun("hello", 5);
+	eqcell(5, 5, 'h', "LR: crsrun stores the run ...");
+	eqcell(5, 9, 'o', "LR: ... all five characters of it ...");
+	eqscr(0x0005000aL, "LR: ... and advances the column by five");
+	eqoutn("\000", 1, "LR: ... parking the 6845 exactly once");
+
+	/* a run broken by a control character is three parks, not five */
+	reset(CK_LR);
+	crsrun("ab\rcd", 5);
+	eqcell(5, 5, 'a', "LR: crsrun splits a run at a control character");
+	eqcell(5, 0, 'c', "LR: ... resumes after the CR it obeyed ...");
+	eqcell(5, 1, 'd', "LR: ... and carries on");
+	eqoutn("\000\000\000", 3, "LR: ... with one park per piece");
 
 	/* BEL is the speaker, and is not blitted on a video console */
 	reset(CK_LR);

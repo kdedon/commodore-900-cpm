@@ -83,6 +83,8 @@
 
 extern int inb();
 extern outb();
+extern long tickget();		/* src/bios/tick900.c, trap.s	*/
+extern int tickpast();
 
 static int sndpbe;	/* nonzero: this driver enabled port B */
 
@@ -145,12 +147,20 @@ unsigned ms;
 	outb(CT1CS, CTCS_RUN);
 }
 
+#define SNDWAIT		25L		/* ticks (100 Hz) -- 250 ms	*/
+
 sndwait()
 {
 	register unsigned n;
+	long dl;
 
+	dl = tickget() + SNDWAIT;
+	for (n = SNDPOLLS; n != 0; --n) {
 		if ((inb(CT1CS) & CTCS_CIP) == 0)
 			return;
+		if (tickpast(dl))
+			return;
+	}
 }
 
 sndbeep()

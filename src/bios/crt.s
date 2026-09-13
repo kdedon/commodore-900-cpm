@@ -15,6 +15,7 @@
 	.globl	start
 	.globl	scentry_		/ SC trap gate (sys/bdosglue.s)
 	.globl	tepa_, tprv_, tseg_, tnmi_, tnvi_, tvi_	/ fault stubs (trap.s)
+	.globl	ttick_, tvidsm_		/ tick + dismiss stubs (trap.s)
 
 / The segment every compiled frame reference is relocated against: cc2 emits
 / each frame address's segment byte as a relocation adding SS, so the objects
@@ -43,6 +44,13 @@ psa:
 	.long	tepa_
 	.long	0xC000			/ +16: privileged-instruction trap
 	.long	tprv_
+	.long	0xD000			/ +24: system-call trap.  VIE set, and
+					/ ONLY here among the fixed entries: a
+					/ BDOS or BIOS call is where system code
+					/ spends its time, and the period tick
+					/ (tick900.c) has to run while it does.
+					/ The fault stubs and the tick itself
+					/ keep 0xC000, so nothing nests.
 	.long	scentry_
 	.long	0xC000			/ +32: segment trap
 	.long	tseg_
@@ -51,6 +59,11 @@ psa:
 	.long	0xC000			/ +48: non-vectored interrupt
 	.long	tnvi_
 	.long	0xC000			/ +56: FCW for all vectored interrupts
+	/ +60: the vectored table, 4 bytes an entry, entry n = vector 2n.
+	/ Everything not named below is tvi_, which panics unless BIOS fn 22
+	/ recorded a handler in slot 7.
+	.long	ttick_			/ vector 0x00: CIO #1 C/T 3, the period
+					/   tick (CTIV = 0, tick900.c/md.s:416)
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
@@ -108,6 +121,9 @@ psa:
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	tvidsm_			/ vector 0x80: PDMAC disk completion,
+					/   raised by every transfer this polled
+					/   driver makes and serviced by nobody
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_

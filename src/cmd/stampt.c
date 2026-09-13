@@ -99,6 +99,26 @@ char *argv[];
 	__bdos(BDOS_CLOSE, (long) &f);
 	chkstamp("after write", DAY1, 0x12, 0x34, DAY2, 0x08, 0x00);
 
+	/* ---- a wildcard is error 9, not "not found" ----
+	   func102 calls check$wild before it reads anything
+	   (bdos30.asm:4942-4945), and check$wild reports through
+	   set$aret (:1774, :4373-4380): 09FFh back, and "? in Filename"
+	   on the console.  Error mode 0FEh asks for both in one call. */
+	__bdos(BDOS_ERRMODE, (long) ERRMODE_DISPRET);
+	mkfcb("STAMP?.TXT", &f);
+	setdma(stamps);
+	r = __bdos(BDOS_RDSTAMPS, (long) &f);
+	__bdos(BDOS_ERRMODE, (long) ERRMODE_DEFAULT);
+	cputs("STAMPT: fn 102 on a wildcard -> ");
+	putdec((unsigned) ((r >> 8) & 0xff));
+	cputs("/");
+	putdec((unsigned) (r & 0xff));
+	if (((r >> 8) & 0xff) != 9 || (r & 0xff) != 0xff) {
+		cputs("  BAD -- want error 9, return 255");
+		bad++;
+	}
+	cputs("\r\n");
+
 	cputs(bad ? "STAMPT: FAIL\r\n" : "STAMPT: PASS\r\n");
 	return (bad != 0);
 }

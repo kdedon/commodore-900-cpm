@@ -21,6 +21,7 @@ int argc;
 char *argv[];
 {
 	register int	i;
+	int		r;
 	long		free0, free1, free2;
 	long		sz;
 
@@ -131,6 +132,28 @@ char *argv[];
 	putdec((unsigned) i);
 	if (i != 0xff) {
 		cputs("  BAD -- must refuse");
+		bad++;
+	}
+	cputs("\r\n");
+
+	/* ---- refuse a wildcard, and refuse it as error 9 ----
+	   v3 puts check$wild first in func99 (bdos30.asm:4799) and
+	   check$wild reports through set$aret (:1774, :4373-4380): the
+	   caller gets 09FFh, not a bare 0FFh, and the console gets
+	   "? in Filename".  Error mode 0FEh asks for both halves in one
+	   call -- the message AND the code -- so the transcript proves
+	   the message and this proves the code.		*/
+	__bdos(BDOS_ERRMODE, (long) ERRMODE_DISPRET);
+	mkfcb("TRUNC?.TXT", &f);
+	setran((long) 0);
+	r = __bdos(99, (long) &f);
+	__bdos(BDOS_ERRMODE, (long) ERRMODE_DEFAULT);
+	cputs("TRUNCT: fn 99 on a wildcard -> ");
+	putdec((unsigned) ((r >> 8) & 0xff));
+	cputs("/");
+	putdec((unsigned) (r & 0xff));
+	if (((r >> 8) & 0xff) != 9 || (r & 0xff) != 0xff) {
+		cputs("  BAD -- want error 9, return 255");
 		bad++;
 	}
 	cputs("\r\n");

@@ -842,10 +842,27 @@ VOID type_cmd()				/*   type out a file	*/
 	i = fill_fcb(1,cmdfcb);		/*fill a file control block*/
 	if(i == 0 && parm[1][0] != NULL && (cbdos(OPEN_FILE,cmdfcb) <= 3))
 	{
+		/*  One function 111 per RECORD, not one function 2 per
+		    character.  The BDOS cooks the block exactly as it
+		    cooked the characters -- prt_blk() runs the same
+		    cookdout() over it, so tabs, ^S/^Q and the column
+		    are unchanged -- but TYPE now crosses the SC gate
+		    128 times fewer per record.  An embedded ^Z still
+		    ends only THIS record's text and the next record is
+		    still read, which is what the character loop did.  */
+		struct { LONG cbaddr; UWORD cblen; } blk;
+
 		while(cbdos(READ_SEQ,cmdfcb) == 0)
 		{
 			for(i = 0;i <= 127;i++)
+				if(dma[i] == EOF)
 					break;
+			if(i != 0)
+			{
+				blk.cbaddr = (LONG)&dma[0];
+				blk.cblen = i;
+				bdos(PRINT_BLOCK,(long)&blk);
+			}
 		}
 		cbdos(CLOSE_FILE,cmdfcb);
 		bdos(RESET_DRIVE,(long)cmdfcb[0]);

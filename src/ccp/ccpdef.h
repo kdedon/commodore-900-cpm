@@ -136,6 +136,7 @@
 #define		GET_I/O_BYTE	7
 #define		SET_I/O_BYTE	8
 #define		PRINT_STRING	9
+#define		PRINT_BLOCK	111	/* {XADDR, UWORD} block to console */
 #define		READ_CONS_BUF	10
 #define		GET_CONS_STAT	11
 #define		RET_VERSION_NO	12

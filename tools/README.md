@@ -13,6 +13,10 @@ that reads them back — and it lives here because `make all` cannot run
 without it.
 
 Contents: `mkcpmfs.py`, `mkcpmdisk.py`, `cohfs.py`, `mkrsx.py`,
+`mkblob.py`, `mksig.py`, `stage-devpack.sh`, and the four fixture
+builders `ccpuser.py`, `setbfill.py`, `u0fill.py` and `mkcmdfix.py` (the
+CP/M-86 `.CMD` headers `make i86test` needs and no real file contains — a
+nonzero A-Base, an oversized group, a malformed file).
 
 ## mkcpmfs.py — CP/M 2.2 filesystem packer / reader
 
@@ -65,11 +69,15 @@ byte-identically (mod record padding), **and** is read back correctly by a
 transliteration of the may83 BDOS sequential-read algorithm
 (dirscan/match/blkindx/new_ext/calcext/get_rc). Repacking is byte-identical.
 
+## lout2cpm — l.out → x.out container (C, supersedes lout2cpm.py)
 
 ```
 lout2cpm <input.lout> <output.Z8K>
 ```
 
+Source: `$(C900_TOOLCHAIN)/tools/lout2cpm/lout2cpm.c` (see `LOUT2CPMSRC`
+in the Makefile, which compiles it on demand into `build/lout2cpm`; the
+toolchain repository's own tests cover both containers).
 Parses our linked ld-z8001 l.out (magic 0x0107, LE fields, PDP-order
 longs, 48-byte header) and wraps text/data verbatim in an x.out:
 big-endian `x_hdr` + `x_sg` COD/DAT/BSS + payload, `x_reloc = x_symb = 0`.
