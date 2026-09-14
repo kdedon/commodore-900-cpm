@@ -107,6 +107,7 @@ UPROGS	= $(UOBJDIR)/MHELLO.Z8K $(UOBJDIR)/FCOPY.Z8K $(UOBJDIR)/BEEP.Z8K \
 	  $(UOBJDIR)/CRSRDEMO.Z8K $(UOBJDIR)/CONCOST.Z8K $(UOBJDIR)/BIOCOST.Z8K \
 	  $(UOBJDIR)/CPUTCOST.Z8K $(UCONC) \
 	  $(UPROGS3) $(UPROGSU) $(UPROGSR) $(UPIP) $(USTAT) $(UZ80) $(UI86) \
+	  $(UKERMIT) $(UV5) $(UGP) $(USESSION)
 UKERMIT	= $(UOBJDIR)/KERMIT.Z8K
 # Compatibility shims are built but excluded from the release disk.
 UZ80	= $(UOBJDIR)/Z80.Z8K
@@ -139,7 +140,14 @@ UGP	= $(UOBJDIR)/GET.Z8K $(UOBJDIR)/PUT.Z8K \
 # Scheduler quantum measurement.
 UCONCV	= $(UOBJDIR)/CONCV.Z8K $(UOBJDIR)/CONCY.Z8K
 
+# SESSION starts a CCP on a second console (BDOS function 142): it is the
+# only door to the multi-user feature, so it ships on both drive-A images.
+# It is in UPROGS -- staged onto the development image and, being absent
+# from ATEST, carried through to the release image as well.
+USESSION = $(UOBJDIR)/SESSION.Z8K
+
 # Console routing, sessions and ownership exercisers.
+UCON1	= $(UOBJDIR)/CON1.Z8K $(USESSION) $(UOBJDIR)/CONN.Z8K \
 	  $(UOBJDIR)/RXOV.Z8K $(UOBJDIR)/CATT.Z8K
 UPIP	= $(UOBJDIR)/PIP.Z8K
 # PIP and STAT are rebuilt from src/cmd, not staged vendor binaries.

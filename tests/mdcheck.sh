@@ -15,7 +15,16 @@ DIST="$here/../src/dist"
 PAT='[A-Za-z][A-Za-z0-9_-][A-Za-z0-9_-]+\.md([^A-Za-z0-9_-]|$)'
 
 fail=0
+missing=0
+[ $# -ge 1 ] || { echo "mdcheck: FAIL -- no image named" >&2; exit 1; }
 scan() {			# scan FILE LABEL
+	if [ ! -f "$1" ]; then
+		# A check of our own images, so a missing one is a failure of the
+		# build that should have made it, never something to pass over.
+		echo "mdcheck: FAIL -- $2: no such file; nothing was checked" >&2
+		missing=1
+		return 0
+	fi
 	hits=$(grep -aoE "$PAT" -- "$1" 2>/dev/null | sed 's/[^A-Za-z0-9_.-]*$//' \
 		| sort -u) || true
 	if [ -n "$hits" ]; then
@@ -44,5 +53,6 @@ if [ "$fail" -ne 0 ]; then
 	echo "mdcheck: exists in this tree." >&2
 	exit 1
 fi
+[ "$missing" -eq 0 ] || exit 1
 
 echo "mdcheck: OK -- $# image(s) and the src/dist fixtures cite no .md file"

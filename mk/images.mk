@@ -91,3 +91,20 @@ $(TRACEBIN): trace-cpmsys $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) \
 cpmtrace: $(TRACEBIN)
 	@echo "boot-trace medium: $(TRACEBIN) (markers: docs/run/D3.md)"
 
+# ---- optional local medium (opt-in; nothing in `all' depends on it) --------
+# make cpmlocal LOCALDIR=<a directory of extra files> LOCALOUT=<a path outside
+# the checkout> writes a bootable medium that is the DEVELOPMENT drive A:
+# (which carries the compatibility shims) plus every file in LOCALDIR.
+#
+# The extra files are the operator's own and are not this project's to
+# redistribute, so neither they nor the medium may enter a checkout.  Their
+# names appear nowhere here: LOCALDIR is the whole interface.  tools/
+# mklocal.sh refuses an output path inside the checkout or its parent; that
+# refusal is the licence boundary, not a build gate.  See README.md.
+LOCALDIR ?=
+LOCALOUT ?=
+.PHONY: cpmlocal
+cpmlocal: $(CPMSYS) $(CPMAIMG) $(CPMBIMG) tools/mklocal.sh tools/mkcpmfs.py \
+		tools/mkcpmdisk.py tools/cohfs.py tools/sparse.py
+	sh tools/mklocal.sh '$(LOCALDIR)' '$(LOCALOUT)' $(DISKA) $(CPMA_BLOCKS) \
+		$(LABEL) $(LABELMODE) $(CPMSYS) $(CPMBIMG) '$(KBOOT)'

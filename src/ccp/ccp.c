@@ -1677,8 +1677,79 @@ gosub:				if(cmd_file(flag))
 
 
 
+				/********************************/
+BYTE profcmd[] = "PROFILE.SUB";	/*  the command line a cold	*/
+				/*  start runs before its first	*/
+				/*  prompt			*/
+				/********************************/
+
+				/********************************/
+UWORD profstart()		/*  is there a PROFILE.SUB to	*/
+				/*  run, and has this session	*/
+				/*  already looked?		*/
+				/*------------------------------*/
+				/* CP/M 3's CCP does this at	*/
+				/* ref/cpm3/ccp3.asm:460-473	*/
+				/* (`ckboot'): on a cold start	*/
+				/* -- the `coldboot' bit of	*/
+				/* ccpflag3 still clear -- it	*/
+				/* sets the bit so the next CCP	*/
+				/* will not, sets errflg to	*/
+				/* ignore errors, and CHAINS to	*/
+				/* the command line `PROFILE.S'.*/
+				/* It does not open the file	*/
+				/* itself: it hands the ordinary	*/
+				/* command path a command line	*/
+				/* and lets that path find the	*/
+				/* submit file, which is why v3	*/
+				/* needs the error suppression.	*/
+				/*				*/
+				/* This is the same shape.  The	*/
+				/* `coldboot' bit is sv_profile	*/
+				/* in the state page, which is	*/
+				/* zeroed at cold boot and never	*/
+				/* again (ccprun.c ccpsvinit),	*/
+				/* so it is false exactly once	*/
+				/* per session.  errflg is what	*/
+				/* is done differently: rather	*/
+				/* than running the command and	*/
+				/* swallowing the complaint, we	*/
+				/* ask the directory first and	*/
+				/* run nothing when the file is	*/
+				/* not there.  A system with no	*/
+				/* PROFILE.SUB then pays ONE	*/
+				/* directory search per boot and	*/
+				/* prints nothing at all, which	*/
+				/* is what it should look like;	*/
+				/* v3's route would print		*/
+				/* `PROFILE.S?' if errflg ever	*/
+				/* failed to suppress it.	*/
+				/********************************/
+{
+	BYTE		pfcb[FCB_LEN];
+	REG UWORD	i;
+
+	profile_done = TRUE;		/* asked; do not ask again	*/
+	for(i = 0;i < FCB_LEN;i++)
+		pfcb[i] = NULL;
+	pfcb[0] = DISK_A;		/* v3's profile is on the system*/
+					/*  drive; ours says so		*/
+	for(i = 1;i <= 11;i++)
+		pfcb[i] = ' ';
+	for(i = 0;profcmd[i] != NULL && profcmd[i] != '.';i++)
+		pfcb[1+i] = profcmd[i];
+	pfcb[9]  = 'S';
+	pfcb[10] = 'U';
+	pfcb[11] = 'B';
+	cbdos(SET_DMA_ADDR,dma);
+	return((UWORD)(cbdos(SEARCH_FIRST,pfcb) <= 3));
+}
+
+
 main()
 {					 /*---------------------*/
+	REG BYTE *com_index;		 /* cmd execution ptr   */
+	REG UWORD i;			 /*---------------------*/
 	dirflag = TRUE;		         /* init fcb fill flag  */
 	cbdos(SET_DMA_ADDR,dma);          /* set system dma addr */
 	cfg_init();			 /* read CCP.CFG once   */
@@ -1701,6 +1772,32 @@ main()
 		else
 			com_index = user_ptr;
 		morecmds = FALSE;
+		echo_cmd(com_index,GOOD);
+	}
+	else
+	if(!(profile_done) && profstart())
+	{				/*----------------------*/
+					/* COLD START, and there*/
+					/* is a PROFILE.SUB on	*/
+					/* A:.  Run it as a	*/
+					/* command line, exactly*/
+					/* as if it had been	*/
+					/* typed: the parse loop*/
+					/* below sees a name of	*/
+					/* type SUB, cmd_file	*/
+					/* opens it as a submit	*/
+					/* file, and everything	*/
+					/* after that is the	*/
+					/* ordinary submit path.*/
+					/* v3 chains to the	*/
+					/* same command line	*/
+					/* (ccp3.asm:470-473).	*/
+					/*----------------------*/
+		flow_clear();
+		for(i = 0;profcmd[i] != NULL;i++)
+			usercmd[i] = profcmd[i];
+		usercmd[i] = NULL;
+		com_index = usercmd;
 		echo_cmd(com_index,GOOD);
 	}
 	else

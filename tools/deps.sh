@@ -17,6 +17,10 @@
 #
 #   kbootsrc      KBOOTSRC          the CHECKOUT, for include/bootinfo.h
 #
+# Search order for each: the variable wins; then the PINNED release in deps/
+# -- named by the tag DEPS gives, so bumping the pin stops an older unpack
+# answering to it -- then (emulator only) a c900 on $PATH; then a sibling
+# checkout, walking
 # outward AT MOST THREE PARENTS, then one inside a `repos/' directory beside
 # this repository.  Three parents is what reaches the enclosing workspace from
 # a repository staged at <workspace>/repos/<repo>; further out is not a
@@ -24,6 +28,15 @@
 # checkout on a CI runner and reports a false success.
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+
+# The tag DEPS pins a release to.  `make deps' unpacks into deps/<dir>-<ref>
+# and leaves deps/<dir> pointing at it, so the pin has a path of its own: the
+# search below names that path FIRST, and a bump of DEPS therefore stops the
+# previous unpack from answering as the pin.  This is the whole of what makes
+# the pin the default -- there is nothing to enforce and nothing to refuse.
+pinned() {
+	awk -v n="$1" '$1 == n { print $4 }' "$root/DEPS" 2>/dev/null
+}
 
 # The sibling search list for a repository name: three parents, then repos/.
 siblings() {
@@ -48,6 +61,8 @@ case "$dep" in
 emu)
 	VAR="EMU"
 	WANT="the Commodore 900 emulator"
+	LIST="$root/deps/commodore-900-emulator-$(pinned emu) \
+	      $root/deps/commodore-900-emulator"
 	p=$(command -v c900 2>/dev/null) &&
 		LIST="$LIST $(dirname "$(dirname "$p")")"
 	LIST="$LIST $(siblings commodore-900-emulator)"
@@ -105,6 +120,9 @@ toolchain)
 	WANT="the Z8001 cross toolchain"
 	# DEPS pins this as a release, unpacked by `make deps' into deps/ -- tried
 	# first, same as a sibling checkout would be.
+	LIST="$root/deps/commodore-900-toolchain-$(pinned toolchain)
+	      $root/deps/commodore-900-toolchain
+	      $(siblings commodore-900-toolchain)"
 	[ -n "$given" ] || given=${C900_TOOLCHAIN:-${Z8001_TOOLCHAIN:-}}
 	fixup() { echo "$1"; }
 	# The checkout is printed, not its host/build: this build wants both the

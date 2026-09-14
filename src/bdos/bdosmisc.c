@@ -20,6 +20,7 @@ EXTERN		rsxwboot();		/* RSX warm-boot removal (rsx.c)  */
 EXTERN		initexc();		/* init the exception handler in  */
 					/* exceptn.s			*/
 EXTERN UWORD	dirscan();		/* Directory scanning routine	*/
+EXTERN UWORD	dir_rd();		/* read one directory record	*/
 EXTERN BOOLEAN  set_attr();		/* Set File attributes function */
 
 /*  Declare external variables */
@@ -82,6 +83,10 @@ bdosinit()
     GBL.errmode = 0;
     GBL.conmode = 0;
     GBL.retcode = 0;
+    GBL.conpage = 0;		/* not configured: the BDOS pager is off */
+    GBL.conline = 0;
+    GBL.pmdefault = PM_ON;	/* v3's default, for the utilities	*/
+    GBL.pagemode = GBL.pmdefault;
     BTRACE("<8>");		/* GBL block initialised */
     BTRACE("<9>");		/* about to call xbdos(13) */
     xbdos(13,0, XNULL);		/* reset disk system function */
@@ -133,6 +138,14 @@ WORD parm;			/* 1 to reset submit flag */
 				   45) -- where the v3 CCP puts them */
     GBL.errmode = 0;
     GBL.conmode = 0;
+    /*	page mode back to its default, and a fresh page.  v3 does this
+	per COMMAND, in the CCP (ccp3.asm:603-614 `set$pg$mode'), so that
+	a program which turned paging off cannot leave it off for the
+	next one.  The CCP regains control here -- this is the same
+	moment rsxwboot() above calls v3's per-command `rsx$chain' -- so
+	this is where the reset belongs in a BDOS that owns the byte.  */
+    GBL.pagemode = GBL.pmdefault;
+    GBL.conline = 0;
     initexc( &(GBL.excvec[0]) );
     bwboot();
 }
@@ -204,6 +217,8 @@ REG struct fcb *fcbp;
     REG BYTE *p;
     REG UWORD i;
     REG UBYTE  ch;
+    REG UWORD  rtn;
+    WORD       sec;
     BSETUP
 
     p = (BYTE *)fcbp;
@@ -226,6 +241,9 @@ REG struct fcb *fcbp;
 	    case 'A':   GBL.retcode = RC_BDOS;
 			warmboot(1);
 	    case 'C':   fcbp->ftype[robit] &= 0x7f;
+			sec = GBL.dirsecn;
+			rtn = dirscan(set_attr, fcbp, 2);
+			return(rtn);
 	}
     }   while (TRUE);
 }

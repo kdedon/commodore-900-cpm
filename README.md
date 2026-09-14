@@ -1,5 +1,15 @@
 # CP/M-8000 for the Commodore 900
 
+CP/M-8000 for the Zilog Z8001-based Commodore 900: the machine BIOS, the
+BDOS, the CCP and the utilities. The BDOS implements the CP/M 3 function
+set -- function 12 answers `0x2031`, and functions 44, 45, 49, 60, 98-105
+107-112 and 152 are there, with SFCB date stamps, directory labels, chained
+
+The system banner carries the date the system was BUILT: `CPMDATE` and
+`COPYYEAR` in the Makefile come from `date` on the build host. This is
+deliberate -- a build date that is a build date -- so the same source
+rebuilt on another day produces a different banner, and `cpm.sys` is not
+reproducible byte-for-byte across days.
 
 ## Build
 
@@ -20,6 +30,35 @@ Outputs:
 | `build/cpma-rel.img` | release drive A without test programs |
 | `build/cpmb.img` | 8 MB drive B |
 
+
+## A local medium with your own programs
+
+The release disk carries only what this project may redistribute. To try
+programs of your own -- for instance against the CP/M-80 and CP/M-86
+compatibility shims on the development drive -- build a private medium:
+
+    make cpmlocal LOCALDIR=<a directory of extra files> LOCALOUT=<a path outside the checkout>
+
+The result is a bootable disk image: the development drive A, plus every
+regular file in `LOCALDIR`, staged under the same 8.3 naming rules as the
+rest of the disk (names are upper-cased; a name that does not fit is
+reported rather than silently changed). Drive B and the system image are the
+ones `make` just built.
+
+The target is opt-in. Nothing in `make all` depends on it, it adds no check
+to the ordinary build, and it names none of your files: the directory is the
+whole interface.
+
+**The licence boundary.** Files you supply are yours, not this project's,
+and may not be redistributable. They are never copied into this repository,
+never committed, and never vendored -- and neither is a medium built from
+them. `make cpmlocal` therefore refuses an `LOCALOUT` that resolves inside
+this checkout or inside the directory holding the sibling checkouts, and
+writes nothing when it refuses. An ignored `build/` directory is not an
+exception: an ignore rule is the only thing between such a file and a
+commit. Give `LOCALOUT` a path somewhere else entirely. If the guarded
+parent directory is wrong for your layout, set `LOCALGUARD` to the directory
+that must stay clean.
 
 ## Verify
 

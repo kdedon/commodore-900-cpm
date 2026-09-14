@@ -27,6 +27,97 @@ extern int inb();
 extern outb();
 
 static int convid;	/* nonzero: video console, input = local keyboard */
+/************************************************************************/
+/*	AUX -- the spare line as a device, not a terminal (N2)		*/
+/************************************************************************/
+
+static int auxchan = -1;	/* channel BIOS 6/7 use; -1 = no AUX line */
+
+static auxattach(dev)
+int dev;
+{
+	register int was;
+
+	was = (auxchan < 0) ? CD_NONE : CD_SER(auxchan);
+	if (dev < CD_NONE)
+		return (was);		/* a query, not a change */
+	if (dev == CD_NONE) {
+		auxchan = -1;
+		return (was);
+	}
+	if (dev == CD_ROM)
+		return (-1);
+	/* the same test conattach() makes, and for the same reason: only a
+	 * channel the loader FOUND may be polled and stored at */
+	if ((conmap & (1 << (dev - 1))) == 0 || sccport(dev - 1, 0) == 0)
+		return (-1);
+	auxchan = dev - 1;
+	return (was);
+}
+
+/*
+ * auxist() -- is a byte waiting on the AUX line?  1 yes, 0 no, -1 there
+ * is no AUX line.  BIOS function 31.  It costs one word compare on an
+ * armed channel and one IN on a polled one, so a protocol may call it in
+ * a tight loop without paying for the wire.
+ */
+static auxist()
+{
+	if (auxchan < 0)
+		return (-1);
+	if (rxhead[auxchan] != rxtail[auxchan])
+		return (1);		/* the ring first -- see conpoll() */
+	if (rxon[auxchan])
+		return (0);
+	return ((inb(sccport(auxchan, 0)) & RXAVAIL) != 0);
+}
+
+/*
+ * auxin() -- the next AUX byte, 0..255, or -1 if none is waiting.  The
+ * ring is read before the rxon[] test for the reason conpoll() gives:
+ * characters left in it by a channel since put back on the polled path
+ * arrived first and are still first.
+ */
+static auxin()
+{
+	register int c;
+
+	if (auxchan < 0)
+		return (-1);
+	if (rxhead[auxchan] != rxtail[auxchan]) {
+		c = rxbuf[auxchan][rxtail[auxchan]] & 0xff;
+		rxtail[auxchan] = (rxtail[auxchan] + 1) & RXRMASK;
+		return (c);
+	}
+	if (rxon[auxchan])
+		return (-1);
+	if ((inb(sccport(auxchan, 0)) & RXAVAIL) == 0)
+		return (-1);
+	return (inb(sccport(auxchan, 8)) & 0xff);
+}
+
+/*
+ * auxout(c) -- one byte out of the AUX line.  The Tx-empty wait is
+ * bounded by the same count conout() uses and for the same reason: a
+ * line whose far end has gone must cost the program a delay, not the
+ * machine.  A byte dropped that way is the protocol's to notice, and
+ * every protocol worth running over a serial line does.
+ */
+static auxout(c)
+int c;
+{
+	register int i;
+	register int p;
+
+	if (auxchan < 0)
+		return;
+	p = sccport(auxchan, 0);
+	for (i = 0; i < 20000; i++)
+		if (inb(p) & TXEMPTY)
+			break;
+	outb(sccport(auxchan, 8), c & 0xff);
+}
+
 
 static char iobyte;
 
@@ -268,6 +359,15 @@ int vec, id, fcw, pcseg, pcoff;
 /*	Init + dispatcher						*/
 /************************************************************************/
 
+	/*  The AUX device (N2) starts on the SAME channel console 1 does --
+	 *  the first spare port, 0x0120 on this machine.  That is not two
+	 *  owners of one wire by accident: there is only one spare wire, and
+	 *  which of the two owns it is the program's choice, made with
+	 *  function 28 (`CONDEV(1, CD_NONE)') at the moment a transfer
+	 *  starts.  Binding AUX somewhere else, or nowhere, is function 32.  */
+	auxchan = -1;
+		if (auxchan < 0)
+			auxchan = chan;		/* ...and so is the AUX line */
 biosinit()
 {
 	extern int mapseg();
@@ -314,8 +414,24 @@ long d1, d2;
 			putchar((int)d1);
 		break;
 
+	/*
+	 * PUNCH and READER, on the AUX line (N2).  With no AUX device
+	 * bound they are what they were before N2: a discard and a
+	 * constant EOF.  READER does not block -- see the AUX banner --
+	 * so 0x1A means either the reader's EOF or "nothing yet", and
+	 * function 31 is how a caller tells those apart.
+	 */
+	case 6:					/* PUNCH(char) */
+		auxout((int)d1);
 		break;
 
+	case 7:					/* READER */
+		{
+			register int c;
+
+			c = auxin();
+			return (c < 0 ? 0x1aL : (long)c);
+		}
 
 	case 8:					/* HOME */
 		settrk = 0;
@@ -374,6 +490,20 @@ long d1, d2;
 
 	case 23:				/* TIME: read/set the RTC */
 		return (rtctime(d1, (int)d2));
+
+	case 31:				/* AUXIST */
+		return ((long)auxist());
+
+	/*
+	 * AUXDEV: bind the AUX device to a serial channel, in the same
+	 * CD_SER() numbering function 28 uses; d1 < 0 only asks.  Answers
+	 * the device it was bound to, or -1 if the argument was not one.
+	 * 32 is the next free code above AUXIST, and it is on bioscl()'s
+	 * allowed list for the reason function 28 is: the whole point is
+	 * that a transient program decides who owns the spare wire.
+	 */
+	case 32:				/* AUXDEV(device) */
+		return ((long)auxattach((int)d1));
 
 	/*
 	 * BIOCOST-only, cpm.h BIOS_ROMCHAR/BIOS_VSETCHAR: not stock CP/M-8000

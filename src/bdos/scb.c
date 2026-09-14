@@ -139,6 +139,14 @@ REG UWORD info;			/* the parameter word of this call	*/
     scbputw(SCB_MXTPA, (UWORD)((tpa_ht - 1L) & 0xffffL));
 
     scbimg[SCB_COLUMN] = (UBYTE)GBL.column;
+    /*	the four console-paging bytes.  They were image-only until the
+	BDOS grew a pager (conbdos.c pagelf); they are mirrors now, so a
+	program that reads page$mode sees what the driver is really
+	doing and one that writes it changes what the driver does.  */
+    scbimg[SCB_CONPAGE] = GBL.conpage;
+    scbimg[SCB_CONLINE] = GBL.conline;
+    scbimg[SCB_PAGEMODE] = GBL.pagemode;
+    scbimg[SCB_PMDEFAULT] = GBL.pmdefault;
     scbputw(SCB_CONMODE, GBL.conmode);
     scbimg[SCB_OUTDELIM] = GBL.delim;
     scbimg[SCB_MLTIO] = GBL.multcnt;
@@ -154,6 +162,16 @@ MLOCAL scbpost()
     BSETUP
 
     GBL.column = UBWORD(scbimg[SCB_COLUMN]);
+    /*	All four paging bytes are writable.  CP/M 3 documents @CONPAGE
+	and page$mode as read/write (ref/cpm3/scb.asm) and @CONLINE as
+	the driver's own, but v3's func49 has no read-only check at all
+	(bdos30.asm:4716-4725) and a program that wants to start a fresh
+	page by zeroing the line count is doing something reasonable, so
+	the value is honoured rather than silently discarded.  */
+    GBL.conpage = scbimg[SCB_CONPAGE];
+    GBL.conline = scbimg[SCB_CONLINE];
+    GBL.pagemode = scbimg[SCB_PAGEMODE];
+    GBL.pmdefault = scbimg[SCB_PMDEFAULT];
     GBL.conmode = scbword(SCB_CONMODE);
     GBL.delim = scbimg[SCB_OUTDELIM];
     GBL.errmode = scbimg[SCB_ERMDE];

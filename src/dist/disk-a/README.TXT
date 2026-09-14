@@ -8,4 +8,19 @@ headers and LIBCPM.A.  HELLO.C compiles and runs on this machine:
 	A>HELLO
 
 Utilities added by this port: SDIR SHOW SUBMIT SET INITDIR GENCOM
+RSXLDR DATE HELP PAGET GET PUT.  Type a name with no arguments for its
+usage.
+
+	A>HELP
+
+lists the topics it holds and HELP followed by a topic name prints it;
+it reads HELP.HLP, so keep the two together.  PAGET turns the console's
+page mode on and off.  GET takes console input for a program from a
+file, and PUT captures console output to one; each attaches a resident
+module, GET.RSX or PUT.RSX, which must be on the disk beside it.
+
+Application software, compiled on this machine from C in the CP/M-68K
+users' group collection: SDB, David Betz's relational database (type
+`help' at its SDB> prompt; it reads SDB.HLP), and Robert Heller's SORTFL,
+KILLDU, TOHEX and FROMHEX.  Their source is on the development disk.
 

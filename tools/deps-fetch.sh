@@ -18,6 +18,11 @@
 #                 afternoon; a pin would record what a build should have used,
 #                 and the release stamp already records what it did.
 #   kind release  a third-party BINARY.  <ref> is a TAG, unpacked into
+#                 deps/<basename of url>-<ref>/, with deps/<basename of url>
+#                 left pointing at it; both are gitignored.  The unpack is
+#                 named by the tag so that the pin has a path of its own,
+#                 which is what lets tools/deps.sh prefer the pin over
+#                 whatever else is lying around the machine.  Pinned
 #                 because we cannot fix it and nothing about a binary is
 #                 recoverable from our own history: "which one ran this" has
 #                 to be a number chosen in advance.  <asset> is the release
@@ -28,6 +33,13 @@
 #                 on two hosts now, so a one-host asset name would make `make
 #                 deps' work on one of them only.
 #
+# Idempotent, and it never writes over an existing checkout.  For a CLONE,
+# "already there" means the resolver finds one -- our own repositories are
+# floating branches and any checkout of one will do.  For a PINNED RELEASE it
+# means the pinned unpack is on disk, and nothing weaker: a sibling checkout
+# of the toolchain resolves, but it is not v0.1.4, and treating it as though
+# it were is how `make deps DEP=toolchain' came to decline to fetch the very
+# thing DEPS pins.  Asking for the pin now gets the pin.
 set -e
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -48,6 +60,24 @@ resolve() {
 	echo "$_r"
 }
 
+# deps/<dir> is the name the resolvers have always searched; deps/<dir>-<ref>
+# is the pin's own.  Keep the plain name pointing at the pin so both answer,
+# and so bumping DEPS moves the plain name too.  A copy stands in where
+# symlinks do not exist; failing to place it is not an error -- the ref-named
+# directory is the one the resolver looks at first.
+point_at() {
+	# $1 the unpacked pin  $2 the plain name
+	[ -n "$2" ] || return 0
+	[ "$1" = "$2" ] && return 0
+	if [ -L "$2" ] || [ ! -e "$2" ]; then
+		rm -f "$2"
+		ln -s "$(basename "$1")" "$2" 2>/dev/null ||
+			cp -a "$1" "$2" 2>/dev/null || return 0
+		echo "  $2 -> $(basename "$1")"
+	fi
+	return 0
+}
+
 fetch_git() {
 	# $1 name  $2 url  $3 ref  $4 dest
 	if git -C "$4" rev-parse --git-dir >/dev/null 2>&1; then
@@ -63,8 +93,10 @@ fetch_git() {
 }
 
 fetch_release() {
+	# $1 name  $2 url  $3 ref  $4 dest (deps/<dir>-<ref>)  $5 asset  $6 link
 	if [ -d "$4" ]; then
 		echo "$1: $3 already unpacked at $4 -- left alone"
+		point_at "$4" "$6"
 		return 0
 	fi
 	[ -n "$5" ] || { echo "$1: a release line needs an asset name" >&2; return 1; }
@@ -107,6 +139,7 @@ fetch_release() {
 	mkdir -p "$(dirname "$4")"
 	if [ -n "$inner" ]; then mv "$inner" "$4"; rm -rf "$tmp"; else mv "$tmp" "$4"; fi
 	echo "$1: unpacked $3 -> $4"
+	point_at "$4" "$6"
 }
 
 rc=0
@@ -116,8 +149,21 @@ while read -r name kind url ref asset <&3; do
 	case "$name" in ''|\#*) continue ;; esac
 	[ -z "$only" ] || [ "$only" = "$name" ] || continue
 	dir=$(basename "$url" .git)
+	# A clone is satisfied by any checkout the resolver can see; a pinned
+	# release is satisfied only by that pin, so the resolver's answer does
+	# not get a vote there.  fetch_release does its own idempotence on the
+	# ref-named directory.
+	if [ "$kind" != release ]; then
+		got=$(resolve "$name") || got=
+		if [ -n "$got" ]; then
+			echo "$name: already resolves to $got"
+			continue
+		fi
+	fi
 	case "$kind" in
 	git)     fetch_git "$name" "$url" "$ref" "$(cd "$root/.." && pwd)/$dir" || rc=1 ;;
+	release) fetch_release "$name" "$url" "$ref" "$root/deps/$dir-$ref" "$asset" \
+			"$root/deps/$dir" || rc=1 ;;
 	*)       echo "$name: unknown kind \`$kind' in DEPS" >&2; rc=1 ;;
 	esac
 	got=$(resolve "$name") || got=

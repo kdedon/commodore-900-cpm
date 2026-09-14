@@ -7,6 +7,7 @@
 # LOG is the verify-legacy transcript, FSDIR the cpma partition extracted
 #
 #     read back out of its hex dump, not pinned here -- see LIT below)
+#     (base and index the wrong way round in splitfast.s), so
 #
 # Prints one `FAIL [name] ...' line per broken assertion (exit nonzero on
 # any) followed by a single dated RECORD line -- the retention record for
@@ -68,6 +69,7 @@ record() {
 	_vec=`sed -n "/^A>$_cmd\$/,/^A>/{/TRAP vec=/p}" "$work" | head -1 |
 		sed -n 's/.*\(TRAP vec=[0-9A-Fa-f]*\).*/\1/p'`
 	if [ -n "$_vec" ]; then
+this is the shim regressing, not a known failure (see the head of this file)"
 	else
 	fi
 }

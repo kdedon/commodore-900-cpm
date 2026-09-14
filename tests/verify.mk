@@ -9,6 +9,14 @@ TESTIMG	= build/emutest.bin
 EMUMAX	?= 600000000
 # Stop on console idle or the CCP's unknown-command echo of ENDWORD.
 # The trailing '?' distinguishes that response from the typed command echo.
+ENDWORD	?= ZZEND
+ENDMARK	?= $(ENDWORD)?
+EMUIDLE	?= --stop-on=idle --stop-mark='$(ENDMARK)'
+# Appended to a scripted --input to end the run at that point.  Used only
+# where the script leaves the guest back at the CCP prompt: anywhere else
+# the word would be swallowed by whatever is reading the console, the mark
+# would not print, and the run would end on idle as before.
+ENDIN	= $(ENDWORD)\r
 
 # A CP/M-only disk has one boot entry, so scripted input needs no menu selection.
 OSSEL	=
@@ -30,6 +38,7 @@ EMUOK = test "`cat $(EMUSTATUS)`" = 0 \
 # suspect.  The session itself is trivial on purpose (one DIR): what is under
 # test is the boot chain, not the command.
 BOOTLOG	= build/verify-boot.log
+BOOTIN	= $(OSSEL)DIR *.TXT\r$(ENDIN)
 .PHONY: verify-boot verify-bootgate
 verify-boot: all $(CPMDISK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CPMDISK)) \
@@ -99,6 +108,7 @@ verify-bootgate: verify-boot
 VERIFYIN = $(OSSEL)DIR M*.*\rMHELLO ALPHA BETA-1\rMHELLO\rBEEP 2\rFCOPY HELLO.TXT COPY2.TXT\rTYPE COPY2.TXT\rFCOPY NOPE.TXT X.TXT\rDIR *.TXT\rSTAT COPY2.TXT\rPIP OUT2.TXT=COPY2.TXT\rTYPE OUT2.TXT\rDDT MHELLO.Z8K\r
 # Second cold boot of the SAME image (no re-patch): the files written by
 # the first session must still be there.
+REVERIFYIN = $(OSSEL)DIR *.TXT\rTYPE COPY2.TXT\rMHELLO AGAIN\r$(ENDIN)
 # ED interactive session (verify-ed).  ED's '*' prompt is not a gate
 # character, so everything after the ED command line runs gate-off (\g),
 # paced on the guest's blocked-reading RR0 poll streak (emulator commit
@@ -114,6 +124,7 @@ VERIFYIN = $(OSSEL)DIR M*.*\rMHELLO ALPHA BETA-1\rMHELLO\rBEEP 2\rFCOPY HELLO.TX
 # All four tools are 0xEE0B split-I/D binaries running through the pgmld
 # shim.  Byte-identity of the extracted member is checked host-side
 # after the run (mkcpmfs.py --extract on the cpma partition).
+ARXVERIFYIN = $(OSSEL)ASZ8K MINI.8KN\rASZ8K STARTUP.8KN\rDIR *.OBJ\rXCON -o MINI.O MINI.OBJ\rXCON -o START2.O STARTUP.OBJ\rXDUMP MINI.O\rAR8K rv TEST.A MINI.O START2.O\rAR8K tv TEST.A\rPIP MINIORIG.O=MINI.O\rERA MINI.O\rAR8K xv TEST.A MINI.O\rDIR *.O\r$(ENDIN)
 # cpma partition base in 512-byte blocks on the dist disk (hd42-cpm.media).
 CPMA_BASEBLK = 38144
 # The split tools run through the SC-trap shim (~3-6x native), so the
@@ -139,6 +150,7 @@ verify-v1: all
 	: > $(V1LOG)
 	for c in 'MSCOPY BIG.TXT MSV1.TXT 32' 'ERRTEST' 'CPM3FN'; do \
 		{ $(EMUCD) && ./c900 --disk=$(abspath $(V1IMG)) \
+			--input="$(OSSEL)$$c\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
 			$(EMUSTAT); } \
 		| tee -a $(abspath $(V1LOG)); $(EMUOK); done
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(V1IMG)) \
@@ -173,6 +185,29 @@ verify-v1: all
 		&& echo "verify-v1: PASS -- 32-records-per-call copy byte-identical" \
 		|| { echo "verify-v1: FAIL -- multi-sector copy differs on disk"; exit 1; }
 
+# ---- console flow control: ^S/^Q/^C via conbrk() (verify-conbrk) ----
+# Nothing else in this suite sends a control character to a RUNNING
+# program's console output -- every other scripted session either types
+# a command line or edits one at the CCP's function-10 prompt.  Widening
+# the keyboard poll to once every eight characters
+# changed exactly the code this exercises (src/bdos/conbdos.c conbrk())
+# and said outright that this test was owed.
+#
+# CONBRK.Z8K (src/cmd/conbrk.c) is the guest half: `CONBRK P nnnn' prints
+# nnnn "NNNN " tokens one character at a time through BDOS function 2 --
+# conbrk()'s own path -- after a preamble that forces conbrk()'s poll
+# counter to a known zero, so the first poll inside the measured loop is
+# exactly its 8th character (CONBRK_POLL, conbdos.c) and not some
+#
+# until the emulator grew a primitive for it, and an earlier revision had to strip
+#
+#
+#               the widening could have introduced silently: the widened
+CBRKTOKENS = 0200
+.PHONY: verify-conbrk
+verify-conbrk: all
+	@$(EMUOK)
+
 # ---- split-I/D shim offline validation (dev instruments; the on-target
 # scanner (src/bdos/zsplit.c, run by pgmld at load time) is what actually
 # ships and is authoritative -- these host tools exist to validate it, not
@@ -201,6 +236,19 @@ splitcheck: build/splitchk
 	echo "splitcheck: scanning `echo $$bins | wc -w` binaries"; \
 	build/splitchk $$bins
 
+# THE TRIPLE ONCE CAUGHT A REAL ONE, and it is worth knowing what.  V5
+# made the SCB's page$mode byte a live mirror of the BDOS's page mode
+# (src/bdos/scb.c) and first shipped that mode OFF -- and in CP/M 3 "off"
+# is 0FFh while 0 means ON.  DUMP.COM reads page$mode
+# (ref/cpm3/dump.asm:251,374-380,429) and takes a shorter path when paging
+# is off, so the target run fell to 14,240/604/864 against the host's
+# unchanged 14,314/605/872 and this target failed.  It was right to: the
+# same byte had silently stopped SET pausing (`make verify-setb', session
+# 3).  The system ships page$mode = PM_ON again and gates its own pager on
+# @CONPAGE instead (src/bdos/bdosmisc.c), so the numbers below are v3's
+# environment on both machines.  A future divergence here is the same
+# question: what did the two sides disagree about?
+#
 # CP/M 3 directory format (BDOS, mkcpmfs.py, cpm(1)) must stay byte-compatible.
 # cpm(1) stays a Coherent source, not vendored: drifting oracle becomes useless.
 COHERENT_OS := $(if $(COHERENT_OS),$(COHERENT_OS),$(shell sh tools/deps.sh userland))
@@ -221,6 +269,7 @@ dirfmt-check: build/cpmhost
 # pulled back out and the extensions must still be there, intact.
 STAMPIMG = build/stamptest.bin
 STAMPCPMA = build/cpma-stamped.img
+STAMPVERIFYIN = $(OSSEL)DIR\rSTAT\rSTAT *.*\rTYPE HELLO.C\rPIP STAMP1.TXT=HELLO.C\rTYPE STAMP1.TXT\rDIR *.TXT\rSTAT\r$(ENDIN)
 .PHONY: verify-stamped
 verify-stamped: all build/cpmhost
 	cp $(CPMAIMG) $(STAMPCPMA)
@@ -267,6 +316,7 @@ DBERRLOG = build/verify-driveb-err.log
 # the command on A: while B: is the drive it acts on).  The DIR pairs are
 # the visibility cross-check: each new file on its own drive, "No file"
 # on the other.
+DBVERIFYIN = $(OSSEL)SHOW A:[DRIVE]\rSHOW B:[DRIVE]\rPIP B:FROMA.TXT=HELLO.C\rPIP AONLY.TXT=HELLO.C\rDIR B:AONLY.TXT\rDIR AONLY.TXT\rDIR FROMA.TXT\rDIR B:FROMA.TXT\rB:\rA:PIP BNEW.TXT=BONLY.TXT\rDIR\rDIR A:BNEW.TXT\rA:\rDIR B:\r$(ENDIN)
 .PHONY: verify-driveb
 verify-driveb: all
 	$(MKDISK) $(DBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
@@ -275,6 +325,7 @@ verify-driveb: all
 		| tee $(abspath $(DBLOG))
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(DBIMG)) \
+		--input="$(OSSEL)ERRTEST\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(DBERRLOG))
 	@$(EMUOK)
 	@# --- the drive table, as the two drives describe themselves ---
@@ -285,6 +336,7 @@ verify-driveb: all
 	@# --- cross-visibility, from the running system ---
 	@grep -q 'B: BONLY    TXT' $(DBLOG) \
 		|| { echo "verify-driveb: FAIL -- the packed B: image is not readable"; exit 1; }
+	@# verify-util's SDIR [SHORT] check.)
 	@grep -q 'A: AONLY    TXT' $(DBLOG) \
 		|| { echo "verify-driveb: FAIL -- A: did not get its own file"; exit 1; }
 	@test "`grep -c 'No file' $(DBLOG)`" = 3 \
@@ -315,6 +367,9 @@ verify-driveb: all
 		|| { echo "verify-driveb: FAIL -- an A: file is in B:'s region on disk"; exit 1; }
 	@echo "verify-driveb: PASS -- B: is its own region (block $(CPMB_BASEBLK)), A: unchanged, P: refused"
 
+BPVERIFYIN = $(OSSEL)SHOW B:[DRIVE]\rPIP AONLY.TXT=HELLO.C\rB:\rA:PIP BNEW.TXT=BONLY.TXT\rDIR\rA:\r$(ENDIN)
+BFVERIFYIN = $(OSSEL)SHOW B:[DRIVE]\rPIP B:FROMA.TXT=HELLO.C\rDIR B:\r$(ENDIN)
+		--input="$(OSSEL)DIR B:\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 # ---- INITDIR + BDOS function 50 (verify-initdir) ----
 # INITDIR rewrites a LIVE directory: a partial or wrong run destroys
 # files, so almost none of this target is a transcript grep.  The three
@@ -392,6 +447,7 @@ verify-initdir: all
 	@$(EMUOK)
 	@# ---- boot 3: the function 50 contract, both halves ----
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(IDIMG)) \
+		--input="$(OSSEL)BIOSET\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(IDLOG3))
 	@$(EMUOK)
 	@# ---- the AFTER state, off the same disk ----
@@ -529,15 +585,18 @@ CPMA_START = 38144
 selfhost: all
 	$(MKDISK) $(TESTIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(TESTIMG)) \
+		--input="$(OSSEL)ZCC HELLO.C\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| python3 $(abspath tests/tstamp.py) \
 		| tee $(abspath $(SELFDIR).1.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(TESTIMG)) \
+		--input="$(OSSEL)LD8K -O HELLO2.Z8K STARTUP.O HELLO.O LIBCPM.A\r$(ENDIN)" \
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| python3 $(abspath tests/tstamp.py) \
 		| tee $(abspath $(SELFDIR).2.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(TESTIMG)) \
+		--input="$(OSSEL)HELLO2\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| python3 $(abspath tests/tstamp.py) \
 		| tee $(abspath $(SELFDIR).3.log)
 	@$(EMUOK)
@@ -549,6 +608,102 @@ selfhost: all
 		$(SELFDIR).3.log $(SELFDIR) \
 		|| { echo "selfhost: FAIL"; exit 1; }
 	@echo "selfhost: PASS -- artifacts in $(SELFDIR)/"
+
+# ---- src/app: the native applications, rebuilt on the machine ----
+# `selfhost' above proves the chain works on a nine-line HELLO.C.  These
+# two targets are that chain doing real work, and they answer a question
+# HELLO.C cannot: the five .Z8K files checked into src/app/ beside their
+# source -- are they still what that source compiles to?
+#
+# They cannot be built by `all'.  The compiler is ZCC.Z8K and the linker
+# LD8K.Z8K; both are Z8001 programs that run on the target, so a rebuild
+# needs the emulator, and `all' must not.  So the binaries are checked in,
+# and these targets are what stops "checked in" from meaning "unchecked":
+# each one ERASES the .Z8K on drive A:, rebuilds it there from the .C
+# beside it, pulls the partition back out and cmps the result against the
+# repository's copy.  Erase first, or a failed compile leaves the old file
+# in place and the cmp compares the checked-in binary with itself.
+#
+# The cmp is an assertion and not a hope because ZCC and LD8K are
+# byte-reproducible -- measured, not assumed: two entirely separate
+# sessions produced fourteen byte-identical SDB objects from the same
+# source.  If a cmp here ever fails, the source and the binary have come
+# apart and both belong in the same commit; tests/appchk.sh says so.
+#
+# tests/appbuild.sh does the building, ONE COLD BOOT PER COMMAND, and its
+# header says why that is not the extravagance it looks like: a single
+# scripted session gets bytes eaten by ZCC's chained passes, and does it
+# intermittently, which is the worst way for a verification target to be
+# wrong.  The read-back and the assertions stay here.
+A3IMG	= build/a3test.bin
+A3DIR	= build/a3
+A3LOG	= build/verify-a3.log
+.PHONY: verify-a3
+verify-a3: all
+	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).1 SORTFL.Z8K SORTFL
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).2 KILLDU.Z8K KILLDU
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).3 TOHEX.Z8K TOHEX
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).4 FROMHEX.Z8K FROMHEX
+	cat $(A3LOG).1 $(A3LOG).2 $(A3LOG).3 $(A3LOG).4 > $(A3LOG)
+	rm -rf $(A3DIR); mkdir -p $(A3DIR)
+	dd if=$(A3IMG) of=$(A3DIR)/cpma.img bs=512 skip=$(CPMA_START) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(A3DIR)/cpma.img $(A3DIR)
+	@sh tests/appchk.sh $(A3LOG) $(A3DIR) \
+		SORTFL.Z8K KILLDU.Z8K TOHEX.Z8K FROMHEX.Z8K \
+		|| { echo "verify-a3: FAIL"; exit 1; }
+	@echo "verify-a3: PASS -- Robert Heller's four utilities rebuilt on the"
+	@echo "           machine from the source shipped beside them"
+
+# ---- Gate A: SDB ----
+# SDB is a 5,250-line relational DBMS with no terminal dependency at all:
+# what it exercises is the BDOS file layer -- creatb, lseek, random-record
+# read and write -- which is why the applications plan put it first.
+#
+# Fourteen compiles and a link, about eight minutes of emulated time.
+# This is the slowest target in the suite and it is slow for an honest
+# reason: it is a 1984 three-pass C compiler compiling a real program on a
+# 6 MHz machine.  Then one more cold boot runs what those fourteen
+# compiles produced -- read the help file off the disk, create a relation,
+# import three tuples from a text file, print it whole and then through a
+# WHERE clause, export it back out.  The export lands in a file, and the
+# file is pulled off the partition and checked host-side, so the answer is
+# not just something that scrolled past on a transcript.
+SDBIMG	= build/sdbtest.bin
+SDBDIR	= build/sdb
+SDBLOG	= build/verify-sdb
+SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
+# The session.  `create' names the attributes and their widths and the
+# relation's tuple capacity; `import' reads SDBIN.TXT one attribute value
+# per line; the `where' clause compares a num attribute, which in SDB is a
+# digit STRING compared by MTH.C's own arithmetic, so it is a real test of
+# a file this target just compiled.  The \" are for the shell: SDB wants
+# real quotes around a file name, or it scans it as an identifier and
+# appends .dat.
+.PHONY: verify-sdb
+verify-sdb: all
+	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	sh tests/appbuild.sh $(SDBIMG) $(SDBLOG).1.log SDB.Z8K $(SDBSRC)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(SDBIMG)) \
+		--input="$(SDBRUNIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } \
+		| python3 $(abspath tests/tstamp.py) \
+		| tee $(abspath $(SDBLOG)).2.log
+	@$(EMUOK)
+	rm -rf $(SDBDIR); mkdir -p $(SDBDIR)
+	dd if=$(SDBIMG) of=$(SDBDIR)/cpma.img bs=512 skip=$(CPMA_START) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(SDBDIR)/cpma.img $(SDBDIR)
+	@sh tests/appchk.sh $(SDBLOG).1.log $(SDBDIR) SDB.Z8K \
+		|| { echo "verify-sdb: FAIL"; exit 1; }
+	@sh tests/sdbchk.sh $(SDBLOG).2.log $(SDBDIR) \
+		|| { echo "verify-sdb: FAIL"; exit 1; }
+	@echo "verify-sdb: PASS -- SDB compiled from its own source on the"
+	@echo "            machine, byte-identical to src/app/SDB.Z8K; and that"
+	@echo "            binary created a relation, imported three tuples,"
+	@echo "            selected two of them and exported all three back"
+	@echo "            unchanged.  GATE A."
 
 # ---- real-time clock ----
 # DATE against BIOS function 23, over the emulator's OKI MSM58321 model
@@ -576,6 +731,8 @@ RTCSEED	= 2026-07-31T14:32:10
 RTCLOG	= build/verify-rtc.log
 RTCRACELOG = build/verify-rtc-race.log
 RTCNONELOG = build/verify-rtc-noclock.log
+RTCVERIFYIN = $(OSSEL)DATE\rDATE\rDATE 03/01/04 07:08:09\rDATE\rDATE 13/45/99 99:99:99\rDATE Q\rDATE 01/01/78 00:00:00\rDATE 12/31/77 12:34:56\rDATE\rDATE 07/04/05 12:34:56\r$(ENDIN)
+RTCNONEIN = $(OSSEL)DATE\rDATE 07/31/26 14:32:10\rDATE\r$(ENDIN)
 .PHONY: verify-rtc
 verify-rtc: all
 	$(MKDISK) $(RTCIMG) $(CPMSYS) $(CPMAIMG)
@@ -687,6 +844,7 @@ NYBEFOREMAX ?= 60000000
 verify-rtc-newyear: all
 	$(MKDISK) $(NYIMG) $(CPMSYS) $(CPMAIMG)
 	$(EMUCD) && ./c900 --disk=$(abspath $(NYIMG)) \
+		--rtc=1979-12-31T23:00:00 --input="$(OSSEL)DATE\r$(ENDIN)" \
 		--max=$(NYBEFOREMAX) 2>$(abspath $(NYLOG))-before.err \
 		> $(abspath $(NYLOG))-before.log
 	@tail -1 $(NYLOG)-before.err
@@ -696,6 +854,7 @@ verify-rtc-newyear: all
 		|| { echo "verify-rtc-newyear: FAIL -- 1979 is a surplus of 3 and its code is 01"; exit 1; }
 	$(EMUCD) && ./c900 --disk=$(abspath $(NYIMG)) \
 		--rtc=1979-12-31T23:50:00 \
+		--input="$(OSSEL)DATE\rDATE 12/31/79 23:59:30\rDATE C\r$(ENDIN)" \
 		--max=$(NYMAX) 2>$(abspath $(NYLOG))-carry.err \
 		> $(abspath $(NYLOG))-carry.log
 	@tail -1 $(NYLOG)-carry.err
@@ -710,6 +869,7 @@ verify-rtc-newyear: all
 	@test "`sed -n 's/.*, leap \([0-9]*\),.*/\1/p' $(NYLOG)-carry.err`" = 0 \
 		|| { echo "verify-rtc-newyear: FAIL -- the leap-year selection did not count 01 -> 00 across the carry"; exit 1; }
 	$(EMUCD) && ./c900 --disk=$(abspath $(NYIMG)) \
+		--rtc=1980-02-28T23:59:30 --input="$(OSSEL)DATE C\r$(ENDIN)" \
 		--max=$(NYMAX) 2>$(abspath $(NYLOG))-leapday.err \
 		> $(abspath $(NYLOG))-leapday.log
 	@tail -1 $(NYLOG)-leapday.err
@@ -722,6 +882,7 @@ verify-rtc-newyear: all
 	@test "`sed -n 's/.*, leap \([0-9]*\),.*/\1/p' $(NYLOG)-leapday.err`" = 0 \
 		|| { echo "verify-rtc-newyear: FAIL -- 1980's leap-year selection is not 00"; exit 1; }
 	$(EMUCD) && ./c900 --disk=$(abspath $(NYIMG)) \
+		--rtc=1981-02-28T23:59:30 --input="$(OSSEL)DATE C\r$(ENDIN)" \
 		--max=$(NYMAX) 2>$(abspath $(NYLOG))-noleap.err \
 		> $(abspath $(NYLOG))-noleap.log
 	@tail -1 $(NYLOG)-noleap.err
@@ -747,6 +908,7 @@ V2LOG	= build/verify-v2.log
 verify-v2: all
 	$(MKDISK) $(V2IMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(V2IMG)) \
+		--input="$(OSSEL)SCBTEST\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(V2LOG))
 	@$(EMUOK)
 	@grep -q 'fn 9 now stops at a hash' $(V2LOG) \
@@ -757,6 +919,7 @@ verify-v2: all
 		|| { echo "verify-v2: FAIL -- SCBTEST did not finish"; exit 1; }
 	@echo "verify-v2: PASS"
 
+		--input="$(OSSEL)V3RET\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 # SDIR, SHOW, SUBMIT: CCP releases one line at a time, so one cold boot per session.
 # SDIR pages by default (SCB page-length 0 = 24-line v3 fallback); [NOPAGE] overrides.
 # SUBMIT is A:SUBMIT (resident builtin shadows bare name).
@@ -764,6 +927,9 @@ verify-v2: all
 DOL	= $$
 UTILIMG	= build/utiltest.bin
 UTILLOG	= build/verify-util
+UTILIN1	= $(OSSEL)SDIR [NOPAGE SIZE]\rSDIR [NOPAGE] *.TXT S*.Z8K\rSDIR [NOPAGE A SHORT] Z*.Z8K\r$(ENDIN)
+UTILIN2	= $(OSSEL)SDIR [NOPAGE FULL EXCLUDE] *.Z8K *.H\rSDIR [NOPAGE BOGUS]\rSDIR [NOPAGE USER=ALL DRIVE=ALL SIZE] S*.Z8K\rSDIR [NOPAGE DATE] *.SUB\r$(ENDIN)
+UTILIN3	= $(OSSEL)SHOW\rSHOW A:[DRIVE]\rSHOW [USERS]\rSHOW [LABEL]\r$(ENDIN)
 UTILIN4	= $(OSSEL)A:SUBMIT TEST HELLO SECOND\rTYPE $(DOL)$(DOL)$(DOL).SUB\rA:SUBMIT NOSUCH\rA:SUBMIT BADP\r
 UTILIN5	= $(OSSEL)A:SUBMIT TEST HELLO SECOND\r$(DOL)$(DOL)$(DOL)\r
 
@@ -871,6 +1037,10 @@ verify-util: all
 SETIMG	= build/settest.bin
 SETLOG	= build/verify-set
 SETRTC	= 2026-07-31T14:32:10
+SETIN1	= $(OSSEL)SET HELLO.TXT [RO,SYS,F1=ON,F3=ON]\rSTAT HELLO.TXT\rSET *.SUB [F2=ON]\rSET HELLO.C HELLO.TXT [ARCHIVE=ON]\rSET NOSUCH.TXT [RO]\r$(ENDIN)
+SETIN2	= $(OSSEL)SHOW [LABEL]\rSET [NAME=C900SET]\rSET [UPDATE=OFF]\rSHOW [LABEL]\r$(ENDIN)
+SETIN3	= $(OSSEL)SET [ACCESS=ON]\rSDIR [NOPAGE DATE] HELLO.C\rTYPE HELLO.C\rSDIR [NOPAGE DATE] HELLO.C\r$(ENDIN)
+SETIN4	= $(OSSEL)SET HELLO.C [PASSWORD=SECRET]\rSET [ACCESS=ON,CREATE=ON]\rSET HELLO.C [RO,RW]\rSET HELLO.C [NAME=X]\rSET [BOGUS]\rSET HELLO.C [ACCESS]\rSET [DIR]\r$(ENDIN)
 
 .PHONY: verify-set
 verify-set: all
@@ -1001,6 +1171,12 @@ SETBA	 = build/setb-a
 SETBCPMA = build/setb-cpma.img
 SETBCPMB = build/setb-cpmb.img
 SETBMAX	 = 900000000
+SETBIN1 = $(OSSEL)SET B:[NAME=C900SETB]\rSHOW B:[LABEL]\rSET B:BONLY.TXT [RO,SYS,F2=ON]\rSET A:HELLO.TXT B:READMEB.TXT [F4=ON]\rSET A:HELLO.TXT [F1=ON] B:READMEB.TXT [F2=ON]\r$(ENDIN)
+SETBIN2 = $(OSSEL)B:\rUSER 3\rA:SETU3 U3FILE.TXT [RO,F1=ON]\rA:SETU3 BONLY.TXT [SYS]\rUSER 0\rA:SET U3FILE.TXT [SYS]\r$(ENDIN)
+SETBIN3 = $(OSSEL)A:SET B:PAGE*.TXT [F3=ON]\r\g\r$(ENDIN)
+SETBIN4 = $(OSSEL)A:SET B:*.TXT [NOPAGE,F4=ON]\rA:SET B:SPECA.TXT B:SPECB.TXT B:SPECC.TXT B:SPECD.TXT B:SPECE.TXT B:SPECF.TXT B:SPECG.TXT B:SPECH.TXT B:SPECI.TXT [NOPAGE,F2=ON]\r$(ENDIN)
+SETBIN5 = $(OSSEL)SET [RO]\rPIP RONEW.TXT=HELLO.C\rSET HELLO.TXT [SYS]\rSET [RW]\rPIP RONEW.TXT=HELLO.C\rDIR RONEW.TXT\r$(ENDIN)
+SETBIN6 = $(OSSEL)SET B:[NAME=NOPE]\rSET P:HELLO.TXT [RO]\r\gA\r$(ENDIN)
 
 .PHONY: verify-setb
 verify-setb: all
@@ -1024,21 +1200,27 @@ verify-setb: all
 	$(MKDISK) build/setb-6.img $(CPMSYS) \
 		$(SETBCPMA) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/setb-1.img) \
+		--rtc=$(SETRTC) --input='$(SETBIN1)' --max=$(SETBMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(SETBLOG)-1.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/setb-2.img) \
+		--rtc=$(SETRTC) --input='$(SETBIN2)' --max=$(SETBMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(SETBLOG)-2.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/setb-3.img) \
+		--rtc=$(SETRTC) --input='$(SETBIN3)' --max=$(SETBMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(SETBLOG)-3.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/setb-4.img) \
+		--rtc=$(SETRTC) --input='$(SETBIN4)' --max=$(SETBMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(SETBLOG)-4.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/setb-5.img) \
+		--rtc=$(SETRTC) --input='$(SETBIN5)' --max=$(SETBMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(SETBLOG)-5.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/setb-6.img) \
+		--rtc=$(SETRTC) --input='$(SETBIN6)' --max=$(SETBMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(SETBLOG)-6.log)
 	@$(EMUOK)
 	@# ---- 1: SET's stamped-drive paths, on the drive that is not A:
@@ -1143,10 +1325,12 @@ verify-setb: all
 STAMPBIMG = build/stampbdos.bin
 STAMPBLOG = build/verify-stamp
 STAMPRTC = 2026-07-31T14:32:10
+STAMPIN2 = $(OSSEL)PIP PIPSTAMP.TXT=HELLO.C\rSDIR [NOPAGE DATE] PIPSTAMP.TXT\rSHOW [LABEL]\r$(ENDIN)
 .PHONY: verify-stamp
 verify-stamp: all
 	$(MKDISK) $(STAMPBIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(STAMPBIMG)) \
+		--rtc=$(STAMPRTC) --input="$(OSSEL)STAMPT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) \
 		2>/dev/null; $(EMUSTAT); } | tee $(abspath $(STAMPBLOG)-1.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(STAMPBIMG)) \
@@ -1214,6 +1398,7 @@ TRUNCLOG = build/verify-trunc.log
 verify-trunc: all
 	$(MKDISK) $(TRUNCIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(TRUNCIMG)) \
+		--input="$(OSSEL)TRUNCT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(TRUNCLOG))
 	@$(EMUOK)
 	@grep -q 'TRUNCT: PASS' $(TRUNCLOG) \
@@ -1226,6 +1411,7 @@ verify-trunc: all
 		|| { echo "verify-trunc: FAIL -- the truncated file is not 100 records on disk"; exit 1; }
 	@echo "verify-trunc: PASS -- fn 99 shortened the file and returned its blocks"
 
+		--input="$(OSSEL)WILDT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 # ---- the sign-on prints once per cold boot ----
 # bdosinit() (src/bdos/bdosmisc.c) prints the identification, and ccpif.s's
 # `tsetb sysinit; jr mi, ccploop' latch (c900oses/cpm8000/ref/may83/ccp/ccpif.z8k:88-91)
@@ -1239,6 +1425,7 @@ verify-trunc: all
 # the banner's wording instead of pinning it.
 SIGNIMG = build/signontest.bin
 SIGNLOG = build/verify-signon.log
+SIGNVERIFYIN = $(OSSEL)DIR M*.*\rMHELLO ONE\rTYPE HELLO.TXT\rSTAT HELLO.TXT\rMHELLO TWO\rDIR *.TXT\rBEEP 2\r$(ENDIN)
 # Transient programs above (MHELLO, STAT, MHELLO, BEEP) = warm boots.
 # All four run to completion: a program that stops at a prompt of its own
 # (SDIR's pager, DDT) would never reach BDOS fn 0 and so never warm-boot.
@@ -1271,6 +1458,7 @@ BANLOG	= build/verify-banner.log
 verify-banner: all
 	$(MKDISK) $(BANIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(BANIMG)) \
+		--input="$(OSSEL)DIR *.TXT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(BANLOG))
 	@$(EMUOK)
 	@sh tests/bannerchk.sh $(BANLOG) '$(CPMVER)' '$(CPMDATE)' '$(COPYYEAR)' \
@@ -1313,6 +1501,7 @@ verify-stampa: all
 		$(ASTAMPCPMA)
 	$(MKDISK) $(ASTAMPIMG) $(CPMSYS) $(ASTAMPCPMA)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(ASTAMPIMG)) \
+		--input="$(OSSEL)ASTAMPT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(ASTAMPLOG))
 	@$(EMUOK)
 	@grep -q 'ASTAMPT: fn 101 label mode 61' $(ASTAMPLOG) \
@@ -1358,17 +1547,21 @@ verify-lblnew: all
 	$(MKDISK) $(NOLBLIMG) $(CPMSYS) $(NOLBLCPMA)
 	$(MKDISK) $(PLAINIMG) $(CPMSYS) $(PLAINCPMA)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(NOLBLIMG)) \
+		--input="$(OSSEL)LBLNEW\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(LBLLOG)-1.log)
 	@$(EMUOK)
 	@# a second COLD boot of the same image: the login scan has to find
 	@# a label that was written above the last file entry, which is the
 	@# high-water-mark rule this wave fixed.
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(NOLBLIMG)) \
+		--input="$(OSSEL)SHOW [LABEL]\rSDIR [NOPAGE DATE] LBLNEW.TXT\r$(ENDIN)" \
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } | tee $(abspath $(LBLLOG)-2.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(PLAINIMG)) \
+		--input="$(OSSEL)LBLNEW NOSFCB\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(LBLLOG)-3.log)
 	@$(EMUOK)
+		--input="$(OSSEL)LBLNEW PWLABEL\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 	@grep -q 'LBLNEW: PASS' $(LBLLOG)-1.log \
 		|| { echo "verify-lblnew: FAIL -- see the BAD lines above"; exit 1; }
 		|| { echo "verify-lblnew: FAIL -- fn 100 did not make the label"; exit 1; }
@@ -1424,6 +1617,7 @@ TRUNCBLOG = build/verify-truncb.log
 verify-truncb: all
 	$(MKDISK) $(TRUNCBIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(TRUNCBIMG)) \
+		--input="$(OSSEL)TRUNCB\r$(ENDIN)" --max=$(TRUNCBMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(TRUNCBLOG))
 	@$(EMUOK)
 	@grep -q 'TRUNCB: PASS' $(TRUNCBLOG) \
@@ -1484,6 +1678,7 @@ TRUNCSLOG = build/verify-truncs.log
 verify-truncs: all
 	$(MKDISK) $(TRUNCSIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(TRUNCSIMG)) \
+		--input="$(OSSEL)TRUNCS\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(TRUNCSLOG))
 	@$(EMUOK)
 	@grep -q 'TRUNCS: PASS' $(TRUNCSLOG) \
@@ -1541,9 +1736,11 @@ verify-xfcb: all
 	$(MKDISK) $(XFCBIMG) $(CPMSYS) $(XFCBCPMA)
 	$(MKDISK) $(XFCBCTLIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(XFCBIMG)) \
+		--input="$(OSSEL)XFCBT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(XFCBLOG)-1.log)
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(XFCBCTLIMG)) \
+		--input="$(OSSEL)XFCBT NONE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(XFCBLOG)-2.log)
 	@$(EMUOK)
 	@grep -q 'XFCBT: PASS' $(XFCBLOG)-1.log \
@@ -1636,6 +1833,7 @@ verify-ed: all
 verify-arx: all
 	$(MKDISK) build/arxtest.bin $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/arxtest.bin) \
+		--input="$(ARXVERIFYIN)" --max=$(ARXMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath build/verify-arx.log)
 	@$(EMUOK)
 	@grep -q 'magic = EE03 nseg = 1' build/verify-arx.log \
@@ -1656,11 +1854,15 @@ verify-arx: all
 # against HELLO.C (which `all' stages), and DUMP against the same file
 # for a known-bytes check.  ED, DDT and LD8K are already proven by
 # verify-ed, verify and selfhost; this target does not repeat them.
+# privileged-instruction TRAP; fixing the split-I/D fast path they
+# strictly rather than recording it.
 LEGIMG	= build/legacytest.bin
 LEGLOG	= build/verify-legacy.log
+LEGIN	= $(OSSEL)PIP LEGCOPY.TXT=HELLO.C\rSTAT LEGCOPY.TXT\rDUMP HELLO.C\rNMZ8K STARTUP.O\rSIZEZ8K MHELLO.Z8K\rASZ8K MINI.8KN\rXCON -o MINI.O MINI.OBJ\rXDUMP MINI.O\rAR8K rv TEST.A MINI.O\r$(ENDIN)
 verify-legacy: all
 	$(MKDISK) $(LEGIMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(LEGIMG)) \
+		--input="$(LEGIN)" --max=$(ARXMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(LEGLOG))
 	@$(EMUOK)
 	dd if=$(LEGIMG) of=build/leg-cpma.img bs=512 skip=$(CPMA_BASEBLK) \
@@ -1775,6 +1977,7 @@ U0LOG	= build/verify-user0
 #			from here
 # then USER 0 and the same SET, which must work, so that the file's
 # attributes on disk say which area each command reached.
+U0IN = $(OSSEL)USER 3\rU0T\rSET U3ONLY.TXT [RO,F1=ON]\rSDIR [NOPAGE]\rSET U0PLAIN.TXT [F2=ON]\rUSER 0\rSET U0PLAIN.TXT [F3=ON]\r$(ENDIN)
 .PHONY: verify-user0
 verify-user0: all
 	rm -rf $(U0FS)
@@ -1930,6 +2133,7 @@ verify-ccpt: all
 # (RSXORG), so a fence that fails to move, or moves by the wrong amount,
 RSXIMG	= build/rsxtest.bin
 RSXLOG	= build/verify-rsx.log
+RSXVERIFYIN = $(OSSEL)RSXT\rRSXLDR UCASE.RSX T\rRSXT\rRSXLDR UCASE.RSX\rRSXT\rRSXT\rMHELLO RSX\r$(ENDIN)
 .PHONY: verify-rsx
 verify-rsx: all
 	$(MKDISK) $(RSXIMG) $(CPMSYS) $(CPMAIMG)
@@ -2024,6 +2228,7 @@ RSX2IN2	= $(OSSEL)RSXLDR PROT.RSX UCASEL.RSX\rRSXLDR PROT.RSX\rRSXT2\r
 RSX2IN3	= $(OSSEL)RSXLDR UCASE.RSX PROT.RSX T\rRSXT2\r
 RSX2IN4	= $(OSSEL)RSXLDR UCASE.RSX T PROT.RSX\rRSXT2\r
 RSX2IN5	= $(OSSEL)RSXLDR UCASE.RSX T PROT.RSX T\rRSXT2\r
+RSX2IN6	= $(OSSEL)RSXLDR UCASE.RSX PROT.RSX\rASZ8K MINI.8KN\rXCON -o MINI.O MINI.OBJ\rXDUMP MINI.O\rRSXT2\r$(ENDIN)
 # ---- three modules, and a module removed from the MIDDLE ----
 # Runs 1-6 never put more than two modules in the chain and never removed
 # one with survivors on both sides of it, so two things the layer is
@@ -2090,10 +2295,12 @@ verify-rsx2: all
 		4) in='$(RSX2IN4)';; 5) in='$(RSX2IN5)';; 7) in='$(RSX2IN7)';; \
 		8) in='$(RSX2IN8)';; 9) in='$(RSX2IN9)';; esac; \
 		{ $(EMUCD) && ./c900 --disk=$(abspath $(RSX2IMG)) \
+			--input="$${in}$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
 			$(EMUSTAT); } \
 		| tee $(abspath $(RSX2LOG))-$$n.log; $(EMUOK); done
 	$(MKDISK) $(RSX2IMG) $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSX2IMG)) \
+		--input="$(RSX2IN6)" --max=$(ARXMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(RSX2LOG))-6.log
 	@$(EMUOK)
 #	--- 1: the control, then two modules resident together
@@ -2304,6 +2511,7 @@ verify-gencom: all
 		case $$n in \
 		1) in='$(GCIN1)';; 2) in='$(GCIN2)';; 3) in='$(GCIN3)';; esac; \
 		{ $(EMUCD) && ./c900 --disk=$(abspath $(GCIMG)) \
+			--input="$${in}$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
 			$(EMUSTAT); } \
 		| tee $(abspath $(GCLOG))-$$n.log; $(EMUOK); done
 #	--- 1: one temporary module, bound, run twice, stripped
@@ -2424,6 +2632,10 @@ verify-hash-ab: $(HASHABON) $(HASHABOFF)
 
 CRSRIMG	= build/crsrtest.bin
 CRSRLOG	= build/verify-crsr.log
+# No $(ENDIN) here: this target replays the transcript through a terminal
+# emulator and asserts what is ON THE SCREEN.  Echoing one more command
+# scrolls the frame CRSRDEMO drew, so the mark would break the assertion.
+# The run ends on idle, as it did before.
 CRSRIN	= $(OSSEL)CRSRDEMO\r
 
 .PHONY: verify-crsr
@@ -2475,3 +2687,585 @@ verify-crsr: all build/crsrtest
 
 build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ tests/crsrtest.c
+# THE LAYOUT IS PART OF THE TEST (H7).  The bug is that filero()'s nested
+# dirscan reads a SECOND directory record into the one directory buffer,
+# leaving the delete() that called error(5) holding a pointer into the wrong
+# one -- so it only bites when CONCTGT.TXT's two entries are in different
+# records.  Which they are is decided by how many entries the rest of A:
+# takes: 97 and 124 straddle, 95, 96 and 98 do not, and a session on a
+# non-straddling disk passes having tested nothing.  tests/concpad.sh pins
+# the count when the image is built; concfree.py refuses to run the session
+# on a disk where the pin did not hold.
+	python3 tests/concfree.py $(CPMACONC)
+
+# ---- verify-xdospoll5: FN 131 (POLL DEVICE) ON DEVICE 0, PROVED (C9) ----
+# run/C2.md left this one open: fn 131 on device 0 takes conbdos.c getch()'s
+# own PW_CON wait (src/bdos/xdos.c xpoll()), but with one console and the
+# emulator's own input feeder deciding when a scripted byte lands, a test
+# could only hang or pass by luck -- there was no way to hold a key back
+# from a SPECIFIC process's own console on demand.  E4's per-port wires
+# (`--wireN=PATH', tests/wirecon.py's `--wire') end that: wired to console
+# 1, the byte is under THIS target's control instead of the feeder's.
+#
+# TWO PROPERTIES, TWO PHASES, because they fail in different ways.
+#
+# BLOCKS.  XDOSPOL.Z8K (src/cmd/xdospol.c) creates CONCY.Z8K -- the same
+# compute-bound job verify-conc5 uses -- and then, with `P', moves itself
+# to console 1 and calls fn 131 on device 0 with the wire left silent for
+# the whole run.  CONCY's tick count is read the same way verify-conc5
+# reads it (BIOS fn 24, no BDOS gate in the loop) and compared against the
+# SAME program run without `P', where it never touches fn 131 at all.  This
+# is verify-conc5's own instrument, reused rather than rebuilt: one process
+# genuinely blocked in fn 131 costs the other nothing but a console poll
+# per dispatch (C5.md's 0.6%), the same call spinning or failing to wait
+# costs it a share of every tick (C5.md's 7.4%) -- so $(CONCZTOL), already
+# measured against exactly that gap, is what this target checks the delta
+# against too.  The run also asserts the poller's own "got"/"done" lines
+# NEVER appear: a key arriving on a silent wire would mean something else
+# fed it one, and "consumes ~nothing while parked" would be measuring the
+# wrong run.
+#
+# WAKES.  A second boot of the identical disk, `XDOSPOL P' again, this
+# time with tests/wirecon.py sending a byte -- but only AFTER it has seen
+# "XDOSPOL: waiting" on the wire, which XDOSPOL prints immediately before
+# calling fn 131.  That ordering is the proof: the byte is provably absent
+# at the moment the call is entered, so a reply can only come from having
+# actually waited for it.  fn 131 only peeks (bconstat), so XDOSPOL then
+# reads the byte for real with fn 1 and reports it, moves back to console
+# 0, and finishes -- and the target checks the reported byte, the move
+# back, and the finish line, none of which a call that returned early or
+# never returned could produce.
+XDOSPOLLDISK  = build/xdospoll.bin
+XPOLLALOG     = build/verify-xdospoll5-alone.log
+XPOLLPLOG     = build/verify-xdospoll5-poll-c0.log
+XPOLLPWLOG    = build/verify-xdospoll5-poll-c1.log
+XPOLLWLOG     = build/verify-xdospoll5-wake-c0.log
+XPOLLWWLOG    = build/verify-xdospoll5-wake-c1.log
+.PHONY: verify-xdospoll5
+verify-xdospoll5: all $(CPMAXDOSPOL)
+	$(MKDISK) $(XDOSPOLLDISK) $(CPMSYS) $(CPMAXDOSPOL) $(CPMBIMG)
+	@# ---- phase 1: ALONE -- CONCY's baseline tick count ----
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XDOSPOLLDISK)) \
+		| tee $(abspath $(XPOLLALOG))
+	@$(EMUOK)
+	@# ---- phase 2: the poller parked in fn 131, wire silent throughout ----
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(XDOSPOLLDISK) \
+		--log $(XPOLLPLOG) --wire-log $(XPOLLPWLOG)
+	@# ---- phase 3: the same call, woken by a byte sent only after the
+	@#      wire shows the process was already waiting for it ----
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(XDOSPOLLDISK) \
+		--send-after='XDOSPOL: waiting' --send='K' \
+		--log $(XPOLLWLOG) --wire-log $(XPOLLWWLOG)
+	@tr -d '\r' < $(XPOLLALOG) > build/xdospoll-alone.txt
+	@tr -d '\r' < $(XPOLLPLOG) > build/xdospoll-poll-c0.txt
+	@tr -d '\r' < $(XPOLLPWLOG) > build/xdospoll-poll-c1.txt
+	@tr -d '\r' < $(XPOLLWLOG) > build/xdospoll-wake-c0.txt
+	@tr -d '\r' < $(XPOLLWWLOG) > build/xdospoll-wake-c1.txt
+	@grep -q 'XDOSPOL: no second process' build/xdospoll-alone.txt build/xdospoll-poll-c0.txt build/xdospoll-wake-c0.txt \
+		&& { echo "verify-xdospoll5: FAIL -- function 144 refused; a 512 KB machine has"; \
+		     echo "             no free page (src/bios/pgalloc.c).  The emulator is 1 MB."; \
+		     exit 1; } || true
+	@grep -q 'XDOSPOL: no console 1' build/xdospoll-poll-c0.txt build/xdospoll-wake-c0.txt \
+		&& { echo "verify-xdospoll5: FAIL -- function 148 refused console 1; the wire did"; \
+		     echo "             not attach (src/bios/bios900.c coninit)."; exit 1; } || true
+		     echo "             processes; it is not the baseline it claims to be."; exit 1; }
+	@# THE NEGATIVE: on a silent wire, the poller must never have woken.
+	@grep -q '^XDOSPOL: waiting' build/xdospoll-poll-c1.txt \
+		|| { echo "verify-xdospoll5: FAIL -- XDOSPOL never printed its wait marker on"; \
+		     echo "             console 1; fn 148 or the wire did not reach it"; exit 1; }
+	@grep -qE 'XDOSPOL: (got|back 0|done)' build/xdospoll-poll-c0.txt build/xdospoll-poll-c1.txt \
+		&& { echo "verify-xdospoll5: FAIL -- the poller woke on a wire nothing was ever"; \
+		     echo "             sent on; fn 131 is not blocking, or something else fed"; \
+		     echo "             it a byte."; exit 1; } || true
+	@sed -n 's/.*CONCY: Y done.*ticks=\([0-9][0-9]*\).*/\1/p' build/xdospoll-alone.txt \
+		> build/xdospoll-ticks-alone.txt
+	@sed -n 's/.*CONCY: Y done.*ticks=\([0-9][0-9]*\).*/\1/p' build/xdospoll-poll-c0.txt \
+		> build/xdospoll-ticks-poll.txt
+	@for f in ticks-alone ticks-poll; do test -s build/xdospoll-$$f.txt \
+		|| { echo "verify-xdospoll5: FAIL -- CONCY never printed its tick count ($$f)."; \
+		     echo "             transcripts are above."; exit 1; }; done
+	@awk -v tol=$(CONCZTOL) \
+	     -v ya=`cat build/xdospoll-ticks-alone.txt` -v yb=`cat build/xdospoll-ticks-poll.txt` \
+	  'BEGIN { \
+	     printf "verify-xdospoll5: fn 131 device 0, an idle poller, measured\n"; \
+	     printf "  %-22s %8s %8s %9s\n", "job", "alone", "+poller", "delta"; \
+	     dy = (yb - ya) * 100.0 / ya; \
+	     printf "  %-22s %8d %8d %8.1f%%\n", "CONCY 16 units", ya, yb, dy; \
+	     printf "  processes live         %8d %8d\n", 2, 2; \
+	     ay = dy < 0 ? -dy : dy; \
+	     if (ay > tol) { \
+	       printf "verify-xdospoll5: FAIL -- fn 131 cost CONCY more than %d%%: it is not\n", tol; \
+	       printf "             genuinely blocked (compare CONCZTOL, run/C5.md: 0.6%%/7.4%%)\n"; \
+	       exit 1; } }' \
+	|| exit 1
+	@# ---- phase 3's checks: it woke, with the right byte, and got home ----
+	@grep -q '^XDOSPOL: waiting' build/xdospoll-wake-c1.txt \
+		|| { echo "verify-xdospoll5: FAIL -- XDOSPOL (wake run) never printed its wait"; \
+		     echo "             marker on console 1"; exit 1; }
+	@# No `^' anchor: function 1 echoes the byte it reads, so the sent `K'
+	@# and this line share one line on the wire with nothing between them
+	@# (`KXDOSPOL: got K') -- the echo is CONIN's, not a defect.
+	@grep -q 'XDOSPOL: got K' build/xdospoll-wake-c1.txt \
+		|| { echo "verify-xdospoll5: FAIL -- fn 131 returned but did not read the byte"; \
+		     echo "             back correctly (function 1, console 1)"; exit 1; }
+	@grep -q '^XDOSPOL: back 0' build/xdospoll-wake-c0.txt \
+		|| { echo "verify-xdospoll5: FAIL -- XDOSPOL never moved back to console 0 after"; \
+		     echo "             fn 131 returned; it did not really wake"; exit 1; }
+	@grep -q '^XDOSPOL: done' build/xdospoll-wake-c0.txt \
+		|| { echo "verify-xdospoll5: FAIL -- XDOSPOL did not reach its own end after"; \
+		     echo "             waking"; exit 1; }
+	@echo "verify-xdospoll5: PASS -- fn 131 device 0 blocks (CONCY's tick count is"
+	@echo "             unaffected within CONCZTOL, and the poller never woke on a"
+	@echo "             silent wire) and wakes (it read the byte only after a wire"
+	@echo "             trace proves the byte was not there when it was asked for)"
+# ---- verify-all: every verify-* target above, one after another ----
+# Sequential because the targets share build/ (media, transcripts, and the
+# images `all' rebuilds).  Each runs in its own $(MAKE) so a failure ends
+# that target only; the rest still run, and the summary names every verdict.
+# Exit status is non-zero iff any target failed.  The list is read from this
+# file at run time -- a target added above is picked up without registering
+# it here -- and the pattern keeps hyphens (verify-hash-ab, verify-rtc-host).
+# A test target, reached from nothing: `all' never runs an emulator.
+VERIFYALLLOG = build/verify-all.log
+.PHONY: verify-all
+verify-all:
+	@mkdir -p build; rm -f $(VERIFYALLLOG); pass=0; fail=0; \
+	for t in $$(sed -n 's/^\(verify-[a-z0-9-]*\):.*/\1/p' tests/verify.mk \
+		| grep -v '^verify-all$$' | sort -u); do \
+		echo "=== $$t"; \
+		if $(MAKE) --no-print-directory $$t; then \
+			echo "PASS $$t" >> $(VERIFYALLLOG); pass=$$((pass+1)); \
+		else \
+			echo "FAIL $$t" >> $(VERIFYALLLOG); fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo "=== verify-all summary ($(VERIFYALLLOG))"; cat $(VERIFYALLLOG); \
+	echo "verify-all: $$pass passed, $$fail failed, $$((pass+fail)) run"; \
+	[ "$$fail" -eq 0 ]
+
+HELPIMG	= build/helptest.bin
+HELPLOG	= build/verify-help.log
+HELPSRC	= src/dist/disk-a/HELP.HLP
+HELPS1	= writes the result to
+HELPS2	= console INPUT for the program
+HELPS3	= PIP copies files
+HELPIN	= $(OSSEL)HELP\rSUBMIT\rSUBMIT PARAMETERS\rSUB\rNOSUCHTOPIC\r\r$(ENDIN)
+
+.PHONY: verify-help
+verify-help: all $(CPMAIMG)
+	@for s in "$(HELPS1)" "$(HELPS2)" "$(HELPS3)"; do \
+		n=`grep -c "$$s" $(HELPSRC)`; \
+		test "$$n" = 1 || { echo "verify-help: FAIL -- the sentinel '$$s' occurs $$n times in $(HELPSRC), not once; the test cannot tell topics apart with it"; exit 1; }; \
+	 done
+	$(MKDISK) $(HELPIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(HELPIMG)) \
+		--input="$(HELPIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(HELPLOG))
+	@$(EMUOK)
+	@# 1. the topic list is exactly the file's level-1 markers.
+	@sed -n 's,^  ///1,,p' $(HELPSRC) | tr -d '\015' | sort > build/help-want.txt
+	@# the transcript's line ends are CR CR LF -- the program writes
+	@# CR LF and the console driver adds its own CR to the LF -- so the
+	@# CRs come off before any anchored pattern is applied.
+	@tr -d '\015' < $(HELPLOG) | sed -n '/^Topics:/,/^$$/p' \
+		| sed -n 's/^    \([A-Za-z0-9]*\) *$$/\1/p' \
+		| tr 'a-z' 'A-Z' | sort -u > build/help-got.txt
+	@cmp -s build/help-want.txt build/help-got.txt \
+		|| { echo "verify-help: FAIL -- the topic list is not the file's level-1 topics:"; \
+		     diff build/help-want.txt build/help-got.txt; exit 1; }
+	@# 2. one topic, and only that topic.  Both HELP SUBMIT and the
+	@#    prefix request HELP SUB print it, so the count is 2.
+	@test "`grep -c '$(HELPS1)' $(HELPLOG)`" = 2 \
+		|| { echo "verify-help: FAIL -- HELP SUBMIT and the prefix request HELP SUB did not each print the SUBMIT topic exactly once"; exit 1; }
+	@test "`grep -c '$(HELPS3)' $(HELPLOG)`" = 0 \
+		|| { echo "verify-help: FAIL -- an unrelated topic's text was printed: HELP is not bounding the topic it was asked for"; exit 1; }
+	@# 3. the subtopic descent.  HELP SUBMIT names it; HELP SUBMIT
+	@#    PARAMETERS prints its text, which HELP SUBMIT must NOT.
+	@grep -q '^    PARAMETERS' $(HELPLOG) \
+		|| { echo "verify-help: FAIL -- HELP SUBMIT did not name its subtopics"; exit 1; }
+	@test "`grep -c '$(HELPS2)' $(HELPLOG)`" = 1 \
+		|| { echo "verify-help: FAIL -- the subtopic's text did not appear exactly once: either the descent failed or a parent topic printed its children's text as well"; exit 1; }
+	@# 4. an unknown topic is refused -- once, for NOSUCHTOPIC alone.
+	@test "`grep -c 'No information on that topic' $(HELPLOG)`" = 1 \
+		|| { echo "verify-help: FAIL -- the refusal did not fire exactly once (NOSUCHTOPIC refused, the prefix SUB accepted)"; exit 1; }
+	@echo "verify-help: PASS -- topic list, one bounded topic, subtopic descent, prefix match, refusal"
+
+# ---- console paging (src/bdos/conbdos.c pagelf, the SCB's 1Ch/1Dh/2Ch) ----
+# The same program, the same output, twice: once with page$mode 0 and once
+# with 0FFh.  What is asserted is the DIFFERENCE the byte makes, which is
+# the only thing the feature is:
+#
+#   - with paging OFF the console never pauses;
+#   - with paging ON it pauses NLINES/PAGE times, both numbers read out of
+#     src/cmd/paget.c at run time so that changing either one changes what
+#     this target expects rather than breaking it;
+#   - EVERY line arrives in BOTH runs, all NLINES of them, numbered -- so a
+#     pause released the output that followed it instead of eating it;
+#   - and the SCB reads back what was written to it, so the byte the
+#     driver acted on is the byte a program can see.
+#
+# NOTHING HERE COUNTS LINES OF TRANSCRIPT OR FIXES A POSITION.  Where the
+# pause prompt lands depends on how much the CCP printed before PAGET
+# started, and PAGET zeroes @CONLINE for exactly that reason; the test
+# does not need to know, and must not, because a scheduler that
+# interleaves another console's output would move it.
+#
+# Two cold boots, one per mode, because a run that has paused has consumed
+# scripted input and the next one must not inherit its position.
+# `\g' turns off the wait-for-a-prompt pacing: `Press RETURN to Continue '
+# ends in a space, not in `>' or `#', so without it the emulator would
+# never release the keystroke the pause is waiting for.
+PAGEIMG	 = build/pagetest.bin
+PAGELOGF = build/verify-page-off.log
+PAGELOGN = build/verify-page-on.log
+PAGEINF	 = $(OSSEL)PAGET OFF\r$(ENDIN)
+PAGEINN	 = $(OSSEL)PAGET ON\r\g\r\r\r\r$(ENDIN)
+PAGEPROMPT = Press RETURN to Continue
+
+.PHONY: verify-page
+verify-page: all $(CPMAIMG)
+	$(MKDISK) $(PAGEIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PAGEIMG)) \
+		--input="$(PAGEINF)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PAGELOGF))
+	@$(EMUOK)
+	$(MKDISK) $(PAGEIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PAGEIMG)) \
+		--input="$(PAGEINN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PAGELOGN))
+	@$(EMUOK)
+	@# both runs finished, and printed every line they said they would
+	@nl=`sed -n 's/^#define[ 	]*NLINES[ 	][ 	]*\([0-9][0-9]*\).*/\1/p' src/cmd/paget.c`; \
+	 pg=`sed -n 's/^#define[ 	]*PAGE[ 	][ 	]*\([0-9][0-9]*\).*/\1/p' src/cmd/paget.c`; \
+	 test -n "$$nl" -a -n "$$pg" \
+		|| { echo "verify-page: FAIL -- NLINES/PAGE could not be read out of src/cmd/paget.c, so this target does not know what to expect"; exit 1; }; \
+	 for f in $(PAGELOGF) $(PAGELOGN); do \
+		grep -q 'PAGET: DONE' $$f \
+			|| { echo "verify-page: FAIL -- PAGET did not finish in $$f"; exit 1; }; \
+		i=1; while [ $$i -le $$nl ]; do \
+			n=`printf %02d $$i`; \
+			grep -q "PAGET LINE $$n" $$f \
+				|| { echo "verify-page: FAIL -- line $$n never reached the console in $$f: output that followed a pause was lost"; exit 1; }; \
+			i=`expr $$i + 1`; \
+		done; \
+		grep -q 'readback page=05 mode=FF default=00' $$f \
+			|| { echo "verify-page: FAIL -- the SCB did not read back what PAGET wrote to it in $$f; the driver and the published bytes disagree"; exit 1; }; \
+	 done; \
+	 off=`grep -c '$(PAGEPROMPT)' $(PAGELOGF)`; \
+	 on=`grep -c '$(PAGEPROMPT)' $(PAGELOGN)`; \
+	 want=`expr $$nl / $$pg`; \
+	 test "$$off" = 0 \
+		|| { echo "verify-page: FAIL -- the console paused $$off times with page mode OFF; the byte is not being honoured"; exit 1; }; \
+	 test "$$on" = "$$want" \
+		|| { echo "verify-page: FAIL -- the console paused $$on times with page mode ON, not $$want ($$nl lines at $$pg lines to the page)"; exit 1; }; \
+	 echo "verify-page: PASS -- $$nl lines arrived in full both ways; $$want pauses with page mode on, none with it off"
+
+# ---- PROFILE.SUB at cold start (src/ccp/ccp.c profstart) ----
+# CP/M 3's CCP runs PROFILE.SUB once, before its first prompt, by chaining
+# to that command line (ref/cpm3/ccp3.asm:460-473 `ckboot').  Ours does the
+# same, and the three things worth asserting are all differences between
+# two boots of the SAME system on two images that differ by ONE FILE:
+#
+#   1. with PROFILE.SUB on A:, every line of it runs -- and runs BEFORE
+#      the first command the console types, which is what "at cold start"
+#      means and is checked by ordering the profile's output against that
+#      command's, not against any line number;
+#   2. each line runs EXACTLY ONCE.  Every line here loads a program, so
+#      each one ends in a warm boot and a reloaded CCP; a cold-start test
+#      that did not check this would pass just as happily on a CCP that
+#      restarted the profile after every command and never reached the
+#      console at all;
+#   3. with no PROFILE.SUB the CCP says nothing about it.  v3 has to set
+#      errflg to suppress the complaint it would otherwise print; we ask
+#      the directory first, and this leg is what says so.
+#
+# The profile's lines are read out of src/dist/disk-a-prof/PROFILE.SUB at
+# run time, so editing the fixture changes what is expected rather than
+# breaking the target.
+PROFIMG	 = build/proftest.bin
+PROFLOGY = build/verify-profile-yes.log
+PROFLOGN = build/verify-profile-no.log
+PROFSRC	 = src/dist/disk-a-prof/PROFILE.SUB
+PROFIN	 = $(OSSEL)MHELLO CONSOLE-COMMAND\r$(ENDIN)
+
+.PHONY: verify-profile
+verify-profile: all $(CPMAPROF)
+	$(MKDISK) $(PROFIMG) $(CPMSYS) $(CPMAPROF)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PROFIMG)) \
+		--input="$(PROFIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PROFLOGY))
+	@$(EMUOK)
+	$(MKDISK) $(PROFIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PROFIMG)) \
+		--input="$(PROFIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PROFLOGN))
+	@$(EMUOK)
+	@# 1 and 2: every argument the profile passes MHELLO appears, once.
+	@tr -d '\015' < $(PROFLOGY) > build/prof-y.txt
+	@tr -d '\015' < $(PROFLOGN) > build/prof-n.txt
+	@n=0; \
+	 for a in `tr -d '\015' < $(PROFSRC) | sed -n 's/^MHELLO  *\([^ ][^ ]*\).*/\1/p'`; do \
+		n=`expr $$n + 1`; \
+		c=`grep -c "arg 1: $$a" build/prof-y.txt`; \
+		test "$$c" = 1 \
+			|| { echo "verify-profile: FAIL -- the profile line for $$a ran $$c times, not once; a cold-start profile that reruns on every warm boot never reaches the console"; exit 1; }; \
+		if grep -q "arg 1: $$a" build/prof-n.txt; then \
+			echo "verify-profile: FAIL -- $$a ran on the image that has no PROFILE.SUB"; exit 1; fi; \
+	 done; \
+	 test "$$n" -ge 2 \
+		|| { echo "verify-profile: FAIL -- $(PROFSRC) has $$n usable lines; this target needs at least two, because one line cannot show that a second one followed it"; exit 1; }; \
+	 echo "verify-profile: $$n profile lines, each run once"
+	@# 1 again, as an ORDER and not a position: the last thing the
+	@# profile did comes before the first thing the console asked for.
+	@last=`tr -d '\015' < $(PROFSRC) | sed -n 's/^MHELLO  *\([^ ][^ ]*\).*/\1/p' | tail -1`; \
+	 lp=`grep -n "arg 1: $$last" build/prof-y.txt | head -1 | cut -d: -f1`; \
+	 cp=`grep -n 'arg 1: CONSOLE-COMMAND' build/prof-y.txt | head -1 | cut -d: -f1`; \
+	 test -n "$$lp" -a -n "$$cp" \
+		|| { echo "verify-profile: FAIL -- the console command did not run after the profile at all"; exit 1; }; \
+	 test "$$lp" -lt "$$cp" \
+		|| { echo "verify-profile: FAIL -- the profile ran after the typed command, so it is not a cold-start profile"; exit 1; }
+	@# 3: the run with no profile is quiet about it, and still works.
+	@grep -q 'arg 1: CONSOLE-COMMAND' build/prof-n.txt \
+		|| { echo "verify-profile: FAIL -- the typed command did not run on the image with no PROFILE.SUB"; exit 1; }
+	@if grep -q 'PROFILE' build/prof-n.txt; then \
+		echo "verify-profile: FAIL -- the CCP mentioned PROFILE on a system that has none; a missing profile must be silent"; exit 1; fi
+	@echo "verify-profile: PASS -- the profile runs once at cold start, before the first typed command, and a system without one is silent"
+
+# ---- verify-kermit: A FILE OUT AND BACK OVER THE SERIAL LINE (N2) ----
+# KERMIT.Z8K (src/cmd/cpmio.c + the E-Kermit engine, src/cmd/kermit.c) moves
+# a file between this machine and the other end of the spare RS-232 port,
+# which is the first thing on this port that is neither a console nor a
+# test harness -- and, until a network exists, the only way a file gets onto
+# a real C900's CP/M disk.
+#
+# TWO BOOTS ON ONE DISK, WHICH IS WHAT MAKES IT A ROUND TRIP.  The first
+# boot runs `KERMIT R' and the host peer pushes a 1 KB file at it; the guest
+# writes it to A: through the ordinary BDOS file calls.  The second boot,
+# ON THE SAME IMAGE, runs `KERMIT S KTEST.BIN' and the peer catches it.  The
+# assertion is `cmp': every byte that went out came back.  Nothing in the
+# path is stubbed -- the bytes cross BIOS functions 6 and 7 on the channel
+# at 0x0120, through the C8 receive ring, with the console unbound from that
+# channel by function 28 for the duration.
+#
+# THE FILE IS PSEUDO-RANDOM AND ITS SEED IS FIXED.  Random content is what
+# makes the test binary-clean: it contains control characters, high bytes,
+# SOH, CR and the protocol's own quote character, so a transfer that mangles
+# any of those fails.  (It did: the first passing round trip differed in
+# exactly the three bytes that were '#'.)  1024 bytes is eight CP/M records,
+# so the length is exact -- CP/M cannot record a partial last record, and a
+# file that is not a multiple of 128 would come back padded and the cmp
+# would be measuring the file system, not the transfer.
+#
+# WHAT THE OTHER END IS, SAID PLAINLY.  tests/kermitpeer.py, a Kermit
+# written for this test.  There is no gkermit, ckermit or kermit on this
+# build machine, so the interop leg the task wanted could not be run; see
+# that file's own banner, which says what this does and does not prove.
+KERMIMG	 = build/kermtest.bin
+KERMSRC	 = build/ktest-src.bin
+KERMBACK = build/ktest-back.bin
+.PHONY: verify-kermit
+verify-kermit: all
+	@python3 -c 'import random; random.seed(20260907); \
+open("$(KERMSRC)","wb").write(bytes(random.randrange(256) for _ in range(1024)))'
+	$(MKDISK) $(KERMIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	rm -f $(KERMBACK)
+	python3 tests/kermitpeer.py --emu '$(EMU)' --disk $(KERMIMG) \
+		--mode send --file $(KERMSRC) --as KTEST.BIN \
+		--max=$(EMUMAX) --log build/verify-kermit-out.log
+	python3 tests/kermitpeer.py --emu '$(EMU)' --disk $(KERMIMG) \
+		--mode recv --out $(KERMBACK) --as KTEST.BIN \
+		--max=$(EMUMAX) --log build/verify-kermit-in.log
+	@tr -d '\r' < build/verify-kermit-out.log | grep -q 'KERMIT: done' \
+		|| { echo "verify-kermit: FAIL -- the receiving guest did not finish"; \
+		     exit 1; }
+	@tr -d '\r' < build/verify-kermit-in.log | grep -q 'KERMIT: done' \
+		|| { echo "verify-kermit: FAIL -- the sending guest did not finish"; \
+		     exit 1; }
+	@cmp $(KERMSRC) $(KERMBACK) \
+		|| { echo "verify-kermit: FAIL -- the file did not come back intact"; \
+		     exit 1; }
+	@echo "verify-kermit: PASS -- 1024 bytes written to A: over the spare"
+	@echo "               serial port and read back off it, byte for byte,"
+	@echo "               against tests/kermitpeer.py (NOT an interop test)"
+
+# ---- GET and PUT: console I/O redirected through the RSX chain ----
+# src/cmd/get.c + src/cmd/getrsx.s, src/cmd/put.c + src/cmd/putrsx.s.
+#
+# What these two targets have to establish is that a module in the chain
+# can SUPPLY a BDOS call's answer and can SWALLOW one, that it does so for
+# the CCP as well as for a program -- which is the thing v3's GET needs
+# and the thing this port could not do until the CCP became a transient
+# (src/bdos/rsx.c) -- and that the [ECHO] option is real rather than
+# parsed and dropped.
+#
+# THE ECHO LEG IS THE ONE THAT PROVES ANYTHING.  A GET that ran the file's
+# commands with echoing on and a GET that ran them with echoing off look
+# alike in every respect but one: the commands themselves appear in the
+# first transcript and not in the second, while their OUTPUT appears in
+# both.  So the pair of runs is the assertion, and neither run alone
+# would catch a program that accepted [NO ECHO] and ignored it.
+#
+# THE FIXTURE IS THE COMMAND STREAM.  build/diska-gp/GCMDS.TXT holds
+#   INITDIR A: / N / RSXT2 / TYPE GMARKER.TXT / GET CONSOLE / TYPE GNEVER.TXT
+# and every line of it is load-bearing:
+#   - INITDIR A: is read by the CCP through function 10, and its Y/N
+#     question is read by INITDIR through function 1 (src/cmd/initdir.c
+#     askchar), so one fixture exercises both of the functions GET serves.
+#     The answer is N: nothing is written to any disk.
+#   - RSXT2 prints the chain, so the module is seen to be linked, at its
+#     own address, under its own name, while it is doing the work.
+#   - TYPE GMARKER.TXT prints a string that is nowhere else on the disk.
+#   - GET CONSOLE stops the redirection, and TYPE GNEVER.TXT is the line
+#     AFTER it: its string must NOT appear, which is the only way to tell
+#     a GET that stopped from a GET that merely ran out of file.
+#
+# THE TYPE-AHEAD AT THE END is not decoration either.  `TYPE GMARK2.TXT'
+# is typed at the CONSOLE, and it can only run if console input came back
+# -- so its string appearing is the proof that the module let go.  It is
+# fed with the emulator's \i type-ahead and released by --input-mark,
+# because while the file is feeding the CCP the ordinary prompt-paced
+# input would be handed over during the file's own session and eaten;
+# and it is preceded by two bare CRs because the byte after a mark can
+# still land in an output path that is polling for ^S.
+GPIMG	= build/gptest.bin
+GPLOG	= build/verify-gp
+# One sacrificial pair of CRs, then the command, all as type-ahead.
+GPBACK	= \i\r\i\r\iT\iY\iP\iE\i \iG\iM\iA\iR\iK\i2\i.\iT\iX\iT\i\r
+GPMARK	= Getting console input from console
+GETIN1	= $(OSSEL)GET FILE GCMDS.TXT\r$(GPBACK)
+GETIN2	= $(OSSEL)GET FILE GCMDS.TXT [NO ECHO]\r$(GPBACK)
+GETIN3	= $(OSSEL)GET\rGET FILE NOSUCH.TXT\rGET CONSOLE\rGET FILE GMARKER.TXT [PROGRAM]\rGET FILE GMARKER.TXT [RAW]\rGET FILE GMARKER.TXT ZZZ\r
+
+.PHONY: verify-get
+verify-get: all $(CPMAGP)
+	for n in 1 2 3; do \
+		$(MKDISK) $(GPIMG) $(CPMSYS) $(CPMAGP); \
+		case $$n in \
+		1) in='$(GETIN1)';; 2) in='$(GETIN2)';; 3) in='$(GETIN3)';; esac; \
+		{ $(EMUCD) && ./c900 --disk=$(abspath $(GPIMG)) \
+			--input="$$in" --input-mark='$(GPMARK)' \
+			--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GPLOG))-get$$n.log; $(EMUOK); done
+#	--- 1: echoing on.  The file drives the session.
+	@grep -q 'Getting console input from file: GCMDS.TXT \[ECHO\]' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- GET did not report that it had taken the file"; exit 1; }
+	@grep -q 'rsxt2: mod E400 GET ' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- GET.RSX is not in the chain at its own link address under its own name while it is serving the file"; exit 1; }
+	@test "`grep -c 'TYPE GMARKER.TXT' $(GPLOG)-get1.log`" = 1 \
+		|| { echo "verify-get: FAIL -- the command read out of the file was not echoed to the console exactly once"; exit 1; }
+	@grep -q 'GET-FIXTURE-RAN' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- the command read out of the file did not RUN: function 10 was not served from the file"; exit 1; }
+	@grep -q '(Y/N)?  N' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- INITDIR's function-1 question was not answered from the file"; exit 1; }
+	@grep -q 'INITDIR TERMINATED' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- INITDIR did not act on the answer the file gave it"; exit 1; }
+	@grep -q 'Getting console input from console' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- GET CONSOLE, read out of the file itself, did not run"; exit 1; }
+	@test "`grep -c 'GET-PAST-STOP' $(GPLOG)-get1.log`" = 0 \
+		|| { echo "verify-get: FAIL -- the line AFTER 'GET CONSOLE' in the file was executed: the redirection did not stop"; exit 1; }
+	@grep -q 'CONSOLE-CAME-BACK' $(GPLOG)-get1.log \
+		|| { echo "verify-get: FAIL -- a command typed at the console after GET CONSOLE did not run: console input did not come back"; exit 1; }
+#	--- 2: echoing off.  Same file, same effects, and no commands seen.
+	@grep -q 'Getting console input from file: GCMDS.TXT \[NO ECHO\]' $(GPLOG)-get2.log \
+		|| { echo "verify-get: FAIL -- GET did not report [NO ECHO]"; exit 1; }
+	@test "`grep -c 'TYPE GMARKER.TXT' $(GPLOG)-get2.log`" = 0 \
+		|| { echo "verify-get: FAIL -- [NO ECHO] still echoed the commands it read: the option is parsed and ignored"; exit 1; }
+	@grep -q 'GET-FIXTURE-RAN' $(GPLOG)-get2.log \
+		|| { echo "verify-get: FAIL -- with [NO ECHO] the commands stopped running as well as stopped showing"; exit 1; }
+	@grep -q 'INITDIR TERMINATED' $(GPLOG)-get2.log \
+		|| { echo "verify-get: FAIL -- with [NO ECHO] the function-1 answer was lost"; exit 1; }
+	@test "`grep -c 'GET-PAST-STOP' $(GPLOG)-get2.log`" = 0 \
+		|| { echo "verify-get: FAIL -- [NO ECHO]: the line after GET CONSOLE was executed"; exit 1; }
+	@grep -q 'CONSOLE-CAME-BACK' $(GPLOG)-get2.log \
+		|| { echo "verify-get: FAIL -- [NO ECHO]: console input did not come back"; exit 1; }
+#	--- 3: every refusal is by name.  An option this GET does not
+#	    implement must say so, not be accepted and dropped.
+	@grep -q 'usage: GET' $(GPLOG)-get3.log \
+		|| { echo "verify-get: FAIL -- a bare GET did not print its usage"; exit 1; }
+	@grep -q 'GET: no such file' $(GPLOG)-get3.log \
+		|| { echo "verify-get: FAIL -- GET accepted a file that is not there"; exit 1; }
+	@grep -q 'GET: no file is being read' $(GPLOG)-get3.log \
+		|| { echo "verify-get: FAIL -- GET CONSOLE with nothing active said nothing"; exit 1; }
+	@grep -q '\[PROGRAM\] is not implemented' $(GPLOG)-get3.log \
+		|| { echo "verify-get: FAIL -- [PROGRAM] was accepted; it is not implemented and must be refused by name"; exit 1; }
+	@grep -q '\[FILTERED\] and \[RAW\] are not implemented' $(GPLOG)-get3.log \
+		|| { echo "verify-get: FAIL -- [RAW] was accepted; it is not implemented and must be refused by name"; exit 1; }
+	@grep -q 'unknown keyword or option: ZZZ' $(GPLOG)-get3.log \
+		|| { echo "verify-get: FAIL -- a word GET does not know was swallowed"; exit 1; }
+	@test "`grep -c 'Getting console input from file' $(GPLOG)-get3.log`" = 0 \
+		|| { echo "verify-get: FAIL -- one of the refused commands attached the module anyway"; exit 1; }
+	@echo "verify-get: PASS -- functions 1 and 10 served from a file for the CCP and for a program, the module seen in the chain, [ECHO] and [NO ECHO] differing in the commands and not in their effects, GET CONSOLE stopping the feed, the console coming back, and six refusals by name"
+
+# ---- PUT ----
+# The mirror, and the same shape of proof: two runs of the same commands,
+# one with echoing and one without, and what differs is whether the
+# console saw the output -- the FILE has it either way, and the file is
+# read back with TYPE inside the same session to show that.  So the
+# marker string is counted, not grepped: twice with [ECHO] (once live,
+# once read back) and once with [NO ECHO].
+#
+# THE [NO ECHO] RUN CANNOT BE DRIVEN BY THE ORDINARY PACED INPUT, and the
+# reason is worth writing down: with echoing off the module swallows the
+# CCP's prompt as well as everything else, and the emulator paces
+# scripted input on the prompt characters it sees printed.  So the
+# commands issued while the capture is running are fed as \i type-ahead,
+# released by --input-mark on the echo of the command line that starts
+# it.  Nothing is printed during that stretch, so nothing eats them --
+# which is only true BECAUSE [NO ECHO] works.
+PUTIN1	= $(OSSEL)PUT FILE POUT.TXT\rTYPE PMARKER.TXT\rRSXT2\rPUT CONSOLE\rTYPE POUT.TXT\r
+PUTIN2	= $(OSSEL)PUT FILE POUT.TXT [NO ECHO]\i\r\iT\iY\iP\iE\i \iP\iM\iA\iR\iK\iE\iR\i.\iT\iX\iT\i\r\iP\iU\iT\i \iC\iO\iN\iS\iO\iL\iE\i\rTYPE POUT.TXT\r
+PUTIN3	= $(OSSEL)PUT\rPUT CONSOLE\rPUT FILE PMARKER.TXT\rPUT FILE PNEW.TXT [PROGRAM]\rPUT PRINTER FILE PNEW.TXT\rPUT FILE PNEW.TXT QQQ\r
+PUTMARK	= [NO ECHO]
+
+.PHONY: verify-put
+verify-put: all $(CPMAGP)
+		$(MKDISK) $(GPIMG) $(CPMSYS) $(CPMAGP); \
+		case $$n in \
+		{ $(EMUCD) && ./c900 --disk=$(abspath $(GPIMG)) \
+			--input="$$in" --input-mark='$(PUTMARK)' \
+			--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GPLOG))-put$$n.log; $(EMUOK); done
+#	--- 1: echoing on.  The console and the file both get everything.
+	@grep -q 'rsxt2: mod F200 PUT ' $(GPLOG)-put1.log \
+		|| { echo "verify-put: FAIL -- PUT.RSX is not in the chain at its own link address under its own name while it is capturing"; exit 1; }
+	@test "`grep -c 'PUT-FIXTURE-RAN' $(GPLOG)-put1.log`" = 2 \
+		|| { echo "verify-put: FAIL -- with [ECHO] the captured text should appear twice: once as it was printed and once when the file is typed back"; exit 1; }
+	@test "`grep -c 'Putting console output to file: POUT.TXT \[ECHO\]' $(GPLOG)-put1.log`" = 2 \
+		|| { echo "verify-put: FAIL -- PUT's own message was not both printed and captured: the module was not live for the very next call"; exit 1; }
+	@grep -q 'PUT completed for console' $(GPLOG)-put1.log \
+		|| { echo "verify-put: FAIL -- PUT CONSOLE did not close the file cleanly"; exit 1; }
+#	--- 2: echoing off.  The console sees none of it; the file has it all.
+	@test "`grep -c 'PUT-FIXTURE-RAN' $(GPLOG)-put2.log`" = 1 \
+		|| { echo "verify-put: FAIL -- with [NO ECHO] the captured text must appear ONCE, when the file is typed back; the console must not have had it"; exit 1; }
+	@test "`grep -c 'Putting console output to file: POUT.TXT \[NO ECHO\]' $(GPLOG)-put2.log`" = 1 \
+		|| { echo "verify-put: FAIL -- [NO ECHO] did not swallow PUT's own message, or did not write it to the file"; exit 1; }
+	@grep -q 'PUT completed for console' $(GPLOG)-put2.log \
+		|| { echo "verify-put: FAIL -- [NO ECHO]: PUT CONSOLE did not close the file, or the console did not come back afterwards"; exit 1; }
+#	--- 3: the refusals.
+	@grep -q 'usage: PUT' $(GPLOG)-put3.log \
+		|| { echo "verify-put: FAIL -- a bare PUT did not print its usage"; exit 1; }
+	@grep -q 'PUT: nothing is being written' $(GPLOG)-put3.log \
+		|| { echo "verify-put: FAIL -- PUT CONSOLE with nothing active said nothing"; exit 1; }
+	@grep -q 'already exists; erase it first' $(GPLOG)-put3.log \
+		|| { echo "verify-put: FAIL -- PUT was willing to write over a file that is already there"; exit 1; }
+	@grep -q '\[PROGRAM\] is not implemented' $(GPLOG)-put3.log \
+		|| { echo "verify-put: FAIL -- [PROGRAM] was accepted; it is not implemented and must be refused by name"; exit 1; }
+	@grep -q 'the printer is not implemented' $(GPLOG)-put3.log \
+		|| { echo "verify-put: FAIL -- PUT PRINTER was accepted; function 5 is not intercepted and it must be refused by name"; exit 1; }
+	@grep -q 'unknown keyword or option: QQQ' $(GPLOG)-put3.log \
+		|| { echo "verify-put: FAIL -- a word PUT does not know was swallowed"; exit 1; }
+	@test "`grep -c 'Putting console output to file' $(GPLOG)-put3.log`" = 0 \
+		|| { echo "verify-put: FAIL -- one of the refused commands attached the module anyway"; exit 1; }
+
+# ---- verify-local: the opt-in local medium carries what it is given ----
+# `make cpmlocal' exists so the operator can boot a medium carrying programs
+# of their own -- ones this project does not ship.  Two things about it have
+# to keep working and neither shows up anywhere else in the suite: the
+# refusal that keeps such a medium out of a checkout, and the promise that a
+# supplied file arrives on drive A: under its own name with its own bytes.
+# tests/localt.sh invents the files it stages, so this target proves the
+# mechanism on a machine where no such program is present.  A host-side
+# check: no emulator, and nothing in `all' depends on the target it drives.
+.PHONY: verify-local
+verify-local: all
+	@sh tests/localt.sh $(MAKE)

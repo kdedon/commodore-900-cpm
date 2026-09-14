@@ -10,6 +10,8 @@ help:
 	  'make imagecheck      check the generated images' \
 	  'make farptrcheck     check the banked-memory invariant in src/bdos' \
 	  'make verify-<name>   run one emulator verification target' \
+	  'make cpmlocal        LOCALDIR=<dir> LOCALOUT=<path outside the checkout>:' \
+	  '                     a boot medium with extra files you supply' \
 	  'make deps            fetch inputs listed in DEPS' \
 	  'make clean           remove build products'
 

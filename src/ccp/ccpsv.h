@@ -77,12 +77,17 @@ struct ccpsv {
     char	sv_errcmd[SV_NDNAME+1];
     char	sv_fstk[SV_IFMAX];
     unsigned int sv_fdep;
+
+
+    char	sv_profile;
 };
 
 
 #ifdef CCPTRANSIENT
 
 
+
+#define	profile_done	(CCPSV->sv_profile)
 #define	load_try	(CCPSV->sv_load_try)
 #define	first_sub	(CCPSV->sv_first_sub)
 #define	chain_sub	(CCPSV->sv_chain_sub)
@@ -118,5 +123,6 @@ struct ccpsv {
 #define	errcmd		(CCPSV->sv_errcmd)
 #define	fstk		(CCPSV->sv_fstk)
 #define	fdep		(CCPSV->sv_fdep)
+
 
 #endif	/* CCPTRANSIENT */

@@ -133,6 +133,26 @@ struct	dph			/* disk parameter header	*/
 };
 
 
+/*  Console paging (src/bdos/conbdos.c pagelf).  page$mode is a byte
+    whose ZERO means paging is ON, which reads backwards until you see
+    that v3 defines it that way (ref/cpm3/ccp3.asm:196) so that the
+    cleared byte is the configured system's normal state.  PM_OFF is
+    0FFh because that is the value v3's own utilities write into it
+    (ref/cpm3/dump.asm:374-380).					*/
+
+#define	PM_ON		0x00	/* pause at the foot of each page	*/
+#define	PM_OFF		0xff	/* do not					*/
+
+/*  Lines per page for a caller that wants the system's answer to "how
+    long is a page" without inventing one.  24 is the fallback SDIR and
+    SET already apply to a zero @CONPAGE (src/cmd/set.c:990), so there is
+    one number and not two.  The BDOS's own pager does NOT use it as a
+    fallback: a zero @CONPAGE turns that pager off outright (see
+    src/bdos/conbdos.c pagelf), because page$mode has to keep v3's
+    "paging is on" default for the utilities that read it.		*/
+
+#define	PAGELEN		24
+
 /* Declaration of structure containing "global" state variables */
 struct stvars
 {
@@ -170,6 +190,20 @@ struct stvars
 				/* status, bit 1 no ^S/^Q, bit 2 raw	   */
 				/* output, bit 3 no ^C termination	   */
 	UWORD	retcode;	/* Program return code (fcn 108)	   */
+	UBYTE	conpage;	/* Console page length in lines (@CONPAGE, */
+				/* SCB 1Ch).  0 means "not configured", and */
+				/* for the BDOS's own pager that means OFF: */
+				/* it is the switch, not page$mode.  See	   */
+				/* src/bdos/conbdos.c pagelf.		   */
+	UBYTE	conline;	/* Lines printed on the current page	   */
+				/* (@CONLINE, SCB 1Dh)			   */
+	UBYTE	pagemode;	/* Console page mode (page$mode, SCB 2Ch): */
+				/* 0 = pause at the foot of each page,	   */
+				/* non-zero = do not.  v3's sense exactly   */
+				/* (ref/cpm3/ccp3.asm:196, "0=on, 0ffH=off")*/
+	UBYTE	pmdefault;	/* What a warm boot resets pagemode to	   */
+				/* (pm$default, SCB 2Dh).  v3's CCP does	   */
+				/* this reset per command, ccp3.asm:603-614 */
 };
 
 /* console mode bits, function 109 */

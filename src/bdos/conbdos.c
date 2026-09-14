@@ -126,12 +126,54 @@ conbrk()
 /* used internally*/
 /******************/
 
+
+EXTERN UBYTE getch();		/* defined below; declared because an
+				   implicit declaration would make it int
+				   and this compiler's UBYTE is signed  */
+
+MLOCAL UBYTE paging = 0;	/* nonzero: we are inside the pause	*/
+
+MLOCAL pagemsg(s)		/* the prompt, without counting it	*/
+REG UBYTE *s;
+{
+    while (*s != 0) conout(*s++);
+}
+
+MLOCAL pagelf()			/* one line feed is about to be printed	*/
+{
+    REG UBYTE ch;
+    REG UWORD len;
+    BSETUP
+
+    if (paging) return;			/* our own prompt		*/
+    len = UBWORD(GBL.conpage);
+    if (len == 0) return;		/* no page length: pager is off	*/
+    GBL.conline += 1;
+    if (UBWORD(GBL.conline) < len) return;
+    GBL.conline = 0;
+    if (GBL.pagemode != PM_ON) return;	/* paging is off		*/
+
+    paging = 1;
+    pagemsg("\r\n\r\nPress RETURN to Continue ");
+					/* ccp3.asm:2765, verbatim	*/
+    ch = getch();
+    conout(cr);				/* ccp3.asm:1397-1399		*/
+    paging = 0;
+    if (ch == ctrlc && !(GBL.conmode & CM_NOTERM))
+    {
+	GBL.retcode = RC_CTLC;
+	warmboot(1);
+    }
+}
+
+
 conout(ch)
 REG UBYTE ch;
 {
     BSETUP
 
     conbrk();			/* check for control-s break */
+    if (ch == lf) pagelf();	/* pause here if this line filled a page */
     bconout(ch);		/* output character to console */
     if (GBL.lstecho && !(GBL.conmode & CM_RAW)) blstout(ch);
 				/* if ctrl-p on, echo to list dev */

@@ -4,6 +4,12 @@ Everything here answers a question about a build; nothing here is part of
 one. The dividing line with [`../tools/`](../tools/README.md) is **produce
 versus assert**.
 
+One of these, `mdcheck.sh`, runs over the packed images from the
+`imagecheck` target, because a shipped disk that cites a document the
+machine has not got is not worth shipping. Everything else is reached from
+a `verify-*`, `splitcheck`, `splittest`, `i86test` or `dirfmt-check` target;
+`make verify-all` runs every `verify-*` target in turn and prints a
+PASS/FAIL line per target.
 
 ## The three kinds
 
