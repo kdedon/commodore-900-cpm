@@ -473,8 +473,19 @@ verify-initdir: all
 # allow list, entry relocation) and MUST make it fail; a mutant that passes
 # means the assertion for it is decorative.  The sources are restored from
 # Restore checked by git, not by diffing a maintained copy.
+#
+# The save, the mutations and the restore are ONE recipe line on purpose.
+# make runs a recipe line containing $(MAKE) even under -n (so that -n
+# propagates into sub-makes), but it skips the ordinary lines around it --
+# so with `save' on a line of its own, `make -n' applied a mutation and
+# then found no build/pristine to restore from, and left a mutated
+# src/cmd/initdir.c in the tree.  Paired in one line, whatever make
+# chooses to run gets both halves.
 .PHONY: verify-initdir-mutants
 verify-initdir-mutants: all
+	@rm -rf build/pristine; \
+	sh tests/initdir-mutate.sh save || exit 1; \
+	rc=0; \
 	for m in M1 M2 M3 M4; do \
 		sh tests/initdir-mutate.sh $$m || { rc=1; break; }; \
 		if $(MAKE) --no-print-directory verify-initdir >build/mut-$$m.log 2>&1; then \
@@ -1174,6 +1185,19 @@ verify-stamp: all
 		|| { echo "verify-stamp: FAIL -- PIP's file is not stamped on disk"; exit 1; }
 	@echo "verify-stamp: PASS -- create and update stamps written by the BDOS, on disk in 8080 order"
 
+# ---- CP/M 3 date stamps vs. DRI's own SFCB/XFCB byte layout ----
+# verify-stamp only proves our reader can read back what our writer wrote;
+# it never opens DRI's bdos30.asm/xfcb.lit and checks the bytes against
+# them.  This target reimplements DRI's SFCB subfield arithmetic
+# (bdos30.asm:3314-3327) and XFCB/label offsets (xfcb.lit) independently,
+# straight off the raw directory bytes already produced by verify-stamp.
+.PHONY: verify-stamp-dri
+verify-stamp-dri: verify-stamp
+	python3 tests/dri-sfcb-check.py build/stampb-cpma.img \
+		"STAMPT|TXT|1985-06-14 12:34|1985-06-15 08:00" \
+		"PIPSTAMP|TXT|2026-07-31 14:3|2026-07-31 14:3"
+	@echo "verify-stamp-dri: PASS -- on-disk SFCB stamps match DRI's own byte layout"
+
 # ---- BDOS function 99, truncate file ----
 # The one operation that makes a file shorter, and the one CP/M 3's CCP
 # consumes a submit file with.  TRUNCT writes a 300-record file (two
@@ -1594,6 +1618,7 @@ reverify:
 # insert three lines, save, TYPE, re-enter, append a line, save, TYPE.
 # Passes when the appended line shows up in the second TYPE (it appears
 # once as insert-mode echo and once typed back -- grep -c 2).
+.PHONY: verify-ed verify-arx verify-legacy
 verify-ed: all
 	$(MKDISK) build/edtest.bin $(CPMSYS) $(CPMAIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath build/edtest.bin) \
@@ -1624,6 +1649,27 @@ verify-arx: all
 	@cmp build/arx-fs/MINI.O build/arx-fs/MINIORIG.O \
 		&& echo "verify-arx: PASS -- extracted member byte-identical" \
 		|| { echo "verify-arx: FAIL -- extracted member differs"; exit 1; }
+
+# ---- row 11 ("stock CP/M-8000 1.3 binaries keep running") ----
+# One session over every binary in vendor/z8001mb/cpm8k/packages/base/
+# (vendor/SOURCES) not already exercised by another target: PIP and STAT
+# against HELLO.C (which `all' stages), and DUMP against the same file
+# for a known-bytes check.  ED, DDT and LD8K are already proven by
+# verify-ed, verify and selfhost; this target does not repeat them.
+LEGIMG	= build/legacytest.bin
+LEGLOG	= build/verify-legacy.log
+verify-legacy: all
+	$(MKDISK) $(LEGIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(LEGIMG)) \
+		| tee $(abspath $(LEGLOG))
+	@$(EMUOK)
+	dd if=$(LEGIMG) of=build/leg-cpma.img bs=512 skip=$(CPMA_BASEBLK) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	rm -rf build/leg-fs
+	python3 tools/mkcpmfs.py --extract build/leg-cpma.img build/leg-fs
+	@sh tests/legacychk.sh $(LEGLOG) build/leg-fs > build/verify-legacy-summary.txt \
+		|| { cat build/verify-legacy-summary.txt; echo "verify-legacy: FAIL"; exit 1; }
+	@cat build/verify-legacy-summary.txt
 
 # ---- CCP options session (verify-ccp): search path, named directories,
 # IF/ELSE/FI in submit files and the error handler, all driven from
@@ -2328,6 +2374,54 @@ verify-gencom: all
 # at (4,10)/(4,60)/(14,10)/(14,60), labels inside it, the four one-step
 # motions around the anchor at (2,40), an erase-to-end-of-line at (16,30)
 # and an erase-to-end-of-screen at (19,20).
+# ---- directory hashing on/off A-B test (PLAN.md sec 9 rows 5 and 8) ----
+# Row 5 (hashing/BCB) was CANNOT-VERIFY and row 8 (GENCPM) was FAIL for the
+# same reason: nothing could turn hashing off, so there was no A-B to run.
+# src/bdos/dskhash.c hashen[2] is that switch (see its own comment); this
+# builds a second cpm.sys with it compiled off and compares the two on the
+# EMULATOR's own instruction count (see tests/hashab.py's own docstring
+# for why a wildcard `DIR' cannot show this and TYPE can).
+HASHOFFDIR = build/hashoff
+HASHOFFOBJ = $(HASHOFFDIR)/obj
+HASHOFFSYS = $(HASHOFFDIR)/cpm.sys
+HASHABSRC  = build/hashab-src
+HASHABB    = build/hashab-b.img
+HASHABON   = build/hashab-on.bin
+HASHABOFF  = build/hashab-off.bin
+HASHABN    = 384
+
+# A phony name DISTINCT from $(HASHOFFSYS) itself: this recurses into the
+# same Makefile with OBJDIR/CPMSYS/DEFS overridden, so the normal build's
+# own build/obj and build/cpm.sys are never touched by it.  Naming this
+# phony target $(HASHOFFSYS) instead would make the recursive $(MAKE)
+# see the very same rule for that target name and recurse forever --
+# there being no OTHER rule left to build the real file with.
+.PHONY: hashoff-cpmsys
+hashoff-cpmsys:
+	$(MAKE) OBJDIR=$(HASHOFFOBJ) CPMSYS=$(HASHOFFSYS) \
+		DEFS='-DHASH_A_DEFAULT=0 -DHASH_B_DEFAULT=0' $(HASHOFFSYS)
+
+$(HASHABB): tools/mkcpmfs.py
+	@rm -rf $(HASHABSRC) && mkdir -p $(HASHABSRC)
+	@i=0; while [ $$i -lt $(HASHABN) ]; do \
+		n=`printf %03d $$i`; \
+		printf 'hash test file %s\r\n' $$n > $(HASHABSRC)/F$$n.TXT; \
+		i=$$((i+1)); \
+	done
+	python3 tools/mkcpmfs.py --label C900B --label-mode create,update \
+		$@ $(CPMB_BLOCKS) $(HASHABSRC)
+
+$(HASHABON): $(CPMSYS) $(CPMARIMG) $(HASHABB) $(wildcard $(KBOOT)) tools/mkcpmdisk.py
+	$(MKDISK) $@ $(CPMSYS) $(CPMARIMG) $(HASHABB)
+
+$(HASHABOFF): hashoff-cpmsys $(CPMARIMG) $(HASHABB) $(wildcard $(KBOOT)) tools/mkcpmdisk.py
+	$(MKDISK) $@ $(HASHOFFSYS) $(CPMARIMG) $(HASHABB)
+
+.PHONY: verify-hash-ab
+verify-hash-ab: $(HASHABON) $(HASHABOFF)
+	python3 tests/hashab.py --emu $(EMU) --on $(abspath $(HASHABON)) \
+		--off $(abspath $(HASHABOFF)) --n $(HASHABN)
+
 CRSRIMG	= build/crsrtest.bin
 CRSRLOG	= build/verify-crsr.log
 CRSRIN	= $(OSSEL)CRSRDEMO\r

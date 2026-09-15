@@ -5,6 +5,7 @@
 #include "bdosdef.h"		/* Type and structure declarations for BDOS */
 
 #include "biosdef.h"		/* BIOS definitions, needed for bios wboot */
+#include "boottrace.h"		/* opt-in cold-boot markers (src/bios) */
 
 #include "cpmver.h"
 
@@ -68,8 +69,10 @@ bdosinit()
     } *segp;
     BSETUP
 
+    BTRACE("<6>");		/* bdosinit entered */
     bsetvec(trap2v, map_adr((long)traphnd, 257)); /* set up trap vector */
 						   /* (inst. space addr) */
+    BTRACE("<7>");		/* trap-2 vector set (I-space map_adr) */
     GBL.delim  = '$';
     GBL.lstecho = FALSE;
     GBL.echodel = TRUE;
@@ -79,7 +82,11 @@ bdosinit()
     GBL.errmode = 0;
     GBL.conmode = 0;
     GBL.retcode = 0;
+    BTRACE("<8>");		/* GBL block initialised */
+    BTRACE("<9>");		/* about to call xbdos(13) */
     xbdos(13,0, XNULL);		/* reset disk system function */
+    BTRACE("<c>");		/* xbdos(13) returned */
+    BTRACE("<d>");		/* about to print the BDOS sign-on */
     prt_line(SYS_BANNER);
 		/* C900: the FF + literal newline the original embedded in the
 		   string are now escapes -- cc0 rejects raw newline in a string */

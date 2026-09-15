@@ -8,6 +8,7 @@ include mk/config.mk
 help:
 	@printf '%s\n' \
 	  'make imagecheck      check the generated images' \
+	  'make farptrcheck     check the banked-memory invariant in src/bdos' \
 	  'make verify-<name>   run one emulator verification target' \
 	  'make deps            fetch inputs listed in DEPS' \
 	  'make clean           remove build products'
@@ -31,6 +32,10 @@ imagecheck: $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG)
 	@sh tests/mdcheck.sh $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG)
 
 # Caller-space far pointers must be accessed through the memory-copy helpers.
+.PHONY: farptrcheck
+farptrcheck:
+	@python3 tests/farptrcheck.py src/bdos/*.c src/bdos/*.h
+
 # Replace only on content changes to avoid unnecessary banner recompiles.
 .PHONY: FORCE
 FORCE:

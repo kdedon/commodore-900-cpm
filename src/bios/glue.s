@@ -8,11 +8,17 @@
 	.globl	mem_cpy_, mem_clr_, xfer_
 	.globl	ccpentry_
 	.globl	ccprun_
+#ifdef BOOT_TRACE
+	.globl	bt4_			/ opt-in cold-boot marker (cmain.c)
+#endif
 	.shri
 
 ccpentry_:
 	ld	r14, $0x3f00		/ SP segment = 0x3F (<<8 form, VKERN)
 	sub	r13, r13		/ clear frame pointer
+#ifdef BOOT_TRACE
+	call	bt4_			/ marker <4>: stack reset (cmain.c)
+#endif
 	call	ccprun_
 	jr	ccpentry_		/ ccprun does not return; if it ever
 					/   did, start over rather than run on

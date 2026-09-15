@@ -7,6 +7,7 @@
 #include "biosdef.h"		/* Declarations of BIOS functions */
 
 #include "pktio.h"		/* Packet I/O definitions (drive probe) */
+#include "boottrace.h"		/* opt-in cold-boot markers (src/bios) */
 
 /*  Declare EXTERN functions */
 
@@ -131,6 +132,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
     LOCAL struct tempstr temp;
     BSETUP
 
+	BTRACE1("<a>");			/* FIRST xbdos() body entry */
 	temp.reselect = FALSE;
 	temp.fxptr = infop;
  	rtnval = 0;
@@ -202,6 +204,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    crit_dsk= 0;
 		    GBL.curdsk = 0xff;
 		    GBL.dfltdsk = 0;
+		    BTRACE1("<b>");	/* FIRST fn 13 body completion */
 		    break;
 
 	  case 14:  if (GBL.errmode && ! drv_ok(info & 0xff))
@@ -540,9 +543,28 @@ REG struct tempstr *temptr;
 **
 *****************************************************/
 
+#define UPRTCHUNK 32	/* bytes pulled from user space per cpy_in() call */
+
 uprt_line(ptr)
 XADDR ptr;
 {
+	UBYTE	buf[UPRTCHUNK];
+	REG UWORD i;
+	BOOLEAN done;
+
+	/* Pull the string across in chunks with one cpy_in() apiece instead
+	   of one mem_cpy() per byte -- glue.s's bdcall is a direct call now,
+	   not a trap, but it is still a call, so this still cuts the count
+	   by roughly UPRTCHUNK.  Function 9 strings run to GBL.delim with
+	   no declared length limit, so the chunk size is arbitrary and we
+	   just keep pulling chunks until the delimiter turns up in one.  */
+
+	do
+	{
+	    cpy_in(ptr, buf, UPRTCHUNK);
+	    ptr += UPRTCHUNK;
+	    for (i = 0; i < UPRTCHUNK; i++)
+	} while (!done);
 }
 
 

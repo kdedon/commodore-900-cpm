@@ -29,6 +29,15 @@ MLOCAL WORD	dhok;		/* table describes drive dhdrv		*/
 MLOCAL WORD	dhbld;		/* rebuild in progress			*/
 MLOCAL UWORD	dhdrv;		/* drive the table describes		*/
 
+#ifndef HASH_A_DEFAULT
+#define HASH_A_DEFAULT	1
+#endif
+#ifndef HASH_B_DEFAULT
+#define HASH_B_DEFAULT	1
+#endif
+
+GLOBAL UBYTE hashen[2] = { HASH_A_DEFAULT, HASH_B_DEFAULT };
+
 
 UWORD dhname(p)
 /* Hash the 11 name/type bytes.  The attribute bits live in bit 7 of each
@@ -103,6 +112,8 @@ REG UWORD drm;
     if (dhok && dhdrv == dsknum) return;	/* still valid */
     dhok = 0;
     dhdrv = dsknum;
+    dhbld = (drm < DHMAX) && hashen[dsknum];
+				/* hashen[]: per-drive on/off switch, above */
 }
 
 

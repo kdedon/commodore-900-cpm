@@ -1,0 +1,13 @@
+# legacy-history.log -- row 11 retention record ("stock CP/M-8000 1.3
+# binaries keep running").
+#
+# One RECORD line per milestone, pasted in BY HAND from the last line of
+# `make verify-legacy`'s build/verify-legacy-summary.txt (or copied
+# straight out of the terminal).  This file is the "regression record per
+# milestone" the faithfulness audit found missing: `make verify-legacy`
+# itself keeps no history -- it re-runs fresh every time, like every other
+# verify-* target -- so a person commits the line here after a run they
+# want remembered.  Newest at the bottom; do not edit old lines.
+#
+# format: RECORD <UTC timestamp> verify-legacy: PASS -- <what ran, what's
+#         KNOWN-FAILING>

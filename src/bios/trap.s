@@ -79,8 +79,11 @@ faultcom_:
 	iret
 
 faultpanic_:
+	ld	r0, rr14(34)		/ PC offset (post-instruction)
+	sub	r0, $2			/ -> address of the instruction itself
 	ld	r1, rr14(32)		/ PC segment word
 	ld	r2, rr14(30)		/ caller FCW
+	ld	r3, rr14(28)		/ identifier = instruction word
 	push	(rr14), r0		/ panic_(vec, id, fcw, pcseg, pcoff)
 	push	(rr14), r1
 	push	(rr14), r2

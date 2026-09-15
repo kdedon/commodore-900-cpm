@@ -52,3 +52,42 @@ $(CPMBIMG): mk/config.mk mk/images.mk src/dist/disk-b tools/mkcpmfs.py tools/spa
 $(CPMDISK): $(CPMSYS) $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) tools/mkcpmdisk.py tools/cohfs.py tools/sparse.py
 	$(MKDISK) $@ $(CPMSYS) $(CPMARIMG) $(CPMBIMG)
 
+# ---------------------------------------------------------------------------
+# Boot-trace medium (OPT-IN; not part of `all').
+#
+#	make cpmtrace			-> build/cpmtrace.bin
+#
+# Same sources, compiled with -DBOOT_TRACE so src/bios/boottrace.h's
+# BTRACE() markers are emitted on the cold path.  A machine that stops
+# between the BIOS line and the BDOS sign-on prints its last marker and
+# names the step.  The markers go out through the boot ROM's console
+# dispatcher, not through the BIOS console layer or the BDOS, so they do
+# not depend on the layer under test.  Legend: docs/run/D3.md.
+#
+# Everything it touches is named differently from the default build --
+# its own object directory, cpm.sys, split module, build log and medium --
+# so `make all' still produces byte-identical build/cpm.sys and
+# build/cpmonly.bin whether or not this target has ever been run.  The
+# recursion follows the verify-hash-ab pattern in tests/verify.mk: a
+# PHONY name distinct from the file, so the sub-make sees an ordinary
+# $(CPMSYS) rule instead of recursing on itself forever.
+TRACEDIR = build/trace
+TRACEOBJ = $(TRACEDIR)/obj
+TRACESYS = $(TRACEDIR)/cpm.sys
+TRACEMOD = $(TRACEDIR)/split.mod
+TRACELOG = $(TRACEDIR)/build.log
+TRACEBIN = build/cpmtrace.bin
+
+.PHONY: trace-cpmsys cpmtrace
+trace-cpmsys:
+	@mkdir -p $(TRACEDIR)
+	$(MAKE) OBJDIR=$(TRACEOBJ) CPMSYS=$(TRACESYS) SPLITMOD=$(TRACEMOD) \
+		LOG=$(TRACELOG) DEFS='-DBOOT_TRACE' $(TRACESYS)
+
+$(TRACEBIN): trace-cpmsys $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) \
+		tools/mkcpmdisk.py tools/cohfs.py tools/sparse.py
+	$(MKDISK) $@ $(TRACESYS) $(CPMARIMG) $(CPMBIMG)
+
+cpmtrace: $(TRACEBIN)
+	@echo "boot-trace medium: $(TRACEBIN) (markers: docs/run/D3.md)"
+

@@ -1,4 +1,5 @@
 #include "romabi.h"
+#include "boottrace.h"
 #include "c900cfg.h"		/* TPASEG/TPABASE			*/
 #include "stdio.h"		/* DRI types layer (sys/stdio.h)	*/
 #include "bdosdef.h"		/* BDOS structs: dpb, dph (sys/)	*/
@@ -271,6 +272,7 @@ biosinit()
 {
 	extern int mapseg();
 
+	BTRACE("<1>");		/* binit (BIOS fn 0) entered */
 	iobyte = 0;
 	/* split-I/D shim banks: pgmld's loadseg copies a 0xEE0B program's
 	 * D segments into SPLITDSEG before spload() runs, so both shim
@@ -372,6 +374,22 @@ long d1, d2;
 
 	case 23:				/* TIME: read/set the RTC */
 		return (rtctime(d1, (int)d2));
+
+	/*
+	 * BIOCOST-only, cpm.h BIOS_ROMCHAR/BIOS_VSETCHAR: not stock CP/M-8000
+	 * BIOS functions and not on bioscl()'s (sys/iosys.c) allowed list --
+	 * they exist so src/cmd/biocost.c, reaching them through the raw
+	 * SC #3 gate, can isolate the ROM's own glyph renderer (100) from
+	 * the video-RAM store crsr.c uses to erase and to park the cursor
+	 * (101) without going through it.  See src/bios/crsr.c vsettest().
+	 */
+	case 100:				/* ROMCHAR: ROM putchar direct */
+		putchar((int)d1);
+		break;
+
+	case 101:				/* VSETCHAR: direct video store */
+		vsettest((int)d1);
+		break;
 	}
 	return (0L);
 }

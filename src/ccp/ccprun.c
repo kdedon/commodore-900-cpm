@@ -4,6 +4,7 @@
 #include "bdosdef.h"		/* BDOS type and structure declarations	*/
 
 #include "biosdef.h"		/* Declarations of BIOS functions 	*/
+#include "boottrace.h"		/* opt-in cold-boot markers (src/bios) */
 
 #include "basepage.h"		/* Base page structure			*/
 
@@ -167,6 +168,8 @@ VOID ccprun()
     UWORD		olduser;
     UBYTE		tlen;
     REG WORD		i;
+
+    BTRACE("<5>");		/* ccprun entered from ccpentry */
 
     if (!sysinit) {		/* the latch ccpif.s used to hold	*/
 	sysinit = TRUE;

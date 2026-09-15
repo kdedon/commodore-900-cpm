@@ -37,6 +37,7 @@
 #define	DHBASE		0x33004000L	/* NBCB*512 = 0x4000 */
 #define	DHPHYS		0x000C4000L
 #define	DHMAX		512		/* directory entries the table covers */
+					/* per-drive on/off: dskhash.c hashen[] */
 
 #define	SPLITSCW	0x7FFF		/* the patch word: SC #255 */
 #define	SPLITMAXT	0xE000		/* max text bytes: the side table's

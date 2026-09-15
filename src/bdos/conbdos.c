@@ -89,14 +89,23 @@ BOOLEAN constat()
 /* check for ctrl/s */
 /* used internally  */
 /********************/
+
+
+#define CONBRK_POLL 8
+
+MLOCAL UBYTE brkctr = 0;	/* characters emitted since the last poll */
+
 conbrk()
 {
     REG UBYTE ch;
     REG BOOLEAN stop;
     BSETUP
 
+    if (GBL.conmode & CM_NOSTOP) { brkctr = 0; return; }
 		/* stop-scroll disabled: output is not interruptible at all,
 		   ^C included -- CP/M 3 leaves conbrk immediately too */
+    if (++brkctr < CONBRK_POLL) return;
+    brkctr = 0;
     stop = FALSE;
     if ( bconstat() ) do
     {

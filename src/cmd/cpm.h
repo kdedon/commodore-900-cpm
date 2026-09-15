@@ -92,6 +92,22 @@ struct biospb {
 #define	BIOS_SECTRAN	16	/* logical -> physical sector		*/
 #define	BIOS_FLUSH	21	/* flush the BIOS buffer cache		*/
 
+/*
+ * BIOCOST-only codes, NOT reachable through function 50: bioscl()
+ * (sys/iosys.c) refuses 2-7 outright, and these two do not even exist
+ * there -- they are read through the raw SC #3 gate instead (biossc.s
+ * __bios(), bdosglue.s `biosgate'), which every stock DRI BIOS trap
+ * uses and which bioscl's refusal list has no say over.  Added to
+ * src/bios/bios900.c's dispatch purely so src/cmd/biocost.c can reach,
+ * one at a time, the two BIOS-internal primitives concost.c cannot:
+ * the ROM's own glyph renderer and the direct video-RAM store that
+ * bypasses it.  BIOS_CONOUT (4) is the stock CONOUT code, listed here
+ * only as the SC #3 counterpart of BDOS function 2.
+ */
+#define	BIOS_CONOUT	4	/* console output(char) -- SC #3 only	*/
+#define	BIOS_ROMCHAR	100	/* ROM putchar direct (romabi.h:64)	*/
+#define	BIOS_VSETCHAR	101	/* vsetcell direct video store		*/
+
 /* error modes for function 45 */
 #define	ERRMODE_DEFAULT	0x00	/* display the error and terminate	*/
 #define	ERRMODE_RETURN	0xff	/* return the error to the program	*/
@@ -143,6 +159,9 @@ extern struct bpage *_base;	/* set by the runtime startup		*/
 
 extern int	__bdos();	/* __bdos(func, param) -> the SC #2 gate */
 extern long	__bdosl();	/* the same gate, LONG result (fn 50)	*/
+extern long	__bios();	/* __bios(func, p1, p2) -> the SC #3 raw
+				   BIOS gate (biossc.s), bypassing the BDOS
+				   and its function-50 refusal list	*/
 
 /* libcpm.c */
 extern int	conout();

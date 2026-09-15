@@ -1,6 +1,7 @@
 #include "romabi.h"
 #include "biosdef.h"
 #include "c900cfg.h"
+#include "boottrace.h"
 
 extern ccpentry();		/* glue.s: reset the stack, enter the CCP */
 extern int mem_cpy(), mem_clr();
@@ -26,10 +27,13 @@ static spminit()
 cmain()
 {
 	binit();
+	BTRACE("<2>");		/* binit returned */
 	spminit();
+	BTRACE("<3>");		/* spminit returned */
 	puts("\nCP/M-8000(tm) for the Commodore 900\n");
 	ccpentry();		/* no return */
 }
+
 
 #else	/* M12_HARNESS */
 
@@ -207,3 +211,21 @@ cmain()
 }
 
 #endif	/* M12_HARNESS */
+
+#ifdef BOOT_TRACE
+/*
+ * Markers for the two assembly steps.  glue.s and bdosglue.s call these
+ * rather than addressing a string themselves: an .s file has no portable
+ * way to build a far pointer to a literal in the DATA segment, and the
+ * point of the instrument is that it cannot itself be the bug.
+ */
+bt4()				/* ccpentry: system stack reset */
+{
+	BTRACE("<4>");
+}
+
+bt_sc()				/* FIRST SC trap gate entry, once only */
+{
+	BTRACE1("<T>");
+}
+#endif

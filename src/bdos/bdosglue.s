@@ -39,6 +39,9 @@
 	.globl	bios3_
 	.globl	bios4_
 	.globl	bios5_
+#ifdef BOOT_TRACE
+	.globl	bt_sc_			/ opt-in cold-boot marker (cmain.c)
+#endif
 	.globl	bios6_
 	.globl	traphnd_	/ the SC trap gate (PSA offset 24 -> here)
 	.globl	scentry_	/   (same entry; traphnd_ kept for bdosmisc.c)
@@ -111,6 +114,12 @@ scentry_:
 traphnd_:
 	sub	r15, $28
 	ldm	(rr14), r0, $14		/ save caller r0-r13
+#ifdef BOOT_TRACE
+	call	bt_sc_			/ marker <T>, once: the FIRST SC trap
+					/   reached the gate.  Placed after the
+					/   register save, so clobbering r0-r13
+					/   costs nothing; r0 is reloaded below.
+#endif
 	ld	r0, rr14(28)		/ identifier = 0x7F00 | SC number
 	cp	r0, $0x7FFF		/ split-I/D data-access trap: by far
 	jr	eq, splitgate		/   the hottest SC -- test it first

@@ -88,6 +88,12 @@ int off, ch;
 }
 #endif
 
+vsettest(ch)
+int ch;
+{
+	VSET(CELLOFF(0, 0), ch);
+}
+
 /*
  * Current cursor, from the ROM's own saved state.  Both halves are masked
  * rather than simply cast: int is 16 bits on the target and the cast alone
