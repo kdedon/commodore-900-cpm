@@ -150,6 +150,7 @@ REG UBYTE dsknum;		/* disk number to select */
 	    GBL.curdsk = 0xff;
 	    return;
 	}
+	GBL.dirbufp = &GBL.pdirbuf[0];
 			/* set up GBL copies of dir_buf and dpb ptrs */
 	GBL.parmp = (GBL.dphp)->dpbp;
 	dirdrop();	/* the directory buffer now belongs to this disk */
@@ -170,6 +171,14 @@ REG UBYTE dsknum;		/* disk number to select */
 	dirscan(alloc, NULL, 0x0e);	/* do directory scan & alloc blocks */
 	log_dsk |= 1 << dsknum;		/* mark disk as logged in	*/
 	dhdone();			/* signatures complete: hashing on */
+	UNLOCK		/* THIS RELEASE WAS MISSING TOO, and this one is
+			   worse than getaloc's: the login scan runs on
+			   the FIRST reference to any drive, so under a
+			   real lock the file system would be locked for
+			   good by whoever touched a disk first.	 The scan
+			   in between is also why the recursion contract
+			   matters -- dirscan reaches do_phio (iosys.c),
+			   which takes this same lock.		*/
     }
 }
 

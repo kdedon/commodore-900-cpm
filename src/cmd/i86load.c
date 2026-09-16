@@ -175,6 +175,8 @@ int nseg;
 		 * than by reading the code -- the in-memory placement test
 		 * checked m->ip only on the small-model path. */
 		m->ip = c->entry;
+		m->wseg = m->sr[S_SS];
+		m->wset = 1;
 		return (CE_OK);
 	}
 
@@ -226,6 +228,14 @@ int nseg;
 	}
 
 	m->ip = c->entry;
+	/* The paragraph the guest is ENTERED with in SS, recorded because a
+	 * far transfer to its offset 0 is this environment's warm boot --
+	 * i86exec.c wboot().  It is recorded HERE, at the one place that
+	 * decides it, and never recomputed from m->sr[S_SS]: the guest
+	 * reloads SS in its first ten instructions, so by the time the
+	 * epilogue runs the register no longer answers the question. */
+	m->wseg = m->sr[S_SS];
+	m->wset = 1;
 	return (CE_OK);
 }
 

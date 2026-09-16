@@ -7,6 +7,11 @@ EMU	:= $(if $(EMU),$(EMU),$(shell sh tools/deps.sh emu))
 # kboot and boot-medium settings are defined in mk/config.mk.
 TESTIMG	= build/emutest.bin
 EMUMAX	?= 600000000
+# verify-conclk's first run cannot end on its own: the point of it is that
+# nothing completes while the prompt is unanswered, so it coasts to this
+# budget by design.  Small enough that doing so is cheap, large enough that
+# a system which WOULD have completed has had every chance to.
+CONCLMAX ?= 250000000
 # Stop on console idle or the CCP's unknown-command echo of ENDWORD.
 # The trailing '?' distinguishes that response from the typed command echo.
 ENDWORD	?= ZZEND
@@ -714,6 +719,18 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		     echo "            an empty default FCB produces is \"No 'SUB'"; \
 		     echo "            File Present\" (i86load.c i86mkfcb)."; exit 1; } \
 		|| true
+	@# SUBMIT ENDS THE WAY THE PROGRAM MEANT TO.  Its PL/M-86 epilogue
+	@# closes with `CS: JMP FAR [0059]' to <entry SS>:0000 -- CP/M-80's
+	@# `JMP 0000' warm boot in 8086 spelling -- and src/cmd/i86exec.c
+	@# wboot() recognises it and terminates the guest.  The address is
+	@# asserted, not just the fact: 1000:0054 is where SUBMIT's epilogue
+	@# ends in the code segment the loader placed, and the host run stops
+	@# on the same instruction (tests/i86test.c section 8c).
+	@grep -q 'i86: warm boot: a far transfer to the entry stack segment, cs:ip 1000:0054' $(I86LOG) \
+		|| { echo "verify-i86: FAIL -- SUBMIT did not end where the host"; \
+		     echo "            run ends: the far indirect JMP in its"; \
+		     echo "            PL/M-86 epilogue, recognised as the warm"; \
+		     echo "            boot.  See tests/i86test.c section 8c."; exit 1; }
 	@# --- the known answer: the copy, off the disk the machine wrote it to ---
 	dd if=$(I86IMG) of=build/i86-after.img bs=512 skip=$(CPMA_BASEBLK) \
 		count=$(CPMA_BLOCKS) status=none conv=sparse
@@ -751,6 +768,8 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@echo "            DRI's PIP.CMD in them through the real BDOS; the copy it"
 	@echo "            made is byte-identical to its input.  DRI's SUBMIT.CMD"
 	@echo "            ran in the same segments, took the same 2,689 instructions"
+	@echo "            it takes on the host, ENDED through the warm boot its"
+	@echo "            own PL/M-86 epilogue asks for, and the \$$\$$\$$.SUB it wrote is"
 	@echo "            byte-identical to the one the host run wrote.  DRI's"
 	@echo "            GENCMD.CMD converted a real .H86 in the same segments"
 	@echo "            -- which it cannot do at all unless galloc() grants a"
@@ -3853,7 +3872,511 @@ verify-crsr: all build/crsrtest
 
 build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ tests/crsrtest.c
+
+# ---- two programs alive at once (verify-conc) ----
+# The process descriptor and the cooperative switch: src/bdos/proc.c, BDOS
+# function 144.  CONC.Z8K creates a second process out of CONCB.Z8K -- a
+# whole other 64 KB image, on its own physical page behind its own Z8010
+# descriptor -- and the two print loops then alternate, LINE FOR LINE,
+# because the dispatcher runs at the SC #2 gate's return and each line is
+# one function 9 call.
+#
+# THE ASSERTIONS BELOW ARE ORDERING ASSERTIONS AND THAT IS THE POINT.
+# Counting the lines proves nothing: a program that chained to another
+# one, or one program printing both sets of lines, produces the same
+# multiset.  What only two live processes can produce is B's lines
+# INTERLEAVED BETWEEN A's, so the check is on the sequence.  The second
+# session is the control: CONCB run from the A> prompt on its own emits
+# the same B lines with nothing between them.
+#
+# CONCB checks 4 KB of its own memory after printing.  Both programs are
+# linked at the same address (UBASE 0x32000000, and nothing here
+# relocates), so that buffer sits exactly where CONC's variables are; it
+# survives only because segment 0x32 names a different physical page
+# depending on which process is running, which is the whole memory model
+# (src/bios/pgalloc.c pgtpaswap).
+CONCIMG	= build/conctest.bin
+CONCLOG	= build/verify-conc.log
+.PHONY: verify-conc
+verify-conc: all
+	$(MKDISK) $(CONCIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCIMG)) \
+		| tee $(abspath $(CONCLOG))
+	@$(EMUOK)
+	@grep -q 'CONC A: two processes' $(CONCLOG) \
+		|| { echo "verify-conc: FAIL -- CONC did not run at all"; exit 1; }
+	@grep -q 'CONC: no second process' $(CONCLOG) \
+		&& { echo "verify-conc: FAIL -- function 144 refused; the reason is in the transcript above."; \
+		     echo "            A 512 KB machine has no free page and this cannot work there"; \
+		     echo "            (src/bios/pgalloc.c) -- but the emulator models 1 MB."; exit 1; } || true
+	@grep -q 'CONCB: B alive' $(CONCLOG) \
+		|| { echo "verify-conc: FAIL -- the second image never ran"; exit 1; }
+	@# THE INTERLEAVING, and it is asserted as three ORDERING properties
+	@# rather than as one exact string.  The exact order depends on how
+	@# many BDOS calls each program happens to make before its loop, which
+	@# is a fact about these two files; what has to be true of the SYSTEM
+	@# is weaker and stronger at the same time:
+	@#
+	@#   1. B printed while A was still printing -- the child got the
+	@#      machine at function 144's return, so creation really did
+	@#      switch, and a chained program cannot produce it;
+	@#   2. B printed AGAIN after A had printed -- control came back to the
+	@#      child a second time, which a chained program cannot do and a
+	@#      one-shot hand-off cannot do either.  This is the round robin;
+	@#   3. after B ended, every remaining line is A's, and there is at
+	@#      least one -- A ran on alone, so the ended process really was
+	@#      reclaimed.
+	@#
+	@# ALL THREE ARE NOW WRITTEN WITHOUT NAMING A LINE NUMBER, and S5 is
+	@# why.  They used to read "^B01," and "A3,A4,A5,A6,$$", which is this
+	@# claim plus an assumption about WHICH slice each program is in when
+	@# it prints -- true of a scheduler that only ever switches at a BDOS
+	@# call, and false the moment the tick can take the machine away
+	@# (src/bios/trap.s ttick_).  Under preemption B does its 4 KB
+	@# self-check while A prints, so B's first line can land after A's and
+	@# its last can land after A's last.  The claims above are the same
+	@# three claims; what has gone is the transcript they were read off.
+	@#
+	@# The first fifteen loop lines are the first session (twelve A, three
+	@# B); the three after them are the control run of CONCB on its own.
+	@grep -E '^  (A|B) [0-9]+' $(CONCLOG) | head -15 | tr -d ' \r' | tr '\n' ',' \
+		> build/conc-order.txt
+	@grep -qE 'B[0-9]+,A' build/conc-order.txt \
+		|| { echo "verify-conc: FAIL -- the child never printed while the parent was"; \
+		     echo "            still printing, so what happened looks like a chain, not"; \
+		     echo "            a switch at function 144's return."; \
+		     echo "            order was: `cat build/conc-order.txt`"; exit 1; }
+	@# Claims 2 and 3 are checked on a SECOND reduction that also carries
+	@# B's exit line, because "B ran again" and "B had ended" are both
+	@# events the numbered-line alphabet above cannot see.  Sixteen events
+	@# is the first session (fifteen loop lines and B's exit), which keeps
+	@# the control run of CONCB out of the answer.
+	@grep -E '^  (A|B) [0-9]+|CONCB: B done' $(CONCLOG) | head -16 \
+		| sed -e 's/.*CONCB: B done.*/Bdone/' | tr -d ' \r' | tr '\n' ',' \
+		> build/conc-order2.txt
+	@grep -qE 'A[0-9]+,B' build/conc-order2.txt \
+		|| { echo "verify-conc: FAIL -- the child never ran a SECOND time, so what"; \
+		     echo "            happened is a hand-off, not a switch.  Two live processes"; \
+		     echo "            taking turns is the whole claim of this target."; \
+		     echo "            order was: `cat build/conc-order2.txt`"; exit 1; }
+	@rest=`sed -e 's/.*Bdone,//' build/conc-order2.txt`; \
+	  case "$$rest" in \
+	  *B*)	echo "verify-conc: FAIL -- the child printed after it had finished"; \
+		echo "            order was: `cat build/conc-order2.txt`"; exit 1;; \
+	  *A*)	;; \
+	  *)	echo "verify-conc: FAIL -- A did not run alone after B ended"; \
+		echo "            order was: `cat build/conc-order2.txt`"; exit 1;; \
+	  esac
+	@grep -q 'CONCB: B done, 4096 bytes of my own intact' $(CONCLOG) \
+		|| { echo "verify-conc: FAIL -- the second process's memory did not survive;"; \
+		     echo "            the two images are sharing a page instead of each having one"; exit 1; }
+		|| { echo "verify-conc: FAIL -- the ended process was not reclaimed"; exit 1; }
+	@# The control: CONCB alone, no interleaving, and the CCP came back
+	@# after a background process had lived and died in a swapped page.
+	@test "`grep -c 'CONCB: B alive' $(CONCLOG)`" = 2 \
+		|| { echo "verify-conc: FAIL -- CONCB did not also run as an ordinary transient"; exit 1; }
+	@echo "verify-conc: PASS -- two programs alive at once, alternating at the BDOS gate"
+
+# ---- the prompt comes back while the job runs (verify-conc2) ----
+# THE OTHER HALF OF verify-conc, and the thing verify-conc explicitly did
+# not deliver: "`A>' returns while a long job continues".  CONC.Z8K could
+# only interleave with CONCB while CONC ITSELF was still making BDOS
+# calls, because the switch was taken only at the gate's return and the
+# CCP waits for a command INSIDE a BDOS call.  src/bdos/proc.c pyield()
+# takes a switch from in there, on a supervisor stack of the waiting
+# process's own, and that is what this target measures.
+#
+# The session is one line of input and then one more:
+#
+#	A>CONCP		 CONCP starts CONCQ and EXITS
+#	CONCP: P start
+#	CONCQ: Q alive
+#	CONCP: P done
+#	A>		 the prompt, with no program of ours running
+#	  Q 01		 ...and the job continuing behind it
+#	  Q 02
+#	A>CONCB		 the next command, typed while the job runs
+#	CONCB: B alive
+#	  Q 04
+#	CONCQ: Q done, 4096 bytes of my own intact
+#
+# THE ASSERTIONS ARE ORDERING ASSERTIONS, for the reason verify-conc
+# gives: a chained program produces the same multiset of lines, so
+# counting proves nothing.  What only a yielding console read can produce
+# is Q lines AFTER the prompt that follows CONCP's exit, and Q lines
+# after a DIFFERENT program has been typed, loaded and run.
+#
+# CONCQ computes silently between lines on purpose (src/cmd/concq.c says
+# why): the emulator will not hand a keystroke to a guest that is busy
+# printing, so without the gaps the second command could not be typed
+# until the job had finished, and the run would prove only half of this.
+CONC2IMG = build/conc2test.bin
+CONC2LOG = build/verify-conc2.log
+.PHONY: verify-conc2
+verify-conc2: all
+	$(MKDISK) $(CONC2IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONC2IMG)) \
+		--input="$(OSSEL)CONCPCONCB" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONC2LOG))
+	@$(EMUOK)
+	@grep -q 'CONCP: P start' $(CONC2LOG) \
+		|| { echo "verify-conc2: FAIL -- CONCP did not run at all"; exit 1; }
+	@grep -q 'CONCP: no second process' $(CONC2LOG) \
+		&& { echo "verify-conc2: FAIL -- function 144 refused; the reason is in the transcript above."; \
+		     echo "             A 512 KB machine has no free page and this cannot work there"; \
+		     echo "             (src/bios/pgalloc.c) -- but the emulator models 1 MB."; exit 1; } || true
+	@grep -q 'CONCQ: Q alive' $(CONC2LOG) \
+		|| { echo "verify-conc2: FAIL -- the background job never ran"; exit 1; }
+	@# The transcript reduced to the five things whose ORDER is the claim:
+	@#   P  CONCP exited          Q  a line of the background job
+	@#   >  a CCP prompt          B  the next command, running
+	@#   E  the background job finished
+	@# The prompt is matched loosely on purpose.  It is printed as
+	@# characters through the BDOS like anything else, so the background
+	@# job can and does land BETWEEN the `A' and the `>' -- which is
+	@# itself the interleaving, but it means "the line that is the
+	@# prompt" is not always one line.  The specific markers are
+	@# substituted first, so a prompt character sharing a line with one
+	@# of them is counted as the marker and not twice.
+	@sed -e 's/\r//' $(CONC2LOG) \
+		| sed -n -e 's/.*CONCP: P done.*/P/p' \
+			 -e 's/.*CONCQ: Q done.*/E/p' \
+			 -e 's/.*CONCB: B alive.*/B/p' \
+			 -e 's/^  Q [0-9][0-9].*/Q/p' \
+			 -e 's/.*A>.*/>/p' \
+			 -e 's/^>.*/>/p' \
+		| tr -d '\n' > build/conc2-order.txt
+	@echo "verify-conc2: order was `cat build/conc2-order.txt`"
+	@grep -qE 'P[Q>]*>Q' build/conc2-order.txt \
+		|| { echo "verify-conc2: FAIL -- no background line came out AFTER the prompt that"; \
+		     echo "             followed CONCP's exit.  That prompt is the CCP sitting in"; \
+		     echo "             BDOS function 10 with nothing else of ours running, so a Q"; \
+		     echo "             line there is only possible if the console read yielded"; \
+		     echo "             (src/bdos/proc.c pyield, conbdos.c getch).  This is THE"; \
+		     echo "             assertion of this target."; \
+		     echo "             order was: `cat build/conc2-order.txt`"; exit 1; }
+	@# `B[>]*Q' rather than `BQ', and S5 is why: the prompt that follows
+	@# the typed command's exit can now fall between the command running
+	@# and the background job's next line, because the job is sharing the
+	@# machine by TIME and not by call and its gaps no longer line up with
+	@# anyone's console I/O.  The claim is unchanged -- a background line
+	@# after a different program was typed, loaded and run -- and the
+	@# prompt in between is not evidence against it.
+	@grep -qE 'B[>]*Q' build/conc2-order.txt \
+		|| { echo "verify-conc2: FAIL -- the next command was typed and run, but no"; \
+		     echo "             background line followed it, so the job was already over"; \
+		     echo "             by then and \"you can type the next command WHILE it runs\""; \
+		     echo "             is not what this transcript shows."; \
+		     echo "             order was: `cat build/conc2-order.txt`"; exit 1; }
+	@grep -q 'CONCB: B done, 4096 bytes of my own intact' $(CONC2LOG) \
+		|| { echo "verify-conc2: FAIL -- the typed command did not complete"; exit 1; }
+	@grep -q 'CONCQ: Q done, 4096 bytes of my own intact' $(CONC2LOG) \
+		|| { echo "verify-conc2: FAIL -- the background job did not finish with its own"; \
+		     echo "             4 KB intact: its page did not survive a warm boot, a CCP"; \
+		     echo "             reload and another program running in the TPA"; exit 1; }
+	@echo "verify-conc2: PASS -- the A> prompt came back while a long job kept running,"
+	@echo "              and the next command was typed and run alongside it"
+
+# ---- preemption: two compute-bound jobs, no console I/O (verify-conc3) ----
+# THE ONE THING verify-conc AND verify-conc2 CANNOT TEST.  Both of those
+# switch at a BDOS call: their programs print, and a print is a call, and
+# the dispatcher runs at the call's return.  A program that only computes
+# gave the machine away to nobody, ever, before S5 -- "whoever holds the
+# CPU holds it until it calls the BDOS" is how src/bdos/proc.c's banner put
+# it -- and that is the requirement's remaining half.
+#
+# CONCX creates CONCY (function 144) and both then compute with no console
+# I/O and no BDOS call whatsoever until they are finished.  CONCY's loop is
+# SIXTEEN TIMES the longer.  So the ORDER OF THE TWO `done' LINES IS THE
+# SCHEDULER, and it is a discriminator rather than a threshold:
+#
+#   cooperative  the child takes the machine at function 144's gate return
+#                and holds it for its whole computation -- `Y done' first,
+#                then `X done', always, whatever the machine's speed;
+#   preemptive   the tick takes it away mid-loop (src/bios/trap.s ttick_
+#                calling src/bdos/proc.c pdisp, and ONLY when the
+#                interrupted FCW says Normal mode), CONCX runs its much
+#                shorter loop in the slices it gets -- `X done' FIRST.
+#
+# The printed tick counts are evidence, not an assertion: they are read
+# through the RAW SC #3 BIOS gate (BIOS function 24), which does not
+# dispatch, so reading the clock is not itself a switch point.  Both
+# programs are on $(CPMACONC) rather than $(CPMAIMG) for the reason the
+# Makefile's $(UCONCFS) comment gives: adding files to A: moves
+# verify-rtc's alignment, and that image is left as it is.
+CONC3IMG = build/conc3test.bin
+CONC3LOG = build/verify-conc3.log
+.PHONY: verify-conc3
+verify-conc3: all $(CPMACONC)
+	$(MKDISK) $(CONC3IMG) $(CPMSYS) $(CPMACONC) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONC3IMG)) \
+		--input="$(OSSEL)CONCX\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONC3LOG))
+	@$(EMUOK)
+	@grep -q 'CONCX: X start' $(CONC3LOG) \
+		|| { echo "verify-conc3: FAIL -- CONCX did not run at all"; exit 1; }
+	@grep -q 'CONCX: no second process' $(CONC3LOG) \
+		&& { echo "verify-conc3: FAIL -- function 144 refused; the reason is in the"; \
+		     echo "              transcript above.  A 512 KB machine has no free page"; \
+		     echo "              (src/bios/pgalloc.c); the emulator models 1 MB."; exit 1; } || true
+	@grep -q 'CONCY: MEMORY CLOBBERED' $(CONC3LOG) \
+		&& { echo "verify-conc3: FAIL -- the preempted process's 4 KB did not survive."; \
+		     echo "              A switch at an arbitrary instruction moved a page under it."; \
+		     exit 1; } || true
+	@grep -q 'CONCX: X done' $(CONC3LOG) \
+		|| { echo "verify-conc3: FAIL -- the FOREGROUND job never finished.  It computes"; \
+		     echo "              without calling the BDOS, so if it never got the machine"; \
+		     echo "              back, nothing preempted the child."; exit 1; }
+	@grep -q 'CONCY: Y done' $(CONC3LOG) \
+		|| { echo "verify-conc3: FAIL -- the background job never finished"; exit 1; }
+	@tr -d '\r' < $(CONC3LOG) | sed -n -e 's/.*CONCX: X done.*/X/p' \
+					  -e 's/.*CONCY: Y done.*/Y/p' \
+		| tr -d '\n' > build/conc3-order.txt
+	@echo "verify-conc3: order was `cat build/conc3-order.txt`, ticks `tr -d '\r' < $(CONC3LOG) | sed -n 's/.*ticks=\([0-9]*\).*/\1/p' | tr '\n' ' '`"
+	@test "`cat build/conc3-order.txt`" = "XY" \
+		|| { echo "verify-conc3: FAIL -- the short foreground job did not finish FIRST."; \
+		     echo "              Both jobs compute with no BDOS call in the loop, and the"; \
+		     echo "              background one is 16x the longer, so YX is the"; \
+		     echo "              cooperative scheduler: the child held the machine from"; \
+		     echo "              function 144's gate return until it was done.  Nothing"; \
+		     echo "              took it away on a tick."; \
+		     echo "              order was: `cat build/conc3-order.txt`"; exit 1; }
+	@echo "verify-conc3: PASS -- two compute-bound jobs, no console I/O between them,"
+	@echo "              and both progressed: the tick is what switched them"
+
+# ---- WHAT AN IDLE SECOND CONSOLE COSTS (verify-conc5) ----
+# C5's measurement, and the one number a user would actually feel.
+#
+# THE CLAIM.  Two compute-bound jobs with a second terminal attached and
+# NOBODY AT IT must retire the same work in the same time as the same two
+# jobs alone.  Not "roughly", not "the transcript looks reasonable": the
+# target runs the identical program twice on the identical disk image, once
+# with a console session on console 1 and once without, and prints the two
+# tick counts side by side with the difference as a percentage.
+#
+# WHY IT WAS NOT TRUE BEFORE.  A session waiting for a keystroke blocked by
+# SPINNING through pyield() (run/C2.md decision 1, taken deliberately to
+# stay out of pnext() while C1 was in flight).  A spinning waiter keeps its
+# place in the round robin, so three live processes with one idle meant the
+# two real ones got two thirds of the machine between them -- and run/C3.md
+# section 5 had to make SESSION a call rather than something the cold boot
+# does, because starting one unconditionally would have cost EVERY existing
+# target half its machine for nothing.  C5's wait list takes a blocked
+# process out of pnext()'s rotation, and this target is what says so.
+#
+# WHAT THE NUMBERS ARE.  CONCZ times its own one-unit loop; CONCY, which it
+# creates, times its sixteen-unit one.  Both read the clock through the raw
+# SC #3 BIOS gate, so reading it is not itself a switch point (src/cmd/
+# concx.c has the argument).  Both counts are compared, because they fail
+# in different ways: CONCZ is short and would show a startup cost, CONCY is
+# long and would show a steady-state one.
+#
+# THE OTHER HALF OF THE CLAIM is that the session was really there.  CONCZ
+# prints function 145's process count from inside the timed run: 2 alone
+# (itself and CONCY), 3 with the session.  A WITH run printing 2 would be
+# a session that failed to start and a comparison of nothing with nothing,
+# so the target checks both counts before it compares any ticks.
+#
+# CONCZTOL is the tolerance in percent, applied to both jobs, and it was
+# MEASURED against the thing it has to reject rather than guessed.
+#
+# Run/C3.md estimated the spin's cost at "half the machine" and that
+# estimate is WRONG -- see run/C5.md.  C1's preemption is why: a spinning
+# idle process that is handed the machine by the tick returns from its
+# pyield() inside getch(), re-tests a console that is still empty and gives
+# it straight back, so it costs two switches per tick and not a slice.
+# Removing the `pd_wait == PW_RUN' test from pnext() (src/bdos/proc.c) and
+# rebuilding turns this target's CONCY row from 0.6% into 7.4%, on the same
+# tree, with everything else unchanged.  Those are the two numbers the
+# tolerance sits between, so it is 3: comfortably above the 0.6% a correct
+# wait list costs, and comfortably below the 7.4% the spin costs.
+#
+# It is a discriminator and not a calibration: the 0.6% is one console poll
+# per dispatch (pwscan -> conststat) and does not grow with the work, while
+# the 7.4% is a share of every tick and does.
+CONCZTOL = 3
+CONCZAIMG = build/conc5a.bin
+CONCZBIMG = build/conc5b.bin
+CONCZALOG = build/verify-conc5-alone.log
+CONCZBLOG = build/verify-conc5-idle.log
+.PHONY: verify-conc5
+verify-conc5: all $(CPMACONCZ)
+	$(MKDISK) $(CONCZAIMG) $(CPMSYS) $(CPMACONCZ) $(CPMBIMG)
+	cp $(CONCZAIMG) $(CONCZBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCZAIMG)) \
+		| tee $(abspath $(CONCZALOG))
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCZBIMG)) \
+		| tee $(abspath $(CONCZBLOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(CONCZALOG) > build/conc5a.txt
+	@tr -d '\r' < $(CONCZBLOG) > build/conc5b.txt
+	@grep -q 'CONCZ: no session' build/conc5b.txt \
+		&& { echo "verify-conc5: FAIL -- function 142 refused the session; the reason"; \
+		     echo "              is in the transcript above.  A machine the loader"; \
+		     echo "              found no spare serial port on has one console"; \
+		     echo "              (src/bios/bios900.c coninit)."; exit 1; } || true
+	@grep -q 'CONCZ: no second process' build/conc5a.txt build/conc5b.txt \
+		&& { echo "verify-conc5: FAIL -- function 144 refused; a 512 KB machine has no"; \
+		     echo "              free page (src/bios/pgalloc.c).  The emulator is 1 MB."; \
+		     exit 1; } || true
+	@# The session was really there, and only in the second run.
+		     echo "              processes, so it is not the baseline it claims to be."; \
+		     grep 'CONCZ: live' build/conc5a.txt; exit 1; }
+		     echo "              processes.  Without the session there is nothing to"; \
+		     echo "              measure the cost of and the comparison is empty."; \
+		     grep 'CONCZ: live' build/conc5b.txt; exit 1; }
+	@sed -n 's/^CONCZ: Z done, ticks=\([0-9][0-9]*\)$$/\1/p' build/conc5a.txt \
+		> build/conc5-za.txt
+	@sed -n 's/^CONCZ: Z done, ticks=\([0-9][0-9]*\)$$/\1/p' build/conc5b.txt \
+		> build/conc5-zb.txt
+	@sed -n 's/.*CONCY: Y done.*ticks=\([0-9][0-9]*\).*/\1/p' build/conc5a.txt \
+		> build/conc5-ya.txt
+	@sed -n 's/.*CONCY: Y done.*ticks=\([0-9][0-9]*\).*/\1/p' build/conc5b.txt \
+		> build/conc5-yb.txt
+	@for f in za zb ya yb; do test -s build/conc5-$$f.txt \
+		|| { echo "verify-conc5: FAIL -- a job never printed its tick count ($$f)."; \
+		     echo "              One of the two runs did not finish; the transcripts"; \
+		     echo "              are above."; exit 1; }; done
+	@# THE TABLE.  Printed, not eyeballed: the target computes the two
+	@# percentages itself and then asserts on them.
+	@awk -v tol=$(CONCZTOL) \
+	     -v za=`cat build/conc5-za.txt` -v zb=`cat build/conc5-zb.txt` \
+	     -v ya=`cat build/conc5-ya.txt` -v yb=`cat build/conc5-yb.txt` \
+	  'BEGIN { \
+	     printf "verify-conc5: an idle second console, measured\n"; \
+	     printf "  %-22s %8s %8s %9s\n", "job", "alone", "+idle", "delta"; \
+	     dz = (zb - za) * 100.0 / za; dy = (yb - ya) * 100.0 / ya; \
+	     printf "  %-22s %8d %8d %8.1f%%\n", "CONCZ  1 unit", za, zb, dz; \
+	     printf "  %-22s %8d %8d %8.1f%%\n", "CONCY 16 units", ya, yb, dy; \
+	     printf "  processes live         %8d %8d\n", 2, 3; \
+	     az = dz < 0 ? -dz : dz; ay = dy < 0 ? -dy : dy; \
+	     if (az <= tol && ay <= tol) { \
+	       printf "verify-conc5: PASS -- both jobs within %d%%: the idle console is\n", tol; \
+	       printf "              out of the ready rotation and costs them nothing\n"; \
+	       exit 0; } \
+	     printf "verify-conc5: FAIL -- an idle console cost the two real jobs more\n"; \
+	     printf "              than %d%%.  A third process spinning in a round robin\n", tol; \
+	     printf "              of three costs a THIRD; a blocked one that pnext()\n"; \
+	     printf "              (src/bdos/proc.c) skips costs one console poll per\n"; \
+	     printf "              dispatch.  This says it is not being skipped.\n"; \
+	     exit 1; }'
+
+# ===========================================================================
+# TWO PROCESSES INSIDE THE FILE SYSTEM AT ONCE.
+#
+# verify-conc and verify-conc2 prove that two processes exist and that one
+# can be parked inside a BDOS call.  Neither touches a disk, so neither says
+# anything about the question S4 actually raises: `snglthrd' is still
+# defined (src/bdos/bdosdef.h), so every BDOS function still reads and
+# writes the ONE static `struct stvars', and what is claimed to make that
+# safe is that proc.c copies the whole structure out and the next process's
+# copy in at every switch (psave/pload).
+#
+# THE REDUCTION these three targets are built on.  A process leaves the
+# BDOS mid-call at exactly two places: pyield() called from plock(), and
+# pyield() called from getch().  plock() only yields when SOMEBODY ELSE
+# holds the file-system lock, and holding it while not running means being
+# parked mid-call -- so by induction the root of all mid-call parking is
+# getch().  TWO PROCESSES ARE INSIDE THE BDOS AT ONCE IF AND ONLY IF ONE IS
+# BLOCKED ON A CONSOLE READ.  Ordinary console reads (functions 1, 6, 10)
+# hold no file-system state; the only others are the operator prompts
+# error() (src/bdos/bdosmisc.c) puts up, and those are reached from inside a
+# directory scan.  That is a small enumerable set of paths rather than an
+# unbounded interleaving, and these three targets are one per case.
+# ===========================================================================
+
+CONCDIMG = build/concdir.bin
+CONCDLOG = build/concdir.log
+
+# verify-concdir -- THE ERROR-FREE PATH, where the claim should hold.
+#
+# Two programs walk the directory with SEARCH_FIRST/SEARCH_NEXT.  A search
+# carries state ACROSS BDOS calls -- GBL.srchpos, GBL.srchp, GBL.dmaadr,
+# GBL.dirsecn and the 128-byte GBL.pdirbuf the entry is delivered from --
+# and with two processes live the dispatcher switches at EVERY BDOS call
+# return (proc.c pdisp), so the two interleave one call each all the way
+# down.  Each must come out with its own whole, correct answer.
+#
+#   1. CONCD's wildcard walk of A: gives the same count and the same name
+#      checksum concurrently as it did alone      (`clobbered=0')
+#   2. CONCE's narrower walk prints the same numbers beside CONCD as it
+#      does in the CONTROL run afterwards, alone -- which is what makes (1)
+#      mean something rather than being self-consistent nonsense
+#   3. CONCD's exact-name search never stops finding a file that is on the
+#      disk                                       (`lostname=0')
+#   4. CONCD really did overlap CONCE             (`rounds' >= 2)
+verify-concdir: all $(CPMACONC)
+	$(MKDISK) $(CONCDIMG) $(CPMSYS) $(CPMACONC) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCDIMG)) \
 		--input="$(OSSEL)CONCD\rCONCE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONCDLOG))
+	@$(EMUOK)
+	@grep -q 'CONCD: D start' $(CONCDLOG) \
+		|| { echo "verify-concdir: FAIL -- CONCD did not run at all"; exit 1; }
+	@grep -q 'CONCD: no second process' $(CONCDLOG) \
+		&& { echo "verify-concdir: FAIL -- function 144 refused; the reason is in the"; \
+		     echo "                transcript above.  A 512 KB machine has no free page"; \
+		     echo "                (src/bios/pgalloc.c); the emulator models 1 MB."; exit 1; } || true
+	@test "`grep -c 'CONCE: E alive' $(CONCDLOG)`" = 2 \
+		|| { echo "verify-concdir: FAIL -- CONCE did not run both beside CONCD and"; \
+		     echo "                afterwards alone, so its answer has no control"; exit 1; }
+	@tr -d '\r' < $(CONCDLOG) | grep '^CONCE: n=' | sort -u > build/concdir-e.txt
+	@test "`wc -l < build/concdir-e.txt`" = 1 \
+		|| { echo "verify-concdir: FAIL -- CONCE's directory walk gave a DIFFERENT"; \
+		     echo "                answer beside another process than it gives alone."; \
+		     echo "                That is a shared search state.  The lines were:"; \
+		     cat build/concdir-e.txt; exit 1; }
+	@grep -q 'wobble=0' build/concdir-e.txt \
+		|| { echo "verify-concdir: FAIL -- CONCE's own walks disagreed with each other"; \
+		     cat build/concdir-e.txt; exit 1; }
+	@tr -d '\r' < $(CONCDLOG) | grep '^CONCD: rounds=' > build/concdir-d.txt \
+		|| { echo "verify-concdir: FAIL -- CONCD never reported"; exit 1; }
+	@grep -qE 'rounds=([2-9]|[1-9][0-9]+) ' build/concdir-d.txt \
+		|| { echo "verify-concdir: FAIL -- CONCD got fewer than two walks in beside"; \
+		     echo "                CONCE, so nothing was actually concurrent:"; \
+		     cat build/concdir-d.txt; exit 1; }
+	@grep -q 'clobbered=0' build/concdir-d.txt \
+		|| { echo "verify-concdir: FAIL -- CONCD's directory walk gave a different"; \
+		     echo "                answer while another process was walking.  The"; \
+		     echo "                per-process search state is not per-process:"; \
+		     cat build/concdir-d.txt; exit 1; }
+	@grep -q 'lostname=0' build/concdir-d.txt \
+		|| { echo "verify-concdir: FAIL -- an exact-name search stopped finding a"; \
+		     echo "                file that is on the disk:"; \
+		     cat build/concdir-d.txt; exit 1; }
+	@grep -q 'CONCD: D done' $(CONCDLOG) \
+		|| { echo "verify-concdir: FAIL -- CONCD did not finish"; exit 1; }
+	@echo "verify-concdir: PASS -- two processes walked the directory a BDOS call"
+	@echo "                apart and each got its own whole, correct answer"
+
+CONCEIMG = build/concerr.bin
+CONCELOG = build/concerr.log
+
+# verify-concerr -- THE ERROR PATH WITH THE LOCK FREE, which is where the
+# only real hole was.
+#
+# error(5) sits ABOVE the LOCK in delete() and truncit(), and above any
+# lock at all in bdosrw.c:243, so a read-only file parks a process INSIDE a
+# directory scan with the file system wide open to everybody else.  CONCF
+# ERAses a 40 KB read-only file -- two directory entries on this geometry
+# (BLS 4096, EXM 1: 32 KB to an entry) -- and function 19 is
+# dirscan(delete, fcb, full), so the scan must still find the second entry
+# after the prompt.  CONCG meanwhile makes the first reference to drive B:,
+# and there is ONE directory signature table for the machine, which
+# dhopen()/dhdone() (src/bdos/dskhash.c) rebuild for whichever drive is
+# being logged in.
+#
+# THE ORDERING IS THE HARNESS'S, NOT THE SCHEDULER'S.  --input-mark holds
+# the character that answers the prompt until CONCG has printed that it
+# logged B: in, so "the table was repointed while the scan was parked" is
+# arranged rather than hoped for, and the target is deterministic: it failed
+# three times out of three before the fix and passes three out of three
+# after it.
+#
+# The assertion is `after=0': every entry of the file was erased.  Nonzero
+# is the second entry surviving an ERA that reported success, with its
+# blocks still marked allocated.
 # THE LAYOUT IS PART OF THE TEST (H7).  The bug is that filero()'s nested
 # dirscan reads a SECOND directory record into the one directory buffer,
 # leaving the delete() that called error(5) holding a pointer into the wrong
@@ -3863,10 +4386,245 @@ build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 # non-straddling disk passes having tested nothing.  tests/concpad.sh pins
 # the count when the image is built; concfree.py refuses to run the session
 # on a disk where the pin did not hold.
+verify-concerr: all $(CPMACONC)
 	python3 tests/concfree.py $(CPMACONC)
+	$(MKDISK) $(CONCEIMG) $(CPMSYS) $(CPMACONC) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCEIMG)) \
 		--input="$(OSSEL)CONCF\r\iC$(ENDIN)" --input-mark="CONCG: FLIPPED" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONCELOG))
+	@$(EMUOK)
+	@grep -q 'CONCF: F start' $(CONCELOG) \
+		|| { echo "verify-concerr: FAIL -- CONCF did not run at all"; exit 1; }
+	@grep -q 'CONCF: no second process' $(CONCELOG) \
+		&& { echo "verify-concerr: FAIL -- function 144 refused; see the transcript"; exit 1; } || true
+	@grep -q 'CONCF: before=2' $(CONCELOG) \
+		|| { echo "verify-concerr: FAIL -- the target is not a two-entry file, so the"; \
+		     echo "                scan has no work left after the prompt and the test"; \
+		     echo "                would pass without testing anything"; exit 1; }
+	@grep -q 'is read-only' $(CONCELOG) \
+		|| { echo "verify-concerr: FAIL -- no operator prompt came up, so no process"; \
+		     echo "                was ever parked inside the directory scan"; exit 1; }
+	@grep -q 'CONCG: FLIPPED' $(CONCELOG) \
+		|| { echo "verify-concerr: FAIL -- CONCG never logged drive B: in, so the"; \
+		     echo "                signature table was never repointed"; exit 1; }
+	@# The mark holds the answer until CONCG has flipped the table, so the
+	@# prompt must appear BEFORE that line in the transcript.
+	@tr -d '\r' < $(CONCELOG) | grep -n 'is read-only\|CONCG: FLIPPED' \
+		| head -2 | cut -d: -f2- > build/concerr-order.txt
+	@head -1 build/concerr-order.txt | grep -q 'is read-only' \
+		|| { echo "verify-concerr: FAIL -- CONCG logged drive B: in BEFORE the scan"; \
+		     echo "                parked, so dhstart() declined to hash and nothing"; \
+		     echo "                was tested.  Order was:"; cat build/concerr-order.txt; exit 1; }
+	@grep -q 'CONCF: FAIL' $(CONCELOG) \
+		&& { echo "verify-concerr: FAIL -- a directory scan parked at an operator"; \
+		     echo "                prompt resumed against a signature table that had"; \
+		     echo "                been repointed at another drive underneath it"; \
+		     echo "                (src/bdos/dskhash.c dhstart/dhcand), and skipped"; \
+		     echo "                entries it had to erase.  ERA reported success and"; \
+		     echo "                left directory entries behind with their blocks"; \
+		     echo "                still allocated."; exit 1; } || true
+	@grep -q 'CONCF: F done' $(CONCELOG) \
+		|| { echo "verify-concerr: FAIL -- CONCF did not finish"; exit 1; }
+	@echo "verify-concerr: PASS -- a directory scan parked at an operator prompt"
+	@echo "                survived another process logging a drive in underneath it"
 
+CONCLIMG = build/conclk.bin
+CONCLLOG = build/conclk.log
+
+# verify-conclk -- THE ERROR PATH WITH THE LOCK HELD: wait, or deadlock?
+#
+# close() (src/bdos/fileio.c) is the one prompt that comes up under the
+# lock: LOCK, merge the disk map, THEN error(5).  Everybody else is then
+# shut out of the file system at their first do_phio(), because plock()
+# finds the lock held by another process and yields to them.  Both
+# processes end up calling pyield() at each other -- CONCH from getch()
+# waiting for the answer, CONCI from plock() waiting for the lock -- and
+# what has to still work is the console, because getch() re-tests kbchar
+# and bconstat on every turn.
+#
+# Two runs of the same image decide it, and neither is a timing argument:
+#
+#   1. UNANSWERED.  The prompt is never answered, so the lock is never
+#      released.  CONCI must stall between `I try 1' and `I got 1' for the
+#      whole run.  If `I got 1' appears, the lock does not exclude.
+#   2. ANSWERED.  Everything must finish.  If it does not, the wait was a
+#      deadlock.
+#
+# The answer is fed as type-ahead (\i) rather than paced, and that is
+# itself a finding worth keeping: with two processes spinning at each other
+# the machine no longer LOOKS idle, so the emulator's ordinary input pacing
+# never fires.  The wait is a busy spin, not a sleep.
+verify-conclk: all $(CPMACONC)
+	$(MKDISK) $(CONCLIMG) $(CPMSYS) $(CPMACONC) $(CPMBIMG)
+	@echo "--- 1. the prompt is never answered: the lock must exclude"
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCLIMG)) \
+		--input="$(OSSEL)CONCH\r" --max=$(CONCLMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONCLLOG))-1.log
+	@$(EMUOK)
+	@grep -q 'CONCI: I alive' $(CONCLLOG)-1.log \
+		|| { echo "verify-conclk: FAIL -- the second process never ran"; exit 1; }
+	@grep -q 'is read-only' $(CONCLLOG)-1.log \
+		|| { echo "verify-conclk: FAIL -- close() never reached its operator prompt,"; \
+		     echo "               so nothing was parked holding the lock"; exit 1; }
+	@grep -q 'I-try-1' $(CONCLLOG)-1.log \
+		|| { echo "verify-conclk: FAIL -- CONCI never asked for the file system"; exit 1; }
+	@grep -q 'I-got-1' $(CONCLLOG)-1.log \
+		&& { echo "verify-conclk: FAIL -- CONCI completed a drive login while another"; \
+		     echo "               process was parked at an operator prompt HOLDING the"; \
+		     echo "               file-system lock.  LOCK/UNLOCK do not exclude."; exit 1; } || true
+	@# and nothing may finish, because nothing can
+	@grep -q 'CONCH: H done' $(CONCLLOG)-1.log \
+		&& { echo "verify-conclk: FAIL -- the close returned without being answered"; exit 1; } || true
+	@echo "--- 2. the prompt is answered: everything must finish"
+	$(MKDISK) $(CONCLIMG) $(CPMSYS) $(CPMACONC) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCLIMG)) \
+		--input="$(OSSEL)CONCH\r\iC" --max=$(CONCLMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONCLLOG))-2.log
+	@$(EMUOK)
+	@grep -q 'CONCH: H done' $(CONCLLOG)-2.log \
+		|| { echo "verify-conclk: FAIL -- the close never returned after the prompt"; \
+		     echo "               was answered: the wait is a deadlock"; exit 1; }
+	@grep -q 'CONCI: I done' $(CONCLLOG)-2.log \
+		|| { echo "verify-conclk: FAIL -- the process that was waiting on the lock"; \
+		     echo "               never got it back after the lock was released"; exit 1; }
+	@echo "verify-conclk: PASS -- a prompt under the lock shuts the other process"
+	@echo "               out completely, and lets it straight back in when answered"
+
+# ---- the MP/M XDOS calls, one process (verify-xdos) ----
+# src/bdos/xdos.c, BDOS functions 128-141 and 148/149/153.  XDOSM.Z8K makes
+# every call whose ANSWER does not depend on a second process running: what
+# the memory descriptor calls hand back and what the page pool says
+# afterwards, what a console number round-trips to, what the conditional
+# queue calls say about an empty and a full queue, what the flag calls
+# refuse.  The blocking half is verify-xdos2.
+#
+# THE PROGRAM COUNTS ITS OWN CHECKS and prints the count.  That is the whole
+# reporting protocol, and it is deliberate: a target that greps for each
+# individual answer has to be edited every time a check is added, and a
+# check that is silently dropped looks exactly like one that passed.  Here
+# the transcript carries both numbers, so this target can assert that none
+# failed AND that the expected number ran.
+#
+# Function 131 on device 0 (the console keyboard) is deliberately NOT among
+# the checks: it blocks until a key arrives and a scripted session cannot
+# promise one at a chosen moment.  xdosm.c says so where the other device
+# numbers are checked, and verify-xdos2 measures the waiting mechanism it
+# would have exercised.
+XDOSIMG	= build/xdostest.bin
+XDOSLOG	= build/verify-xdos.log
+XDOSCHK	= 46
+.PHONY: verify-xdos
+verify-xdos: all $(CPMAXDOS)
+	$(MKDISK) $(XDOSIMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XDOSIMG)) \
 		--input="$(OSSEL)XDOSM\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(XDOSLOG))
+	@$(EMUOK)
+	@grep -q 'XDOSM: XDOS calls' $(XDOSLOG) \
+		|| { echo "verify-xdos: FAIL -- XDOSM did not run at all"; exit 1; }
+	@tr -d '\r' < $(XDOSLOG) | grep '^XDOSM: .* checks, ' > build/xdos-count.txt \
+		|| { echo "verify-xdos: FAIL -- XDOSM never reported a count, so it did"; \
+		     echo "             not reach the end of its checks"; exit 1; }
+	@grep -q ' 0 failed' build/xdos-count.txt \
+		|| { echo "verify-xdos: FAIL -- checks failed; each one named itself above:"; \
+		     grep 'XDOSM: FAIL' $(XDOSLOG); exit 1; }
+	@grep -q "^XDOSM: $(XDOSCHK) checks," build/xdos-count.txt \
+		|| { echo "verify-xdos: FAIL -- $(XDOSCHK) checks were expected and the run"; \
+		     echo "             reported `cat build/xdos-count.txt`."; \
+		     echo "             A check that never ran is not a check that passed."; \
+		     echo "             If checks were added or removed on purpose, XDOSCHK"; \
+		     echo "             in tests/verify.mk is the number to change."; exit 1; }
+	@echo "verify-xdos: PASS -- `cat build/xdos-count.txt`"
+
+# ---- the XDOS calls that BLOCK (verify-xdos2) ----
+# The other half, and the only half that says anything about concurrency.
+# XDOSD blocks three times -- function 141 on a delay, 132 on a flag, 137 on
+# an empty queue -- and XDOSE prints a numbered line every time it is given
+# the machine.  XDOSE ends with function 143, MP/M's Terminate, instead of
+# returning.
+#
+# THE ASSERTIONS ARE COUNTS BETWEEN MARKERS, and that is the point.  Under
+# the round robin two processes alternate LINE FOR LINE at the BDOS gate
+# (verify-conc measures exactly that), so a call that did not block leaves
+# at most one E line between D's two markers.  A call that did block leaves
+# many.  The threshold below is three: comfortably above what a non-blocking
+# call can produce and far below what the delay actually yields.
+#
+# Each count is extracted with sed's range operator on D's own markers, so
+# the check does not depend on how many lines E gets in -- only on there
+# being more than a hand-off's worth.
+XDOS2IMG = build/xdos2test.bin
+XDOS2LOG = build/verify-xdos2.log
+XDOSMIN	= 3
+.PHONY: verify-xdos2
+verify-xdos2: all $(CPMAXDOS)
+	$(MKDISK) $(XDOS2IMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XDOS2IMG)) \
+		| tee $(abspath $(XDOS2LOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(XDOS2LOG) > build/xdos2-plain.txt
+	@grep -q '^XDOSD: start' build/xdos2-plain.txt \
+		|| { echo "verify-xdos2: FAIL -- XDOSD did not run at all"; exit 1; }
+	@grep -q 'XDOSD: no second process' build/xdos2-plain.txt \
+		&& { echo "verify-xdos2: FAIL -- function 144 refused; the reason is in the"; \
+		     echo "              transcript above.  A 512 KB machine has no free page"; \
+		     echo "              (src/bios/pgalloc.c); the emulator models 1 MB."; exit 1; } || true
+	@# NOT anchored at the line start, and C1 already had to make the same
+	@# re-reading twice (run/C1.md section 3, "verify-conc's claim 2 had to be
+	@# re-read, not weakened").  The claim is THE SECOND PROCESS RAN.  Under
+	@# preemption the switch happens at an arbitrary instruction, so E's first
+	@# line can land in the middle of one of D's -- `XDOSD: live=XDOSE: alive'
+	@# is what a tick between D's two printstr() calls looks like, and it is
+	@# evidence FOR the claim, not against it.  A `^' here asserts that no
+	@# switch fell in that gap, which is a scheduling coincidence and not
+	@# something this target is about.
+	@grep -q 'XDOSE: alive' build/xdos2-plain.txt \
+		|| { echo "verify-xdos2: FAIL -- the second process never ran"; exit 1; }
+	@grep -q 'FAIL' build/xdos2-plain.txt \
+		&& { echo "verify-xdos2: FAIL -- a call returned the wrong thing:"; \
+		     grep 'FAIL' build/xdos2-plain.txt; exit 1; } || true
+	@# 141: E lines between "delay" and "delayed".  Nothing but a real
+	@# sleep puts more than one there.
+	@sed -n '/^XDOSD: delay$$/,/^XDOSD: delayed$$/p' build/xdos2-plain.txt \
+		| grep -c '^  E ' > build/xdos2-delay.txt || true
+	@test "`cat build/xdos2-delay.txt`" -ge $(XDOSMIN) \
+		|| { echo "verify-xdos2: FAIL -- function 141 let the other process run"; \
+		     echo "              `cat build/xdos2-delay.txt` times, not $(XDOSMIN) or more."; \
+		     echo "              Either the delay returned at once (no tick: see"; \
+		     echo "              src/bios/tick900.c) or it spun without yielding."; exit 1; }
+	@# 132: E lines between "delayed" and "flag".
+	@sed -n '/^XDOSD: delayed$$/,/^XDOSD: flag$$/p' build/xdos2-plain.txt \
+		| grep -c '^  E ' > build/xdos2-flag.txt || true
+	@test "`cat build/xdos2-flag.txt`" -ge $(XDOSMIN) \
+		|| { echo "verify-xdos2: FAIL -- function 132 let the other process run"; \
+		     echo "              `cat build/xdos2-flag.txt` times, not $(XDOSMIN) or more,"; \
+		     echo "              so the flag wait did not block"; exit 1; }
+	@grep -n '^XDOSE: set' build/xdos2-plain.txt > build/xdos2-set.txt
+	@test "`sed -n 's/:.*//p' build/xdos2-set.txt`" -lt \
+	      "`grep -n '^XDOSD: flag' build/xdos2-plain.txt | sed -n 's/:.*//p'`" \
+		|| { echo "verify-xdos2: FAIL -- XDOSD woke from function 132 before XDOSE"; \
+		     echo "              set the flag"; exit 1; }
+	@# 137: E lines between "flag" and the message.
+	@sed -n '/^XDOSD: flag$$/,/^XDOSD: msg/p' build/xdos2-plain.txt \
+		| grep -c '^  E ' > build/xdos2-msg.txt || true
+	@test "`cat build/xdos2-msg.txt`" -ge $(XDOSMIN) \
+		|| { echo "verify-xdos2: FAIL -- function 137 let the other process run"; \
+		     echo "              `cat build/xdos2-msg.txt` times, not $(XDOSMIN) or more,"; \
+		     echo "              so the queue read did not block"; exit 1; }
+	@grep -q '^XDOSD: msg HELLO' build/xdos2-plain.txt \
+		|| { echo "verify-xdos2: FAIL -- the message did not survive the trip from"; \
+		     echo "              one process's page to the other's"; exit 1; }
+	@# 143: the child terminated itself and was reclaimed.
+		|| { echo "verify-xdos2: FAIL -- after XDOSE called function 143 the process"; \
+		     echo "              table still says more than one is live, so Terminate"; \
+		     echo "              did not reclaim it"; exit 1; }
+	@grep -q '^XDOSD: done' build/xdos2-plain.txt \
+		|| { echo "verify-xdos2: FAIL -- XDOSD did not reach the end"; exit 1; }
+	@echo "verify-xdos2: PASS -- 141/132/137 each blocked (`cat build/xdos2-delay.txt`,"
+	@echo "              `cat build/xdos2-flag.txt`, `cat build/xdos2-msg.txt` lines from the other process"
+	@echo "              while each was waiting), and 143 reclaimed the caller"
+
 # ---- verify-kbcon: TYPE-AHEAD BELONGS TO ONE CONSOLE (F10) ----
 # The P2 finding on src/bdos/conbdos.c: `kbchar' was ONE byte for the whole
 # machine, so a keystroke typed at one console could be handed to a process
@@ -4479,10 +5237,226 @@ open("$(KERMSRC)","wb").write(bytes(random.randrange(256) for _ in range(1024)))
 	@echo "verify-kermit: PASS -- 1024 bytes written to A: over the spare"
 	@echo "               serial port and read back off it, byte for byte,"
 	@echo "               against tests/kermitpeer.py (NOT an interop test)"
+# ---- IS A SYSTEM-MODE PROGRAM PREEMPTED? (verify-conc6) ----
+# THE HOLE C1 LEFT AND NAMED.  src/bios/trap.s ttick_ took the switch only
+# when the interrupted FCW's S/N bit was CLEAR, so a program that reached
+# System mode through BDOS function 62 (src/bdos/bdosglue.s setsup) OWNED
+# THE MACHINE for as long as it stayed there -- run/C1.md 6.1 says so in
+# those words, and calls the fix "the running process's supervisor SP
+# against its stack top".  That is the arm this target measures.
+#
+# THE METHOD IS verify-conc5's, because the question is the same shape:
+# run the identical program twice on the identical image and print both
+# numbers.  CONCS times a counted loop executed in System mode --
+#
+#   CONCS      with the machine to itself
+#   CONCS C    with CONCY.Z8K (function 144) runnable for the whole of it
+#
+# -- and the two counts are a FACTOR, not a percentage.  If System mode is
+# preempted the two processes halve the machine and the second count is
+# about twice the first.  If it is not, the second count IS the first: a
+# System-mode loop that makes no BDOS call gives the machine away to
+# nobody, so the child cannot run at all until CONCS comes back out.
+#
+# MEASURED ON BOTH BUILDS, which is what makes CONCSMIN a discriminator
+# rather than a calibration.  Same tree, same image, only ttick_'s new arm
+# taken out (the S/N test left to decline every System-mode frame, as C1
+# shipped it):
+#
+#           alone   with a second job   ratio
+#   C1        210          210           1.00
+#   C7        210          432           2.06
+#
+# CONCSMIN is 150 percent: far above the 100 the old scheduler produces
+# and far below the 206 the new one does.
+#
+# THE OTHER HALF OF THE CLAIM, and without it this target would PASS for
+# the wrong reason: a NORMAL-mode loop is preempted too, so a run in which
+# function 62 quietly did nothing would show the same factor of two and
+# prove nothing.  So sysmode.s reads the FCW it is actually running at
+# with a System-mode-only LDCTL -- in Normal mode that is a privilege trap
+# and the program dies instead of measuring -- and CONCS prints it.  D0xx
+# is segmented, System and VIE: the three bits the claim is about.  The
+# process counts (function 145) are checked for verify-conc5's reason,
+# and the child's `done' line is required to come out AFTER the measured
+# loop, because a child that had already finished would have left the tail
+# of the loop running alone.
+CONCSMIN = 150
+CONCSAIMG = build/conc6a.bin
+CONCSBIMG = build/conc6b.bin
+CONCSALOG = build/verify-conc6-alone.log
+CONCSBLOG = build/verify-conc6-both.log
+.PHONY: verify-conc6
+verify-conc6: all $(CPMACONCS)
+	$(MKDISK) $(CONCSAIMG) $(CPMSYS) $(CPMACONCS) $(CPMBIMG)
+	cp $(CONCSAIMG) $(CONCSBIMG)
 	@# The ALONE leg only: CONCS runs by itself, so when the prompt comes
 	@# back nothing is left running and $(ENDIN) ends the run there.  The
 	@# `C' leg below must NOT have it -- CONCY prints its tick count AFTER
 	@# that prompt, and that count is what this target compares.
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCSAIMG)) \
+		| tee $(abspath $(CONCSALOG))
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCSBIMG)) \
+		| tee $(abspath $(CONCSBLOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(CONCSALOG) > build/conc6a.txt
+	@tr -d '\r' < $(CONCSBLOG) > build/conc6b.txt
+	@grep -q 'CONCS: no second process' build/conc6b.txt \
+		&& { echo "verify-conc6: FAIL -- function 144 refused; a 512 KB machine has no"; \
+		     echo "              free page (src/bios/pgalloc.c).  The emulator is 1 MB."; \
+		     exit 1; } || true
+	@# It really was in System mode, in both runs.
+	@grep -q 'CONCS: sysfcw=D0' build/conc6a.txt \
+		|| { echo "verify-conc6: FAIL -- the ALONE run's loop did not run at FCW D0xx,"; \
+		     echo "              so it was not in segmented System mode with VIE set and"; \
+		     echo "              there is nothing here about System-mode preemption."; \
+		     grep 'CONCS: sysfcw' build/conc6a.txt; exit 1; }
+	@grep -q 'CONCS: sysfcw=D0' build/conc6b.txt \
+		|| { echo "verify-conc6: FAIL -- the SECOND-JOB run's loop did not run at FCW"; \
+		     echo "              D0xx: not segmented System mode with VIE set."; \
+		     grep 'CONCS: sysfcw' build/conc6b.txt; exit 1; }
+		     grep 'CONCS: live' build/conc6a.txt; exit 1; }
+		     echo "              processes.  There was nothing to be preempted FOR."; \
+		     grep 'CONCS: live' build/conc6b.txt; exit 1; }
+	@# The child outlived the measured loop.
+	@sed -n -e 's/.*CONCS: S done.*/S/p' -e 's/.*CONCY: Y done.*/Y/p' \
+		build/conc6b.txt | tr -d '\n' > build/conc6-order.txt
+	@test "`cat build/conc6-order.txt`" = "SY" \
+		|| { echo "verify-conc6: FAIL -- the child did not outlive the measured loop"; \
+		     echo "              (order was `cat build/conc6-order.txt`), so part of that"; \
+		     echo "              loop ran with the machine to itself after all and the"; \
+		     echo "              factor below is not a factor of anything."; exit 1; }
+	@sed -n 's/^CONCS: S done, ticks=\([0-9][0-9]*\)$$/\1/p' build/conc6a.txt \
+		> build/conc6-sa.txt
+	@sed -n 's/^CONCS: S done, ticks=\([0-9][0-9]*\)$$/\1/p' build/conc6b.txt \
+		> build/conc6-sb.txt
+	@for f in sa sb; do test -s build/conc6-$$f.txt \
+		|| { echo "verify-conc6: FAIL -- a run never printed its tick count ($$f)."; \
+		     echo "              The transcripts are above."; exit 1; }; done
+	@awk -v mn=$(CONCSMIN) \
+	     -v sa=`cat build/conc6-sa.txt` -v sb=`cat build/conc6-sb.txt` \
+	  'BEGIN { \
+	     printf "verify-conc6: a System-mode loop, timed twice\n"; \
+	     printf "  %-26s %8s %8s %9s\n", "loop", "alone", "+job", "ratio"; \
+	     r = sb * 100.0 / sa; \
+	     printf "  %-26s %8d %8d %8.2f\n", "CONCS in System mode", sa, sb, r/100.0; \
+	     printf "  processes live             %8d %8d\n", 1, 2; \
+	     if (r >= mn) { \
+	       printf "verify-conc6: PASS -- the second job took a share of a loop that made\n"; \
+	       printf "              no BDOS call and ran in System mode: the tick preempted it\n"; \
+	       exit 0; } \
+	     printf "verify-conc6: FAIL -- the System-mode loop took the same time with a\n"; \
+	     printf "              second runnable process as it did alone (ratio %.2f, needs\n", r/100.0; \
+	     printf "              %.2f).  Nothing took the machine away from it, which is\n", mn/100.0; \
+	     printf "              src/bios/trap.s ttick_ declining every System-mode frame.\n"; \
+	     exit 1; }'
+
+# ---- HOW LONG IS A SLICE?  THE QUANTUM, COUNTED (verify-conc7, C7) ----
+# C1 shipped a tick that dispatched on EVERY tick, which is the degenerate
+# time slice of one, and left `pd_prio' written by two places and read by
+# none.  C7's second half gives the descriptor a slice length
+# (src/bdos/proc.h PQBASE, pd_quant, proc.c pqfor()) and makes
+# src/bios/trap.s ttick_ spend it.  THIS TARGET PRINTS THAT NUMBER.
+#
+# THE MEASUREMENT IS THE CLOCK AND NOTHING ELSE.  CONCV.Z8K creates
+# CONCY.Z8K (16 units of pure computation, no BDOS call anywhere in it, so
+# it is runnable for the whole measurement) and then reads the tick counter
+# through the RAW SC #3 BIOS GATE in a tight loop.  SC #3 returns through
+# `scret' and never dispatches (src/bdos/bdosglue.s), so reading the clock
+# does not give the machine away -- if it went through the BDOS the run
+# lengths below would measure CONCV's own call rate instead of the
+# scheduler.  Consecutive reads differing by 1 are the same slice; a jump is
+# the far side of a gap.  So the run lengths ARE the quantum, in ticks.
+#
+# WHAT IS ASSERTED: the MODE of the run lengths equals PQBASE, read out of
+# src/bdos/proc.h at run time rather than duplicated here, and it must be
+# the mode of a clear majority of the slices.  There is no threshold and no
+# tolerance in that -- it is an integer against an integer.
+#
+# THE CONTROL, which is what makes this a measurement of the quantum rather
+# than of the fact that two processes exist (run/C7q.md has both lists):
+#
+#   PQBASE   runs= (20 slices)                        mode  loop ticks
+#   5        5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5    5      210
+#   3        3 3 3 3 3 3 3 3 3 4 3 3 3 3 3 4 3 3 3 3    3      128
+#   1        1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1    1       42
+#
+# Same tree, same image, only PQBASE changed and the tree rebuilt.  The
+# number this target prints IS the constant in the header, three times over.
+#
+# The gaps are printed beside the runs as corroboration: a gap is PQBASE+1,
+# because the tick that ends a slice is spent in the handler that switches
+# and the outgoing process never gets to read it.  Measured gaps were 6, 4
+# and 2 for the three rows above.
+#
+# THE TWO 4s IN THE MIDDLE ROW ARE NOT NOISE IN THE SCHEDULER, and the
+# majority test below is what they are there for.  ttick_ spends a tick of
+# the slice whether or not it can dispatch it, and it cannot dispatch one
+# that landed while CONCV was inside the SC #3 gate (crt.s psa+24: the SC
+# trap FCW is 0xD000, VIE still set, so the tick runs, is declined because
+# the supervisor stack is not empty, and is dismissed).  A swallowed tick
+# lengthens that one slice by one.  src/cmd/concv.c's SPIN banner has the
+# measurement that found this, and it is a fact about the port: a loop that
+# is nothing but `sc 3' is very nearly non-preemptible.
+CONCVQ  = $(shell sed -n 's/^#define[^A-Za-z]*PQBASE[^0-9]*\([0-9][0-9]*\).*/\1/p' src/bdos/proc.h)
+CONCVMIN = 8
+CONCVIMG = build/conc7.bin
+CONCVLOG = build/verify-conc7.log
+.PHONY: verify-conc7
+verify-conc7: all $(CPMACONCV)
+	$(MKDISK) $(CONCVIMG) $(CPMSYS) $(CPMACONCV) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCVIMG)) \
+		| tee $(abspath $(CONCVLOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(CONCVLOG) > build/conc7.txt
+	@grep -q 'CONCV: no second process' build/conc7.txt \
+		&& { echo "verify-conc7: FAIL -- function 144 refused; a 512 KB machine has no"; \
+		     echo "              free page (src/bios/pgalloc.c).  The emulator is 1 MB."; \
+		     exit 1; } || true
+		     echo "              nothing was ever going to take the machine away from"; \
+		     echo "              it and there are no slices to measure."; \
+		     grep 'CONCV: live' build/conc7.txt; exit 1; }
+	@sed -n 's/^CONCV: runs=//p' build/conc7.txt | tr ' ' '\n' > build/conc7-runs.txt
+	@sed -n 's/^CONCV: gaps=//p' build/conc7.txt | tr ' ' '\n' > build/conc7-gaps.txt
+	@test -s build/conc7-runs.txt \
+		|| { echo "verify-conc7: FAIL -- CONCV never printed a run list.  The"; \
+		     echo "              transcript is above."; exit 1; }
+	@echo "$(CONCVQ)" > build/conc7-q.txt
+	@test -s build/conc7-q.txt && test "$(CONCVQ)" != "" \
+		|| { echo "verify-conc7: FAIL -- PQBASE could not be read out of"; \
+		     echo "              src/bdos/proc.h, so there is nothing to check against."; \
+		     exit 1; }
+	@awk -v q=$(CONCVQ) -v mn=$(CONCVMIN) \
+	  'NF == 0 { next } \
+	   FILENAME ~ /runs/ { r[++nr] = $$1; h[$$1]++; next } \
+	   { g[++ng] = $$1 } \
+	   END { \
+	     printf "verify-conc7: how many ticks a job runs before the switch\n"; \
+	     printf "  PQBASE (src/bdos/proc.h)   %8d\n", q; \
+	     printf "  slices measured            %8d\n", nr; \
+	     printf "  %-18s %8s %8s\n", "run length", "slices", "share"; \
+	     for (k in h) if (h[k] > best) { best = h[k]; mode = k } \
+	     for (k = 0; k <= 64; k++) if (h[k]) \
+	       printf "  %-18d %8d %7.1f%%\n", k, h[k], h[k] * 100.0 / nr; \
+	     gs = 0; for (i = 1; i <= ng; i++) gs += g[i]; \
+	     if (ng) printf "  mean gap                   %8.2f  (a slice plus the tick that ends it)\n", gs / ng; \
+	     if (nr < mn) { \
+	       printf "verify-conc7: FAIL -- only %d slices came back, fewer than %d.  The\n", nr, mn; \
+	       printf "              child probably died before the measurement finished.\n"; \
+	       exit 1; } \
+	     if (mode + 0 != q) { \
+	       printf "verify-conc7: FAIL -- a job runs %d ticks before the switch, not the\n", mode; \
+	       printf "              %d PQBASE asks for.  src/bios/trap.s ttick_ is not\n", q; \
+	       printf "              spending the slice proc.c hands it.\n"; \
+	       exit 1; } \
+	     if (best * 2 <= nr) { \
+	       printf "verify-conc7: FAIL -- %d is the commonest run length but only %d of\n", mode, best; \
+	       printf "              %d slices, so there is no quantum here, just a spread.\n", nr; \
+	       exit 1; } \
+	     printf "verify-conc7: PASS -- a job runs %d ticks before the tick hands the\n", mode; \
+	     printf "              machine on, in %d of %d slices, and %d is PQBASE.\n", best, nr, q; \
+	     exit 0 }' build/conc7-runs.txt build/conc7-gaps.txt
 
 # ---- GET and PUT: console I/O redirected through the RSX chain ----
 # src/cmd/get.c + src/cmd/getrsx.s, src/cmd/put.c + src/cmd/putrsx.s.
@@ -4652,6 +5626,52 @@ verify-put: all $(CPMAGP)
 		|| { echo "verify-put: FAIL -- a word PUT does not know was swallowed"; exit 1; }
 	@test "`grep -c 'Putting console output to file' $(GPLOG)-put3.log`" = 0 \
 		|| { echo "verify-put: FAIL -- one of the refused commands attached the module anyway"; exit 1; }
+# ---- verify-ddtseg: no program may write over a supervisor stack ----
+# Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: six
+# stacks from 0xFC00 down to 0x3C00).  Nothing may ever write BELOW the
+# lowest of them, so the headroom at 0x0000 and 0x2000 is a tripwire: on a
+# healthy machine it reads as zeros for the whole run.
+#
+# DDT.Z8K is the program that proved this can be violated.  It is a
+# NON-SEGMENTED caller of the SC #1 memory gate, and it passes that gate a
+# zero-extended 16-bit context pointer.  The gate used to take the zero
+# high word literally, naming segment 0 (ROM, which reads 0xFFFF), so
+# xfer_ launched a context of 0xFFFF words -- and, because that rubbish
+# FCW had the System bit set, launched it in SYSTEM mode, where segment
+# 0x3F is mapped.  The machine then ran away writing 0xFFFF over the
+# supervisor stacks of processes that had nothing to do with DDT.
+#
+# Before the bdosglue.s/glue.s fix this target FAILS on the default build:
+# the two windows come back full of 0xFFFF.  It is not a DDT test -- DDT is
+# merely the caller that gets there -- it is the rule that one program's
+# mistake cannot reach another process's stack.
+DDTSEGIMG = build/ddtsegtest.bin
+DDTSEGLOG = build/verify-ddtseg.log
+DDTSEGMAX = 60000000
+DDTSEGIN  = $(OSSEL)DDT MHELLO.Z8K\r
+.PHONY: verify-ddtseg
+verify-ddtseg: all $(CPMAGP)
+	$(MKDISK) $(DDTSEGIMG) $(CPMSYS) $(CPMAGP)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(DDTSEGIMG)) \
+		--input="$(DDTSEGIN)" --max=$(DDTSEGMAX) \
+		--dump=3F:0000+32 --dump=3F:2000+32 2>&1; $(EMUSTAT); } \
+		| tee $(abspath $(DDTSEGLOG))
+	@$(EMUOK)
+	@grep -q 'Zilog portable debugger' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- DDT.Z8K did not run, so the gate it exercises was never reached"; exit 1; }
+	@grep -qE 'spec=3F:0000\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- segment 0x3F:0000 was written."; \
+		     echo "               That is BELOW the lowest supervisor stack, so a"; \
+		     echo "               process has written over another process's stack."; \
+		     echo "               Suspect the SC #1 gate (src/bdos/bdosglue.s memgate)"; \
+		     echo "               taking a non-segmented pointer literally, and xfer_"; \
+		     echo "               (src/bios/glue.s) launching it in System mode."; exit 1; }
+	@grep -qE 'spec=3F:2000\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- segment 0x3F:2000 was written: see above"; exit 1; }
+	@echo "verify-ddtseg: PASS -- DDT ran and the supervisor-stack headroom in"
+	@echo "               segment 0x3F is untouched: no program wrote over"
+	@echo "               another process's supervisor stack"
+
 
 # ---- a refusal that mutates first is not a refusal ----
 # P1 #2 and the password/XFCB P2 items of the first-release review, in one
@@ -4898,6 +5918,190 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 	@echo "             was parsed without reading byte 256, a segment of"
 	@echo "             prefix bytes decoded instead of hanging, and DUMP and"
 	@echo "             PIP still take the paths verify-z80 and verify-i86 gate on"
+# holding the lock -- a lock holder plus two creators plus a slot to contend
+# processes and could not be had from four descriptors.  Here CONCM is
+# itself the lock holder, so
+# larger PNPROC.  PNPROC IS 6 SINCE F14 AND THAT TEST NOW EXISTS:
+# verify-concr2, at the end of this file, fails with the reservation removed.
+# This one is kept as the regression it honestly is and is NOT weakened to
+# overlap it.
+# Four program loads, a handful of disk operations and a second-and-a-half
+# wait; it ends on console idle well inside this.
+CONCRMAX ?= 900000000
+# THE ARRANGEMENT NEEDS EXACTLY ONE FREE DESCRIPTOR, and at PNPROC 4 that
+# was implicit: the console-1 session, CONCM and CONCO were three of four.
+# At 6 it has to be said out loud, so CONCM creates this many CONCR W
+# ballast processes and prints the live count for the check below to assert.
+# Nothing here is weakened by that -- the refusal being tested is the same
+# refusal; it is the machine's capacity that moved (F14).
+CONCRBALLAST = 2
+CONCRLIVE = 5
+		--input-mark='CONCO: asking' \
+	@test "`tr -d '\r' < $(CONCRLOG) | sed -n 's/^CONCM: live before the race //p'`" \
+		= "$(CONCRLIVE)" \
+		|| { echo "verify-concr: FAIL -- there were not $(CONCRLIVE) live processes"; \
+		     echo "              going into the race, so the number of FREE descriptors"; \
+		     echo "              was not one and this program's own request below would"; \
+		     echo "              be served on its merits rather than refused.  PNPROC"; \
+		     echo "              (src/bdos/proc.h) or the cold-boot session count has"; \
+		     echo "              moved: set CONCRBALLAST and CONCRLIVE to match."; exit 1; }
+
+# ---- verify-concr2: THE SAME RACE AS verify-concr, ARRANGED SO THAT THE
+# ---- RESERVATION IS THE ONLY THING THAT DECIDES IT (F14, for F4's P1 #7) ----
+#
+# verify-concr is an honest concurrency regression and it stays one, but it
+# does NOT discriminate the fix: run it against a build with the PS_RSVD
+# claim removed and it still passes.  F4 measured that and wrote down why
+# (docs/cpm/docs/run/F4.md).  CONCM is the lock holder AND the second
+# creator, so when its close() releases the lock the dispatcher hands the
+# machine to the parked creator at that call's own gate return -- the parked
+# creator COMPLETES before CONCM has even searched for a descriptor, and
+# CONCM is told 5 either way.
+#
+# The race needs BOTH creators to have picked the same free slot before
+# either resumes, so the lock holder has to be a THIRD process: a holder,
+# two creators, ballast enough that exactly ONE descriptor is free, and the
+# is up.  That is five live processes and a spare, which is why this target
+# could not exist at PNPROC 4 and can at 6 (src/bdos/proc.h).
+#
+# THE ARRANGEMENT is in src/cmd/concl.c at length.  In short: CONCL creates
+# CONCR A and CONCR B and one CONCR Z of ballast while the lock is free,
+# PRINTS the live count (BDOS function 145) so the transcript says what the
+# arrangement actually was, and then parks at the read-only close prompt
+# HOLDING the lock and creates nothing more.  A asks first and parks inside
+# pcrgen(); B asks second and parks too; and only then does the BALLAST
+# print the line that is the --input-mark releasing the answer to CONCL's
+# prompt.
+#
+# THE RELEASE HAS TO COME FROM THE BALLAST, and the first version of this
+# target got that wrong in a way worth recording, because it is F4's dead
+# end wearing different clothes.  With the mark on B's own `asking' line the
+# target PASSED with PS_RSVD removed: src/bdos/bdosglue.s tests `psched' at
+# the SC return and calls pdisp_ unconditionally, so B lost the machine at
+# that very print's gate return, the holder took the answer that had just
+# arrived, released the lock, and the creator already parked COMPLETED --
+# all before B's own descriptor search had run.  B was then told 5 either
+# way.  A fourth process that is not racing decouples the release from the
+# racers, and the order check below is what asserts it happened.
+#
+# THE VERDICT IS THE TWO ANSWERS, and it cannot be reached by accident:
+#
+#   with the reservation   A is answered 0 and B is answered 5.  B's search
+#                          skips A's PS_RSVD slot, finds nothing free and
+#                          refuses without reaching the lock at all.  One
+#                          MHELLO runs and it carries A's tail, QA.
+#   without it             A is answered 0 and B is answered 0.  Both
+#                          picked the same slot and both built a process in
+#                          it, so one child is simply gone and its 64 KB
+#                          page is leaked.
+#
+# TWO SUCCESSFUL CREATES OUT OF ONE FREE DESCRIPTOR IS THE ASSERTION, and no
+# scheduling order can produce it: if the window had been missed the loser
+# would be refused 5 (the slot is LIVE, not free), which is the passing
+# answer.  So this target fails only when the bug is present -- measured,
+# not assumed: rebuilt with `kid->pd_state = PS_RSVD' removed it reports
+# `BOTH creators were served' and exits 1.
+CONCR2IMG = build/concr2.bin
+CONCR2LOG = build/verify-concr2.log
+# Five process loads, a handful of disk operations and three one-sided
+# waits; the run ends on console idle well inside this.
+CONCR2MAX ?= 900000000
+# One ballast process, which is what leaves exactly one descriptor free at
+# PNPROC 6: the console-1 session, CONCL, CONCR A, CONCR B and the ballast
+# are five of six.  CONCL prints the count and the check below asserts it,
+# so if PNPROC moves again this target says so instead of quietly measuring
+# nothing.
+CONCR2BALLAST = 1
+CONCR2LIVE = 5
+.PHONY: verify-concr2
+verify-concr2: all $(CPMACONCR2)
+	$(MKDISK) $(CONCR2IMG) $(CPMSYS) $(CPMACONCR2) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCR2IMG)) \
+		--input-mark='CONCR Z: releasing the prompt now' \
+		--max=$(CONCR2MAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(CONCR2LOG))
+	@$(EMUOK)
+	@# ---- the arrangement, which has to be true before anything else is
+	@grep -q 'CONCR A: alive' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the first creator was never created"; exit 1; }
+	@grep -q 'CONCR B: alive' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the second creator was never created"; exit 1; }
+	@test "`tr -d '\r' < $(CONCR2LOG) | sed -n 's/^CONCL: live before the race //p'`" \
+		= "$(CONCR2LIVE)" \
+		|| { echo "verify-concr2: FAIL -- there were not $(CONCR2LIVE) live processes"; \
+		     echo "               going into the race, so the number of FREE"; \
+		     echo "               descriptors was not one and the two creators never"; \
+		     echo "               contended for the same slot.  PNPROC (src/bdos/proc.h)"; \
+		     echo "               or the cold-boot session count has moved: set"; \
+		     echo "               CONCR2BALLAST and CONCR2LIVE to match."; exit 1; }
+	@grep -q 'is read-only' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- close() never reached its operator prompt,"; \
+		     echo "               so nothing was parked HOLDING the lock"; exit 1; }
+	@grep -q 'CONCR A: asking' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the first creator never asked"; exit 1; }
+	@grep -q 'CONCR B: asking' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the second creator never asked, so the"; \
+		     echo "               prompt was never released and the run proved nothing"; exit 1; }
+	@# THE WINDOW, AND THIS IS THE CHECK THAT SAYS IT WAS OPEN.  The
+	@# transcript must read: prompt reached, A asks, B asks, and only THEN
+	@# the ballast releases the answer.  Between B's ask and that release
+	@# nothing can have taken the lock from the holder, so both creators
+	@# had searched -- and, without the reservation, both had picked the
+	@# same slot -- before either of them could resume.
+	@p=`tr -d '\r' < $(CONCR2LOG) | grep -an 'is read-only' | head -1 | cut -d: -f1`; \
+	a=`tr -d '\r' < $(CONCR2LOG) | grep -an 'CONCR A: asking' | head -1 | cut -d: -f1`; \
+	b=`tr -d '\r' < $(CONCR2LOG) | grep -an 'CONCR B: asking' | head -1 | cut -d: -f1`; \
+	z=`tr -d '\r' < $(CONCR2LOG) | grep -an 'CONCR Z: releasing' | head -1 | cut -d: -f1`; \
+	test -n "$$p" -a -n "$$a" -a -n "$$b" -a -n "$$z" \
+	     -a "$$p" -lt "$$a" -a "$$a" -lt "$$b" -a "$$b" -lt "$$z" \
+		|| { echo "verify-concr2: FAIL -- the transcript order is not prompt ($$p),"; \
+		     echo "               A asks ($$a), B asks ($$b), ballast releases ($$z)."; \
+		     echo "               The lock was not still held by the third process"; \
+		     echo "               when the second creator searched, so the window"; \
+		     echo "               this target is about never opened."; exit 1; }
+	@# ---- THE OBJECT: one free descriptor cannot serve two creators ----
+	@test "`grep -c 'CONCR .: answered 0' $(CONCR2LOG)`" = 1 \
+		|| { echo "verify-concr2: FAIL -- BOTH creators were served out of ONE free"; \
+		     echo "               descriptor.  The second one picked the slot the"; \
+		     echo "               first had already picked and parked in, so two"; \
+		     echo "               processes were built in one descriptor and one of"; \
+		     echo "               them, with its 64 KB page, is gone.  The claim must"; \
+		     echo "               be written down BEFORE the yield in plock()"; \
+		     echo "               (src/bdos/proc.c pcrgen, PS_RSVD)."; exit 1; }
+	@grep -q 'CONCR A: answered 0' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the creator that was already PARKED in"; \
+		     echo "               plock() with a descriptor picked was not the one"; \
+		     echo "               served"; exit 1; }
+	@grep -q 'CONCR B: answered 5' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the creator that arrived second was not"; \
+		     echo "               told 5 (no free process descriptor): the only free"; \
+		     echo "               slot was already claimed by the parked creator"; exit 1; }
+	@# ---- and the served request was the served creator's own ----
+	@grep -q 'arg 1: QA' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- MHELLO did not run with the parked"; \
+		     echo "               creator's own command tail"; exit 1; }
+	@grep -q 'arg 1: QB' $(CONCR2LOG) \
+		&& { echo "verify-concr2: FAIL -- the refused creator's request was loaded"; \
+		     echo "               anyway: the resident pcreq buffer is shared by every"; \
+		     echo "               creator and the copy into it must be inside the"; \
+		     echo "               lock (src/bdos/proc.c pcrgen)"; exit 1; } || true
+	@# ---- nothing deadlocked and no reservation leaked ----
+	@grep -q 'CONCR A: done' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the parked creator never resumed"; exit 1; }
+	@grep -q 'CONCR B: done' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the refused creator never came back out"; exit 1; }
+	@grep -q 'CONCL: a create after the race answered 0' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- a create after the race was refused, so a"; \
+		     echo "               PS_RSVD slot was claimed and never given back.  A"; \
+		     echo "               reserved slot is invisible to every other loop in"; \
+		     echo "               proc.c, so a leaked one is lost for good."; exit 1; }
+	@grep -q 'CONCL: done' $(CONCR2LOG) \
+		|| { echo "verify-concr2: FAIL -- the lock holder never finished"; exit 1; }
+	@echo "verify-concr2: PASS -- with a third process holding the lock, five"
+	@echo "               processes live and ONE descriptor free, the creator"
+	@echo "               parked inside pcrgen() kept its slot and its own"
+	@echo "               request, the second creator was refused 5 before it"
+	@echo "               reached the lock, and nothing was left reserved"
 
 # ---- verify-local: the opt-in local medium carries what it is given ----
 # `make cpmlocal' exists so the operator can boot a medium carrying programs

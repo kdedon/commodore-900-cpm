@@ -97,6 +97,12 @@ bdosinit()
     GBL.pmdefault = PM_ON;	/* v3's default, for the utilities	*/
     GBL.pagemode = GBL.pmdefault;
     BTRACE("<8>");		/* GBL block initialised */
+    GBL.dirsecn = -1;		/* the directory buffer holds nothing yet.
+				   It was a file-scope static in dskutil.c
+				   with an initialiser (S4 moved it here so
+				   that it travels with the per-process
+				   buffer it describes), and bss-zero would
+				   have claimed record 0 was resident */
     BTRACE("<9>");		/* about to call xbdos(13) */
     xbdos(13,0, XNULL);		/* reset disk system function */
     BTRACE("<c>");		/* xbdos(13) returned */

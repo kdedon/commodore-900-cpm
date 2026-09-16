@@ -218,6 +218,7 @@ long p;
 {
 }
 
+conststat(con)
 {
 }
 
@@ -521,6 +522,13 @@ extern		pgrelall();
 extern int	pgtpaswap();
 extern int	tpaphys;
 
+/*
+ * The dispatcher (src/bdos/proc.c).  The BIOS reaches it at exactly one
+ * point, the warm boot below, because that is where a transient
+ * program's life ends and therefore where a process's does.
+ */
+extern int	procdead();
+
 /************************************************************************/
 /*	Memory Region Table (fn 18)					*/
 /************************************************************************/
@@ -699,8 +707,16 @@ long d1, d2;
 		break;
 
 	case 1:					/* WBOOT: back to the CCP */
+		procdead();			/* a BACKGROUND process ending
+						 * here resumes another one and
+						 * never comes back (proc.c);
+						 * the foreground falls through
+						 * to the ordinary warm boot */
 		pgrelall();			/* the transient is over: its
 						 * segments go back, mapped
+						 * System-only again -- except
+						 * a page a live process is
+						 * parked on */
 		flushhst();
 						 * must not leave the parser
 						 * eating the CCP's output */
@@ -811,6 +827,7 @@ long d1, d2;
 		if ((int)d1 == 0)
 			return ((long)tpaphys);
 		return ((long)pgtpaswap((int)d1));
+
 	case 27:				/* CONOUTN */
 		break;
 

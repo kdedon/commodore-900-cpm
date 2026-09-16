@@ -7,6 +7,9 @@
 #include "bcb.h"
 
 EXTERN WORD	wdsec();	/* one physical sector transfer	*/
+
+EXTERN VOID	plock();
+EXTERN VOID	punlock();
 EXTERN		mem_clr();	/* far zero fill		*/
 
 #define WDREAD	0x08
@@ -64,9 +67,11 @@ WORD bcbflush()
     REG WORD i;
     REG WORD rtn;
 
+    plock();
     rtn = 0;
     for (i = 0; i < NBCB; i++)
 	if (bcbput(i)) rtn = 1;
+    punlock();
     return(rtn);
 }
 
@@ -109,6 +114,7 @@ REG WORD fill;			/* read the block in?		*/
     REG WORD ix;
     REG WORD bse;
 
+    plock();
     if ( ! bcbup) bcbinit();
     bse = (WORD)((UWORD)blk & (NSET-1)) * NWAY;
     for (i = 0; i < NWAY; i++)
@@ -117,19 +123,31 @@ REG WORD fill;			/* read the block in?		*/
 	if (bval[ix] && bblk[ix] == blk)
 	{
 	    bcbmru(bse, i);
+	    punlock();
 	    return(ix);
 	}
     }
 				/* not resident: take the set's LRU buffer */
     ix = lru[bse+NWAY-1];
+    if (bcbput(ix))
+    {
+	punlock();
+	return(-1);			/* victim would not write back	*/
+    }
     bval[ix] = 0;
     if (fill)
     {
+	if (wdsec(WDREAD, blk, bcbpa(ix)) != 0)
+	{
+	    punlock();
+	    return(-1);
+	}
     }
     else mem_clr(BCBADR(ix), (LONG)BCBLEN);
     bblk[ix] = blk;
     bval[ix] = 1;
     bdrt[ix] = (UBYTE)(fill ? 0 : 1);
     bcbmru(bse, NWAY-1);
+    punlock();
     return(ix);
 }

@@ -6,6 +6,12 @@
 
 #include "biosdef.h"
 
+#include "proc.h"		/* PW_CON -- the reason getch() blocks for */
+
+EXTERN WORD	pyield();	/* give the machine away (src/bdos/proc.c) */
+EXTERN WORD	pwait();	/* block on a reason, then give it away	*/
+EXTERN WORD	proccnt();	/* how many processes are live		*/
+
 
 #define   ctrla  0x01
 #define   ctrlb  0x02
@@ -289,12 +295,15 @@ REG UWORD n;
 /* console input */
 /*****************/
 
+
 UBYTE getch()		/* Get char from buffer or bios */
 			/* For internal use only	*/
 {
     REG UBYTE temp;
     BSETUP
 
+    for (;;)
+    {
 	if (temp = kbchar[concur])
 				/* something is already buffered FOR THIS
 				   CONSOLE.  The index is the whole fix:
@@ -303,7 +312,19 @@ UBYTE getch()		/* Get char from buffer or bios */
 				   0 was handed to whichever console asked
 				   for input first.  pconatt() above has
 				   already made concur's owner us	*/
+	{
 	    kbchar[concur] = 0;
+	    return(temp);
+	}
+	if ( proccnt() < 2 ) break;	/* nobody else is live: block below,
+					   which is what this function has
+					   always done		*/
+	pwait(PW_CON, (WORD)concur, 0L);
+	if ( bconstat() ) break;	/* a character arrived while we were
+					   away, and it is still in the
+					   BIOS -- take it below	*/
+    }
+    return( bconin() );		/* else get char from bios */
 }
     
 UBYTE conin()		/* BDOS console input function */

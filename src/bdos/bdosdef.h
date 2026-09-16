@@ -30,6 +30,11 @@
 #endif
 
 
+#define LOCK    plock();
+#define UNLOCK  punlock();
+EXTERN VOID plock();
+EXTERN VOID punlock();
+
 /*  Console type-ahead belongs to the device, not the process producing
     output -- AND THERE IS ONE BUFFER PER DEVICE.  It was a single byte for
     the whole machine, which is a steal and not a race: conbrk() takes a
@@ -47,6 +52,7 @@
     any console number at or above it.  */
 #define CONBUFS 4
 EXTERN UBYTE	kbchar[CONBUFS];
+
  
 #define robit 0			/* read-only bit in file type field of fcb */
 #define arbit 2			/* archive bit in file type field of fcb   */
@@ -234,6 +240,45 @@ struct stvars
 	UBYTE	pmdefault;	/* What a warm boot resets pagemode to	   */
 				/* (pm$default, SCB 2Dh).  v3's CCP does	   */
 				/* this reset per command, ccp3.asm:603-614 */
+	WORD	dirown;		/* This rdwrt() is dir_rd's or dir_wr's,   */
+				/* so the transfer is INTO pdirbuf and	   */
+				/* dirsecn is about to describe it.  It	   */
+				/* was a file-scope static in dskutil.c	   */
+				/* on the reading that it is set and	   */
+				/* cleared inside one rdwrt() and that no   */
+				/* switch point lies between -- and one	   */
+				/* does: rdwrt() calls error() on an I/O	   */
+				/* failure, and error() asks the operator,  */
+				/* which is a console read, which is where  */
+				/* a process parks (conbdos.c getch).  A	   */
+				/* second process entering rdwrt() while	   */
+				/* the first waits at that prompt would	   */
+				/* read the first process's flag and skip   */
+				/* invalidating ITS OWN dirsecn -- and fn   */
+				/* 40's zero fill (bdosrw.c) borrows the    */
+				/* directory buffer for exactly that	   */
+				/* transfer.  Per-process, like dirsecn.    */
+	WORD	dirsecn;	/* Directory record now in pdirbuf, or -1. */
+				/* It was a file-scope static in dskutil.c  */
+				/* and it is here for the same reason	   */
+				/* pdirbuf is: it describes THIS process's  */
+				/* directory buffer, and once a process can */
+				/* park inside a BDOS call two of them are  */
+				/* in flight at once.  See below.	   */
+	struct dirent pdirbuf[SECLEN / sizeof (struct dirent)];
+				/* THE PER-PROCESS DIRECTORY BUFFER, and   */
+				/* the thing DRI's own comment on dirbufp  */
+				/* above was holding the door open for.	   */
+				/* It is INSIDE stvars on purpose: proc.c  */
+				/* moves this whole structure by copy at   */
+				/* every switch, so anything that lives in */
+				/* here is per-process for free, and	   */
+				/* anything that does not is shared.  The  */
+				/* BIOS's own 128-byte `dirbuf' (the one	   */
+				/* every dph's dbufp points at,		   */
+				/* bios900.c:203) is no longer the file	   */
+				/* system's scratch; log_in() points	   */
+				/* dirbufp here instead (fileio.c).	   */
 };
 
 /* console mode bits, function 109 */

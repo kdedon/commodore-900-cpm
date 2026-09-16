@@ -158,6 +158,8 @@ REG struct fcb	*fcbp;
     q->chk = 0;
     if ( ! dhok ) return(0);
     if ( dhdrv != (UWORD)UBWORD(GBL.curdsk) ) return(0);
+    q->drv = dhdrv;		/* which drive this filter is about; dhcand
+				   re-checks it on every entry (dskhash.h) */
     if ( ! (log_dsk & (1 << dhdrv)) ) return(0);
 				/* a reset logs the drive off; the table is
 				   only rebuilt when it is logged back in */
@@ -216,6 +218,7 @@ REG UWORD indx;
 {
     REG UWORD	d;
 
+    if ( ! dhok || dhdrv != q->drv ) return(1);
     if (q->mode == 2) return( UBWORD(DHUSR[indx]) == 0xe5 );
 
     if (DHNAM[indx] != q->nam) return(0);

@@ -122,6 +122,18 @@ UCONCFS	= $(UOBJDIR)/CONCD.Z8K $(UOBJDIR)/CONCE.Z8K \
 	  $(UOBJDIR)/CONCH.Z8K $(UOBJDIR)/CONCI.Z8K \
 	  $(UOBJDIR)/CONCX.Z8K $(UOBJDIR)/CONCY.Z8K
 
+# CONCB -- are already on the development image.  CONCR joined it at F14:
+# in role W it is the ballast that keeps exactly ONE descriptor free, which
+# was implicit in PNPROC being 4 and had to become explicit at 6.
+UCONCR	= $(UOBJDIR)/CONCM.Z8K $(UOBJDIR)/CONCO.Z8K $(UOBJDIR)/CONCR.Z8K
+
+# F14: the DISCRIMINATING version of the same race (verify-concr2), which
+# needs the lock holder to be a third process and so needs five live
+# processes and a spare descriptor -- constructible only since PNPROC
+# became 6.  CONCL holds the lock and creates nothing once it does; CONCR
+# is both creators and the ballast, its role taken from its command tail.
+# MHELLO, the program both creators ask for, is already on the image.
+UCONCR2	= $(UOBJDIR)/CONCL.Z8K $(UOBJDIR)/CONCR.Z8K
 # XDOS exercisers.
 UXDOS	= $(UOBJDIR)/XDOSM.Z8K $(UOBJDIR)/XDOSD.Z8K $(UOBJDIR)/XDOSE.Z8K
 

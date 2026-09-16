@@ -11,6 +11,15 @@ extern int mapseg();
 /* clicks are 1 KB, a page is 64 KB: 64 clicks to the page */
 #define CLICKPAGE	6		/* clicks >> 6 = page		*/
 
+static char	pghld[PGNSLOT];	/* slot i is a LIVE PROCESS's parked 64 KB
+				 * image (src/bdos/proc.c), not a transient's
+				 * scratch.  The distinction exists for one
+				 * reason: pgrelall() runs on every warm boot
+				 * and a warm boot is the end of ONE program,
+				 * not of the machine.  A held slot is not
+				 * reclaimed there and does not take part in
+				 * pgtparest(), because the page it holds is
+				 * a program that is still alive. */
 static char	pgpg[PGNSLOT];	/* the physical page slot i points at.
 				 * Normally PGPGLO+i, and it starts there;
 				 * a pgtpaswap() exchange is the only thing
@@ -63,8 +72,31 @@ int seg;
 	if (i < 0 || i >= pgnslot || !pgown[i])
 		return (0);
 	pgown[i] = 0;
+	pghld[i] = 0;
 	mapseg(seg, pgpg[i] << 8, 0x02);	/* System only from here */
 	return (1);
+}
+
+pghold(seg, on)
+int seg, on;
+{
+	register int i;
+
+	if (i < 0 || i >= pgnslot || !pgown[i])
+		return (0);
+	pghld[i] = on ? 1 : 0;
+	return (1);
+}
+
+/* Is any slot holding a live process?  pgrelall() asks. */
+static int pgheld()
+{
+	register int i;
+
+	for (i = 0; i < pgnslot; i++)
+		if (pgown[i] && pghld[i])
+			return (1);
+	return (0);
 }
 
 int pgtpaswap(seg)
@@ -122,4 +154,6 @@ int pgcount()
 {
 	register int i;
 
+	if (!pgheld())
+		pgtparest();
 }

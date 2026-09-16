@@ -81,6 +81,8 @@ struct i86 {
 	i8	fault;		/* a memory reference left its window	*/
 	i16	foff;		/* ... at this guest offset		*/
 	i8	fseg;		/* ... through this segment slot		*/
+	i16	wseg;		/* the paragraph handed out as ENTRY SS	*/
+	i8	wset;		/* ... set by i86place(); see X_WBOOT	*/
 };
 
 /* ------------------------------------------------------------------ */
@@ -191,6 +193,14 @@ extern int i86dec();
 #define X_WINDOW	6	/* a reference through a slow-path	*/
 				/* segment ran past the end of the host	*/
 				/* segment covering it -- see setsr()	*/
+#define X_WBOOT		7	/* the guest warm booted: a far transfer	*/
+				/* to <entry SS>:0000.  NOT a refusal --	*/
+				/* it is CP/M-80's `JMP 0000' in 8086	*/
+				/* spelling, and it terminates the guest	*/
+				/* exactly as BDOS function 0 does.	*/
+				/* See i86exec.c wboot() for why it is	*/
+				/* an environment rule and why nothing	*/
+				/* but a warm boot can reach it.	*/
 
 extern int i86step();		/* decode + execute one instruction	*/
 extern i16 i86flags();		/* materialise and return FLAGS		*/

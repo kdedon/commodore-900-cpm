@@ -77,10 +77,21 @@ char *argv[];
 	/* ---- G11: the default arm ----
 	   51-97 and 113-127 -> 00FFh; 128 and up -> 0.  Pick numbers
 	   this BDOS does not otherwise implement (55/90, 115/120,
+	   146/200) so the probe lands in the default arm and not on a
+	   real function.
+
+	   146 was 130 until src/bdos/xdos.c implemented 128-141: a
+	   probe of a number that has since acquired a meaning tests
+	   that meaning, not the default arm.  146 is MP/M's Attach
+	   Console, which this BDOS does not implement and which
+	   XDOS-CALL-PLAN.md puts out of scope, so it is a number in
+	   the range with nothing behind it -- which is what this
+	   check needs.  */
 	check("fn 55  (51-97 gap)", __bdos(55, 0L), 0x00ff);
 	check("fn 90  (51-97 gap)", __bdos(90, 0L), 0x00ff);
 	check("fn 115 (113-127 gap)", __bdos(115, 0L), 0x00ff);
 	check("fn 120 (113-127 gap)", __bdos(120, 0L), 0x00ff);
+	check("fn 146 (>=128, XDOS/MP/M)", __bdos(146, 0L), 0);
 	check("fn 200 (>=128, XDOS/MP/M)", __bdos(200, 0L), 0);
 
 	/* ---- G5, unaffected: fn 27 stays the bad-function 0FFFFh ---- */

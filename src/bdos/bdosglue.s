@@ -67,6 +67,8 @@
 	.globl	spflag_		/   loaded-program-is-split (splitld.c)
 	.globl	rsxhead_	/ RSX chain head and fence, TPA offsets
 	.globl	rsxtop_		/   (sys/rsx.c)
+	.globl	psched_		/ nonzero when more than one process is
+	.globl	pdisp_		/   live; the dispatcher (sys/proc.c)
 
 /  The following were put in so that all BDOS modules were
 /  referenced, so they could be put in a library
@@ -140,10 +142,43 @@ traphnd_:
 1:	jp	faultpanic_
 
 / SC #1: memory-management gate (syscall.z8k MEM_SC/XFER_SC; DDT lives on
+/ it).  Register contract: rr6 = address/src, an XADDR from a segmented
+/ caller and a zero-extended 16-bit pointer from a non-segmented one:
 /   rr2 != 0                ->  mem_cpy(src=rr6, dst=rr4, len=rr2)
 /   rr2 == 0, rr4 == -2     ->  xfer(rr6)  (context switch; never returns)
 /   rr2 == 0 otherwise      ->  rr6 = map_adr(rr6, space=r5)
 memgate:
+/
+/	A NON-SEGMENTED Normal caller's pointer parameters carry a
+/	meaningless ZERO high word, because non-segmented C zero-extends a
+/	16-bit pointer.  Substitute the caller's PC segment, exactly as
+/	bdosgate does above.
+/
+/	This gate used to claim that no such fixup applied to it, on the
+/	grounds that its caller "always passes a full 32-bit XADDR".
+/	DDT.Z8K is a non-segmented caller and does not: its xfer context
+/	pointer arrived as 0x0000EB6C, which names SEGMENT 0 -- ROM, which
+/	reads 0xFFFF -- so xfer_ launched a context of 0xFFFF words and,
+/	because that context's FCW word had the System bit set, did so in
+/	System mode, on top of every supervisor stack in segment 0x3F.
+/
+/	Only a ZERO high word is replaced, so the xfer selector in rr4
+/	(0xFFFFFFFE) is never touched; rr2 is a LENGTH and is left alone.
+/
+	ld	r0, rr14(30)		/ caller's FCW
+	bit	r0, $15
+	jr	nz, memdisp		/   segmented: the pointers are XADDRs
+	bit	r0, $14
+	jr	nz, memdisp		/   system: ditto
+	ld	r0, rr14(32)		/ caller's PC segment word (0xSS00)
+	test	r6
+	jr	nz, memfixd
+	ld	r6, r0			/   rr6: address / src / context block
+memfixd:
+	test	r4
+	jr	nz, memdisp
+	ld	r4, r0			/   rr4: dst of the copy form
+memdisp:
 	testl	rr2
 	jr	nz, memcpy
 	cpl	rr4, $0xFFFFFFFE
@@ -242,6 +277,31 @@ callC:
 /	Return result in caller's r7 (our ABI: WORD result in r1)
 /
 	ld	rr14(14), r1
+/
+/	THE DISPATCH POINT (src/bdos/proc.c).  The BDOS has returned, its
+/	answer is in the caller's saved r7, and the frame above rr14 is the
+/	whole of this process's supervisor state -- there is no C frame
+/	left, no lock held and nothing below the SP that matters.  That is
+/	the one instant in this system at which another process can be
+/	given the machine, and it is why `psched' is tested HERE and not at
+/	scret: spret_ (the split-I/D fast path) and the RSX and BIOS
+/	returns join below, and none of them is a BDOS call boundary.
+/
+/	`psched' is zero unless two or more processes are live, which is
+/	every system this port has shipped, so the ordinary cost is one
+/	load, one test and one taken branch.  pdisp_ returns only when the
+/	running process is still the right one; otherwise it never comes
+/	back, because presume_ (procasm.s) resets this stack and IRETs into
+/	the other process's own frame.
+/
+	ld	r0, psched_
+	test	r0
+	jr	z, scret
+	ld	r2, r14			/ frame XADDR: high word = 0x3F00
+	ld	r3, r15			/   (seg << 8), low word = offset
+	pushl	(rr14), rr2
+	call	pdisp_
+	add	r15, $4
 	.globl	spret_
 spret_:
 scret:
@@ -391,6 +451,7 @@ bioscall:
 	ld	r6, $[SPLITDSEG*256]
 	jr	dobios
 callBios:
+	ldm	r3, (rr2), $5		/ get parameters
 dobios:
 	pushl	(rr14), rr6		/ P2
 	pushl	(rr14), rr4		/ P1

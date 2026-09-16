@@ -93,6 +93,21 @@ $(CPMAGP): $(CPMAIMG) $(UGP) $(wildcard src/dist/disk-a-gp/*) \
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAG)
 
+# F14 fixtures for the DISCRIMINATING descriptor race: the development
+# medium plus CONCL and CONCR.  Its own image for the same reason
+# $(CPMACONCR) has one -- a shared image none of its users expects to grow.
+CPMACONCR2 = build/cpma-concr2.img
+DISKACR2   = build/diska-concr2
+$(CPMACONCR2): $(CPMAIMG) $(UCONCR2) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKACR2)
+	@mkdir -p $(DISKACR2)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKACR2)/$$b || cp $$f $(DISKACR2)/$$b; done
+	@for f in $(UCONCR2); do b=`basename $$f`; \
+		cmp -s $$f $(DISKACR2)/$$b || cp $$f $(DISKACR2)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACR2)
+
 # Quantum measurement fixtures.
 CPMACONCV = build/cpma-concv.img
 DISKACV   = build/diska-concv

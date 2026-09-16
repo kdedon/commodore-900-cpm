@@ -11,6 +11,18 @@ struct dhq
 {
 	WORD	mode;		/* 0 no filter, 1 name match, 2 empty slot */
 	WORD	chk;		/* DHC_ bits that are armed		   */
+	UWORD	drv;		/* the drive dhstart() saw the table	   */
+				/* describing.  THE TABLE CAN BE REPOINTED  */
+				/* UNDER A SCAN: there is one signature	   */
+				/* table for the machine, dhopen() rebuilds */
+				/* it for whichever drive is being logged   */
+				/* in, and a scan that yields in the middle */
+				/* (do_phio takes the file-system lock, and */
+				/* error() reaches a console read) can come */
+				/* back to find it describing somebody	   */
+				/* else's drive.  dhcand() compares this	   */
+				/* against dhdrv and answers "candidate"	   */
+				/* -- read the entry -- when they differ.   */
 	UWORD	usr;		/* wanted directory entry byte		   */
 	UWORD	nam;		/* wanted name hash			   */
 	UWORD	ext;		/* wanted (s2 << 8) | extent		   */

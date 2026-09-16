@@ -789,6 +789,258 @@ static void t_exec(void)
 	xsetup();
 	xseg[0x100] = (char)0xd6;			/* SALC		*/
 	chk("salc is not an instruction", xstep(), X_BAD);
+	/* IRET and INTO stay refused, and for a reason that is not
+	 * "unfinished": nothing here ever builds an interrupt frame for
+	 * them to unwind.  See i86exec.c's far-transfer comment. */
+	xsetup();
+	xseg[0x100] = (char)0xcf;			/* iret		*/
+	chk("iret refused", xstep(), X_UNIMP);
+	chk("iret ip", xm.ip & 0xffff, 0x100);
+}
+
+/* ================================================================== */
+/* 3b. far transfers, and the warm boot that sits in front of them    */
+/* ================================================================== */
+
+/*
+ * WHY THIS SECTION EXISTS AT ALL.  Stage one refused every far transfer,
+ * and the refusal was correct but it was a ceiling: DRI's SUBMIT.CMD
+ * ends on one and could not finish.  Two things changed and they are
+ * tested apart from each other, because they are different KINDS of
+ * claim:
+ *
+ *   - the mechanism.  A far transfer loads CS, and loading CS is the
+ *     same act as loading any other segment register, so it goes
+ *     through setsr() and inherits its refusal.  That is an 8086 claim
+ *     and the tests below are 8086 tests.
+ *   - the rule.  A far transfer to <entry SS>:0000 is this
+ *     ENVIRONMENT's warm boot.  That is not an 8086 claim -- the
+ *     hardware has no such thing -- and the tests for it are about
+ *     which transfers it does and does not catch.
+ *
+ * The order matters and is tested: the entry stack segment is a
+ * paragraph the shim DID hand out, so setsr() would resolve it happily
+ * and drop the guest into its own base page.  The rule has to be asked
+ * first, and "far_wboot beats a resolvable segment" is the check that
+ * says it is.
+ */
+
+static char xseg2[65536];
+
+/* xsetup() with a SECOND paragraph, 0x4000, so a far transfer has
+ * somewhere real to land and an unhanded paragraph is still unhanded. */
+static void xsetup2(void)
+{
+	xsetup();
+	memset(xseg2, 0, sizeof xseg2);
+	i86nseg = 2;
+	i86spar[1] = 0x4000;
+	i86sbase[1] = xseg2;
+}
+
+static void t_far(void)
+{
+	/* --- JMPF: EA off16 seg16 --- */
+	xsetup2();
+	xseg[0x100] = (char)0xea;
+	xseg[0x101] = 0x00; xseg[0x102] = 0x02;		/* offset 0200	*/
+	xseg[0x103] = 0x00; xseg[0x104] = 0x40;		/* segment 4000	*/
+	chk("jmpf rc", xstep(), X_OK);
+	chk("jmpf cs", xm.sr[S_CS] & 0xffff, 0x4000);
+	chk("jmpf ip", xm.ip & 0xffff, 0x0200);
+	chk("jmpf base rebound", (long)(xm.sb[S_CS] == xseg2), 1);
+	chk("jmpf no bias", xm.so[S_CS] & 0xffff, 0);
+	chk("jmpf no slow path", (long)i86nsegslow, 0);
+
+	/* --- JMPF into a paragraph we never handed out: X_SEGESC, and
+	 * NOTHING moves.  This is the check that makes the whole feature
+	 * bounded -- a far transfer cannot reach memory the shim does not
+	 * own, for exactly the reason `MOV ES,ax' cannot. --- */
+	xsetup2();
+	i86nsegbad = 0;
+	xseg[0x100] = (char)0xea;
+	xseg[0x101] = 0x00; xseg[0x102] = 0x00;
+	xseg[0x103] = 0x00; xseg[0x104] = (char)0xd0;	/* segment D000	*/
+	chk("jmpf stranger rc", xstep(), X_SEGESC);
+	chk("jmpf stranger ip", xm.ip & 0xffff, 0x100);
+	chk("jmpf stranger cs", xm.sr[S_CS] & 0xffff, 0x1000);
+	chk("jmpf stranger base", (long)(xm.sb[S_CS] == xseg), 1);
+	chk("jmpf stranger named", i86segbad & 0xffff, 0xd000);
+	chk("jmpf stranger counted", (long)i86nsegbad, 1);
+
+	/* --- CALLF: 9A off16 seg16, and the frame it leaves --- */
+	xsetup2();
+	xseg[0x100] = (char)0x9a;
+	xseg[0x101] = 0x34; xseg[0x102] = 0x12;
+	xseg[0x103] = 0x00; xseg[0x104] = 0x40;
+	chk("callf rc", xstep(), X_OK);
+	chk("callf cs", xm.sr[S_CS] & 0xffff, 0x4000);
+	chk("callf ip", xm.ip & 0xffff, 0x1234);
+	chk("callf sp", xm.r[R_SP] & 0xffff, 0xfefc);
+	/* SS is still the first segment, so the frame is in xseg: return
+	 * offset 0x105 at the lower address, return segment above it. */
+	chk("callf pushed ip", ((xseg[0xfefc] & 0xff)
+			      | ((xseg[0xfefd] & 0xff) << 8)), 0x0105);
+	chk("callf pushed cs", ((xseg[0xfefe] & 0xff)
+			      | ((xseg[0xfeff] & 0xff) << 8)), 0x1000);
+
+	/* --- CALLF that cannot resolve leaves the STACK alone too.  The
+	 * segment is loaded before anything is pushed for this reason. --- */
+	xsetup2();
+	xseg[0x100] = (char)0x9a;
+	xseg[0x101] = 0x34; xseg[0x102] = 0x12;
+	xseg[0x103] = 0x00; xseg[0x104] = (char)0xd0;
+	chk("callf stranger rc", xstep(), X_SEGESC);
+	chk("callf stranger sp", xm.r[R_SP] & 0xffff, 0xff00);
+	chk("callf stranger ip", xm.ip & 0xffff, 0x100);
+
+	/* --- RETF, over a frame CALLF could have left --- */
+	xsetup2();
+	xm.r[R_SP] = 0xfefc;
+	xseg[0xfefc] = 0x34; xseg[0xfefd] = 0x12;	/* offset 1234	*/
+	xseg[0xfefe] = 0x00; xseg[0xfeff] = 0x40;	/* segment 4000	*/
+	xseg[0x100] = (char)0xcb;
+	chk("retf rc", xstep(), X_OK);
+	chk("retf cs", xm.sr[S_CS] & 0xffff, 0x4000);
+	chk("retf ip", xm.ip & 0xffff, 0x1234);
+	chk("retf sp", xm.r[R_SP] & 0xffff, 0xff00);
+
+	/* --- RETF imm16 pops the arguments as well --- */
+	xsetup2();
+	xm.r[R_SP] = 0xfefc;
+	xseg[0xfefc] = 0x00; xseg[0xfefd] = 0x03;
+	xseg[0xfefe] = 0x00; xseg[0xfeff] = 0x40;
+	xseg[0x100] = (char)0xca; xseg[0x101] = 0x04; xseg[0x102] = 0x00;
+	chk("retf imm rc", xstep(), X_OK);
+	chk("retf imm ip", xm.ip & 0xffff, 0x0300);
+	chk("retf imm sp", xm.r[R_SP] & 0xffff, 0xff04);
+
+	/* --- RETF over a frame naming a paragraph we do not hold: SP does
+	 * not move, so the guest is exactly where the instruction found
+	 * it and the refusal can be believed. --- */
+	xsetup2();
+	xm.r[R_SP] = 0xfefc;
+	xseg[0xfefe] = 0x00; xseg[0xfeff] = (char)0xd0;
+	xseg[0x100] = (char)0xcb;
+	chk("retf stranger rc", xstep(), X_SEGESC);
+	chk("retf stranger sp", xm.r[R_SP] & 0xffff, 0xfefc);
+	chk("retf stranger ip", xm.ip & 0xffff, 0x100);
+
+	/* --- FF /5: the far indirect jump, the form SUBMIT.CMD ends on.
+	 * The dword at the effective address is offset then segment. --- */
+	xsetup2();
+	xseg[0x2000] = 0x50; xseg[0x2001] = 0x00;	/* offset 0050	*/
+	xseg[0x2002] = 0x00; xseg[0x2003] = 0x40;	/* segment 4000	*/
+	xseg[0x100] = (char)0xff; xseg[0x101] = 0x2e;
+	xseg[0x102] = 0x00; xseg[0x103] = 0x20;
+	chk("jmpi far rc", xstep(), X_OK);
+	chk("jmpi far cs", xm.sr[S_CS] & 0xffff, 0x4000);
+	chk("jmpi far ip", xm.ip & 0xffff, 0x0050);
+
+	/* --- FF /3: the far indirect call --- */
+	xsetup2();
+	xseg[0x2000] = 0x60; xseg[0x2001] = 0x00;
+	xseg[0x2002] = 0x00; xseg[0x2003] = 0x40;
+	xseg[0x100] = (char)0xff; xseg[0x101] = 0x1e;
+	xseg[0x102] = 0x00; xseg[0x103] = 0x20;
+	chk("calli far rc", xstep(), X_OK);
+	chk("calli far cs", xm.sr[S_CS] & 0xffff, 0x4000);
+	chk("calli far ip", xm.ip & 0xffff, 0x0060);
+	chk("calli far pushed ip", ((xseg[0xfefc] & 0xff)
+				  | ((xseg[0xfefd] & 0xff) << 8)), 0x0104);
+	chk("calli far pushed cs", ((xseg[0xfefe] & 0xff)
+				  | ((xseg[0xfeff] & 0xff) << 8)), 0x1000);
+
+	/* --- a far JMP whose mod r/m names a REGISTER is not an 8086
+	 * instruction, and is refused as one rather than executed as the
+	 * near form --- */
+	xsetup2();
+	xseg[0x100] = (char)0xff; xseg[0x101] = (char)0xe8;	/* mod=3 */
+	chk("far jmp of a register", xstep(), X_BAD);
+
+	/* ---------------------------------------------------------------
+	 * The rule.  From here on the machine has an entry stack segment
+	 * recorded, which is what i86place() does for a real guest.
+	 * ------------------------------------------------------------- */
+
+	/* --- SUBMIT's own shape: CS: JMP FAR [0059] where the word pair
+	 * at CS:0059 is 0000 and the entry SS.  X_WBOOT, and IP left AT
+	 * the jump so a transcript can name it. --- */
+	xsetup2();
+	xm.wset = 1; xm.wseg = 0x1000;
+	xseg[0x0059] = 0x00; xseg[0x005a] = 0x00;	/* offset 0000	*/
+	xseg[0x005b] = 0x00; xseg[0x005c] = 0x10;	/* segment 1000	*/
+	xseg[0x100] = 0x2e;				/* CS: prefix	*/
+	xseg[0x101] = (char)0xff; xseg[0x102] = 0x2e;
+	xseg[0x103] = 0x59; xseg[0x104] = 0x00;
+	chk("far wboot rc", xstep(), X_WBOOT);
+	chk("far wboot ip", xm.ip & 0xffff, 0x100);
+	chk("far wboot cs", xm.sr[S_CS] & 0xffff, 0x1000);
+
+	/* --- and it beats the mechanism.  0x1000 IS a paragraph the shim
+	 * handed out, so setsr() would have taken it and the guest would
+	 * have carried on executing its own base page.  This check is the
+	 * ordering claim: the rule is asked first. --- */
+	chk("far wboot beats a resolvable segment",
+		(long)(i86resolve((i16)0x1000) == xseg), 1);
+
+	/* --- the same target reached by JMPF and by RETF: the rule is
+	 * about the TARGET, not about one encoding --- */
+	xsetup2();
+	xm.wset = 1; xm.wseg = 0x1000;
+	xseg[0x100] = (char)0xea;
+	xseg[0x101] = 0x00; xseg[0x102] = 0x00;
+	xseg[0x103] = 0x00; xseg[0x104] = 0x10;
+	chk("jmpf wboot", xstep(), X_WBOOT);
+	xsetup2();
+	xm.wset = 1; xm.wseg = 0x1000;
+	xm.r[R_SP] = 0xfefc;
+	xseg[0xfefe] = 0x00; xseg[0xfeff] = 0x10;
+	xseg[0x100] = (char)0xcb;
+	chk("retf wboot", xstep(), X_WBOOT);
+	chk("retf wboot sp", xm.r[R_SP] & 0xffff, 0xfefc);
+
+	/* --- HOW NARROW IT IS.  Offset 1 of the same segment is an
+	 * ordinary far jump; offset 0 of a DIFFERENT segment is an
+	 * ordinary far jump; and a NEAR jump to offset 0 is not a warm
+	 * boot at all, because on a real CP/M-86 machine an 8080-model
+	 * program's `JMP 0' lands in its own base page and is a bug. --- */
+	xsetup2();
+	xm.wset = 1; xm.wseg = 0x1000;
+	xseg[0x100] = (char)0xea;
+	xseg[0x101] = 0x01; xseg[0x102] = 0x00;		/* offset 0001	*/
+	xseg[0x103] = 0x00; xseg[0x104] = 0x10;
+	chk("wboot needs offset 0", xstep(), X_OK);
+	chk("wboot needs offset 0 ip", xm.ip & 0xffff, 0x0001);
+	xsetup2();
+	xm.wset = 1; xm.wseg = 0x1000;
+	xseg[0x100] = (char)0xea;
+	xseg[0x101] = 0x00; xseg[0x102] = 0x00;
+	xseg[0x103] = 0x00; xseg[0x104] = 0x40;		/* segment 4000	*/
+	chk("wboot needs the entry SS", xstep(), X_OK);
+	chk("wboot needs the entry SS cs", xm.sr[S_CS] & 0xffff, 0x4000);
+	xsetup2();
+	xm.wset = 1; xm.wseg = 0x1000;
+	xseg[0x100] = (char)0xe9;			/* near jmp 0	*/
+	xseg[0x101] = (char)0xfd; xseg[0x102] = (char)0xfe;
+	chk("near jmp 0 is not a warm boot", xstep(), X_OK);
+	chk("near jmp 0 ip", xm.ip & 0xffff, 0);
+
+	/* --- and it is OFF until a loader turns it on.  A machine nobody
+	 * placed a program into has no entry stack segment, and paragraph
+	 * 0 must not become a magic address by accident. --- */
+	xsetup2();
+	xseg[0x100] = (char)0xea;
+	xseg[0x101] = 0x00; xseg[0x102] = 0x00;
+	xseg[0x103] = 0x00; xseg[0x104] = 0x10;
+	chk("no wboot without a loader", xstep(), X_OK);
+	chk("no wboot without a loader ip", xm.ip & 0xffff, 0);
+
+	/* Hand K3's counters back the way this section found them.  They
+	 * are global instruments, section 4 asserts absolute values on
+	 * them, and the refusals above are this section's own traffic. */
+	i86nsegslow = i86nsegbad = 0;
+	i86nseg = 1;
 }
 
 /*
@@ -1828,6 +2080,8 @@ static struct nmap cemap[] = {
 
 static struct nmap xmap[] = {
 	{"X_OK", X_OK}, {"X_UNIMP", X_UNIMP}, {"X_BAD", X_BAD},
+	{"X_INT", X_INT}, {"X_HALT", X_HALT}, {"X_SEGESC", X_SEGESC},
+	{"X_WINDOW", X_WINDOW}, {"X_WBOOT", X_WBOOT}, {0, 0}
 };
 
 static struct nmap segmap[] = {
@@ -2844,6 +3098,7 @@ static void t_pip(const char *dir)
 			rc == X_BAD ? "X_BAD" :
 			rc == X_HALT ? "X_HALT" :
 			rc == X_SEGESC ? "X_SEGESC" :
+			rc == X_WBOOT ? "X_WBOOT" :
 			rc == X_WINDOW ? "X_WINDOW" : "X_INT",
 			i86berr(), i86bdosfn);
 
@@ -2953,12 +3208,36 @@ static void t_submit(const char *dir)
 		if (sfncount[i])
 			printf(" %d(%ld)", i, sfncount[i]);
 	printf("\n");
+	printf("i86test: SUBMIT ended at cs:ip %04x:%04x, %s\n",
 		(unsigned)L.m.sr[S_CS], (unsigned)L.m.ip,
+		rc == X_WBOOT ? "a warm boot" : "somewhere else");
 
 	/* The console must be SILENT: every message SUBMIT can print is
 	 * an error, and the one the missing FCB produced was
 	 * "Error On Line 001 No 'SUB' File Present". */
 	chk("submit said nothing", (long)sconn, 0);
+	/* The end, exactly: the far indirect JMP that closes the PL/M-86
+	 * epilogue at CS:0034, recognised as this environment's warm boot
+	 * with the answer already written.  `done' is still 0 because the
+	 * seam never saw a function 0 -- SUBMIT does not call one -- so
+	 * the run ends in the EXECUTOR and not in i86bdos(). */
+	chk("submit did not exit through the seam", (long)done, 0);
+	chk("submit end is X_WBOOT", (long)rc, X_WBOOT);
+	chk("submit end is a far indirect jmp", (long)in.op, I_JMPI);
+	chk("submit end is the far form", (long)in.x, 1);
+	chk("submit end ip", (long)L.m.ip, 0x0054L);
+	/* The target it recognised, read back out of the guest's own code
+	 * segment: the far pointer at CS:0059 is <entry SS>:0000, and the
+	 * entry SS is the paragraph i86place() recorded.  Without both
+	 * halves the rule above is an assertion about nothing. */
+	chk("submit end target offset",
+		(long)((L.m.sb[S_CS][0x59] & 0xff)
+		     | ((L.m.sb[S_CS][0x5a] & 0xff) << 8)), 0L);
+	chk("submit end target segment",
+		(long)((L.m.sb[S_CS][0x5b] & 0xff)
+		     | ((L.m.sb[S_CS][0x5c] & 0xff) << 8)),
+		(long)(L.m.wseg & 0xffff));
+	chk("submit entry ss was recorded", (long)L.m.wset, 1);
 	chk("submit no slow segments", (long)i86nsegslow, 0);
 	chk("submit no refused segments", (long)i86nsegbad, 0);
 
@@ -3555,6 +3834,7 @@ char **argv;
 	t_incdec();
 	t_neg();
 	t_exec();
+	t_far();
 	t_segcheck();
 	t_segslow();
 	t_loader();

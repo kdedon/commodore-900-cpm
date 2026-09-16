@@ -4,7 +4,9 @@
 include mk/config.mk
 
 .PHONY: all clean unpublish deps help
+all: unpublish $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG) imagecheck farptrcheck \
      $(UCONCFS) $(UXDOS) $(UCON1) $(UCONCZ) $(UXDOSPOL) $(UCONCS) $(UCONCV) \
+     $(UCONCW) $(UDIRG) $(UDIRB) $(USPLIT) $(UCONCR) $(UCONCR2) \
      $(CPMDISKALL)
 	@$(if $(wildcard $(KBOOT)),:,echo 'note: no kboot at "$(KBOOT)" -- $(CPMDISK) not built. `make deps DEP=kboot`')
 

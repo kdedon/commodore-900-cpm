@@ -3,6 +3,11 @@
 	.globl	faultcom_, faultpanic_
 	.globl	ttick_, tvidsm_, tickget_, tickei_
 	.globl	tickcnt_		/ the tick counter (bios/tick900.c)
+	.globl	pquant_			/ ticks left in this process's slice
+	.globl	psched_			/ nonzero when more than one process
+	.globl	pdisp_			/   is live; the dispatcher (proc.c)
+	.globl	sysstk_			/ the running process's supervisor
+					/   stack TOP (proc.c; proc.h PSTKOF)
 	.globl	xvec_			/ 48-entry vector table (bios900.c)
 	.globl	panic_			/ frame printer (bios900.c)
 
@@ -99,11 +104,35 @@ fhang:
 	jr	fhang
 
 ttick_:
+	sub	r15, $28
+	ldm	(rr14), r0, $14		/ r0-r13 under the hardware frame
 	ldb	rl0, $0x24		/ clear IP and IUS; gate stays open
 	outb	0x0019, rl0		/   CT3 command and status
 	ldl	rr0, tickcnt_
 	addl	rr0, $1
 	ldl	tickcnt_, rr0
+	ld	r0, psched_		/ more than one process live?
+	test	r0
+	jr	z, 1f
+	ld	r0, pquant_		/ THE QUANTUM.  A slice is pd_quant
+	dec	r0, $1			/   ticks long (proc.h PQBASE), and
+	ld	pquant_, r0		/   only the tick that spends the
+	jr	gt, 1f			/   last of it asks for a dispatch.
+	ld	r0, rr14(30)		/ the interrupted FCW
+	bit	r0, $14			/ S/N: clear = Normal mode, the TPA,
+	jr	z, 2f			/   nothing of ours on this stack
+	ld	r0, r15			/ System mode: switch only if this
+	add	r0, $36			/   process's supervisor stack is
+	ld	r1, sysstk_		/   EMPTY.  The frame sits at SP-36,
+	cp	r0, r1			/   so SP+36 is the stack top when
+	jr	ne, 1f			/   there is no BDOS activation
+2:	ld	r2, r14			/ frame XADDR: high word = 0x3F00
+	ld	r3, r15			/   (seg << 8), low word = offset
+	pushl	(rr14), rr2
+	call	pdisp_			/ returns only if this process is
+	add	r15, $4			/   still the right one to run
+1:	ldm	r0, (rr14), $14
+	add	r15, $28
 	iret
 
 tvidsm_:

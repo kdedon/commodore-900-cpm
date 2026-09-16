@@ -15,6 +15,8 @@
 
 ccpentry_:
 	ld	r14, $0x3f00		/ SP segment = 0x3F (<<8 form, VKERN)
+	ld	r15, sysstk_		/ SP offset: THIS process's stack top,
+					/   grows down (proc.h PSTKOF)
 	sub	r13, r13		/ clear frame pointer
 #ifdef BOOT_TRACE
 	call	bt4_			/ marker <4>: stack reset (cmain.c)
@@ -83,6 +85,7 @@ mem_clr_:
 	ret
 
 xfer_:
+	di	VI
 	ldl	rr2, rr14(4)		/ far pointer to the context block
 	ld	r0, rr2(28)		/ regs[14] -> user r14
 	ldctl	NSPSEG, r0
@@ -92,6 +95,23 @@ xfer_:
 	push	(rr14), r0
 	ld	r0, rr2(36)		/ PC segment word (XADDR high = 0xSS00)
 	push	(rr14), r0
+	and	r0, $0xB7FF		/ NVI is unsupported; clear NVIE -- and
+					/   clear FCW_SN (0x4000) as well, so a
+					/   launch is ALWAYS into Normal mode,
+					/   which is this routine's documented
+					/   contract (see the IRET below).  A
+					/   context whose FCW word carried the
+					/   System bit used to be launched in
+					/   System mode, and segment 0x3F -- every
+					/   process's supervisor stack -- is
+					/   mapped there: one bad context handed
+					/   in by a user program then wrote over
+					/   all of them.  Every legitimate
+					/   launcher already passes SN clear (the
+					/   CCP's own launch context carries FCW
+					/   0x9800), so this costs them nothing.
 	push	(rr14), r0
 	push	(rr14), r0		/ junk identifier word
+	ldm	r0, (rr2), $14		/ user r0-r13 (LDM latches the address
+					/   before r2/r3 are overwritten)
 	iret				/ -> nonseg Normal mode in the TPA

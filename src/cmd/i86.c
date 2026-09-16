@@ -114,6 +114,7 @@ int rc;
 	case X_HALT:	return ("HLT");
 	case X_SEGESC:	return ("a segment value we never handed out");
 	case X_WINDOW:	return ("a reference past the end of a segment");
+	case X_WBOOT:	return ("a warm boot");
 	}
 	return ("?");
 }
@@ -517,6 +518,20 @@ char *argv[];
 	cputs(", refused ");
 	pdecl((long) i86nsegbad);
 	cputs("\r\n");
+	/* Two ways out, and both are the guest finishing: BDOS function 0,
+	 * and the warm boot -- a far transfer to <entry SS>:0000, which is
+	 * what DRI's PL/M-86 epilogue does and what src/cmd/i86exec.c
+	 * wboot() recognises.  The warm boot says so on its own line, so
+	 * the transcript records WHICH exit was taken and where. */
+	if (rc == X_WBOOT) {
+		cputs("i86: warm boot: a far transfer to the entry stack "
+			"segment, cs:ip ");
+		phex4((int) G.sr[S_CS]);
+		conout(':');
+		phex4((int) G.ip);
+		cputs("\r\n");
+	}
+	if (brc == B_EXIT || rc == X_WBOOT)
 		cputs("i86: the guest terminated\r\n");
 	else {
 		cputs("i86: stopped: ");
@@ -534,4 +549,5 @@ char *argv[];
 		cputs("\r\n");
 	}
 	putsegs();
+	return (brc == B_EXIT || rc == X_WBOOT ? 0 : 1);
 }

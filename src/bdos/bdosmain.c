@@ -12,6 +12,23 @@
 /*  Declare EXTERN functions */
 
 EXTERN XADDR	setchain();	/* copy a function 47 command line */
+EXTERN WORD	pcreate();	/* fn 144: create a process	*/
+EXTERN WORD	proccnt();	/* fn 145: how many are live	*/
+			/*  src/bdos/xdos.c -- the MP/M XDOS calls	*/
+EXTERN WORD	xmemrq();	/* fn 128/129: memory request	*/
+EXTERN WORD	xmemfr();	/* fn 130: memory free		*/
+EXTERN WORD	xpoll();	/* fn 131: poll device		*/
+EXTERN WORD	xflgwt();	/* fn 132: flag wait		*/
+EXTERN WORD	xflgset();	/* fn 133: flag set		*/
+EXTERN WORD	xqmakef();	/* fn 134: make queue		*/
+EXTERN WORD	xqopenf();	/* fn 135: open queue		*/
+EXTERN WORD	xqdelf();	/* fn 136: delete queue		*/
+EXTERN WORD	xqread();	/* fn 137/138: read queue	*/
+EXTERN WORD	xqwrite();	/* fn 139/140: write queue	*/
+EXTERN WORD	xdelay();	/* fn 141: delay		*/
+EXTERN WORD	xsetcon();	/* fn 148: set console		*/
+EXTERN WORD	xassigncon();	/* fn 149: assign console	*/
+EXTERN WORD	xgetcon();	/* fn 153: get console number	*/
 EXTERN		warmboot();	/* Warm Boot function 		*/
 EXTERN BOOLEAN	constat();	/* Console status		*/
 EXTERN UBYTE	conin();	/* Console Input function	*/
@@ -701,6 +718,37 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 111:				/* print block to console */
 	  case 112: prt_blk(infop, func == 111);/* print block to list	*/
 		    break;
+
+	  case 144: return(pcreate(infop));	/* create process	*/
+		    /* break; */
+
+	  case 145: return(proccnt());		/* live processes	*/
+		    /* break; */
+
+
+	  case 128: return(xmemrq(infop, 1));	/* absolute memory req	*/
+	  case 129: return(xmemrq(infop, 0));	/* relocatable mem req	*/
+	  case 130: return(xmemfr(infop));	/* memory free		*/
+	  case 131: return(xpoll(info));	/* poll device		*/
+	  case 132: return(xflgwt(info));	/* flag wait		*/
+	  case 133: return(xflgset(info));	/* flag set		*/
+	  case 134: return(xqmakef(infop));	/* make queue		*/
+	  case 135: return(xqopenf(infop));	/* open queue		*/
+	  case 136: return(xqdelf(infop));	/* delete queue		*/
+	  case 137: return(xqread(infop, 0));	/* read queue		*/
+	  case 138: return(xqread(infop, 1));	/* conditional read	*/
+	  case 139: return(xqwrite(infop, 0));	/* write queue		*/
+	  case 140: return(xqwrite(infop, 1));	/* conditional write	*/
+	  case 141: return(xdelay(info));	/* delay		*/
+
+	  case 143: warmboot(0);		/* terminate process	*/
+		    break;		/* warmboot() does not return; this
+					   is here so that if it ever did,
+					   the next case would not run	*/
+
+	  case 148: return(xsetcon(info));	/* set console		*/
+	  case 149: return(xassigncon(infop));	/* assign console	*/
+	  case 153: return(xgetcon());		/* get console number	*/
 
 	  case 152: return(parsefn(infop));	/* parse filename	*/
 		    /* break; */

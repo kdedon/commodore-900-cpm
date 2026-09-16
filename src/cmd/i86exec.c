@@ -640,6 +640,13 @@ i16 par;
 	return (X_SEGESC);
 }
 
+static int wboot(m, seg, off)
+struct i86 *m;
+i16 seg, off;
+{
+	return (m->wset && off == 0 && seg == m->wseg);
+}
+
 /* ------------------------------------------------------------------ */
 /* one instruction						       */
 
@@ -861,13 +868,95 @@ struct i86in *in;
 			m->r[R_SP] = (i16)(m->r[R_SP] + in->imm);
 		break;
 	case I_JMPI:
+		if (in->x) {			/* far, through memory	*/
+			if (!(in->fl & IN_MEM))
+				return (X_BAD);	/* no far JMP of a reg	*/
+			a = mrw(m, in->seg, e);			/* offset */
+			b = mrw(m, in->seg, (i16)(e + 2));	/* segment */
+			if (wboot(m, b, a)) {
+				m->ip = ip0;
+				return (X_WBOOT);
+			}
+			rc = setsr(m, S_CS, b);
+			if (rc != X_OK) {
+				m->ip = ip0;
+				return (rc);
+			}
+			m->ip = a;
+			break;
 		}
 		m->ip = rmrd(m, in, e);
 		break;
 	case I_CALLI:
+		if (in->x) {			/* far, through memory	*/
+			if (!(in->fl & IN_MEM))
+				return (X_BAD);
+			a = mrw(m, in->seg, e);
+			b = mrw(m, in->seg, (i16)(e + 2));
+			if (wboot(m, b, a)) {
+				m->ip = ip0;
+				return (X_WBOOT);
+			}
+			r = m->sr[S_CS];	/* the return segment	*/
+			rc = setsr(m, S_CS, b);
+			if (rc != X_OK) {
+				m->ip = ip0;
+				return (rc);
+			}
+			push(m, r);
+			push(m, m->ip);
+			m->ip = a;
+			break;
 		}
 		a = rmrd(m, in, e);
 		push(m, m->ip);
+		m->ip = a;
+		break;
+	case I_JMPF:				/* EA: far direct	*/
+		if (wboot(m, in->imm2, in->imm)) {
+			m->ip = ip0;
+			return (X_WBOOT);
+		}
+		rc = setsr(m, S_CS, in->imm2);
+		if (rc != X_OK) {
+			m->ip = ip0;
+			return (rc);
+		}
+		m->ip = in->imm;
+		break;
+	case I_CALLF:				/* 9A: far direct	*/
+		if (wboot(m, in->imm2, in->imm)) {
+			m->ip = ip0;
+			return (X_WBOOT);
+		}
+		r = m->sr[S_CS];
+		rc = setsr(m, S_CS, in->imm2);
+		if (rc != X_OK) {
+			m->ip = ip0;
+			return (rc);
+		}
+		push(m, r);
+		push(m, m->ip);
+		m->ip = in->imm;
+		break;
+	case I_RETF:
+		/* The frame is READ before it is popped, so that a warm
+		 * boot or an unresolvable segment leaves SP where the
+		 * instruction found it. */
+		a = mrw(m, S_SS, m->r[R_SP]);			/* offset */
+		b = mrw(m, S_SS, (i16)(m->r[R_SP] + 2));	/* segment */
+		if (wboot(m, b, a)) {
+			m->ip = ip0;
+			return (X_WBOOT);
+		}
+		rc = setsr(m, S_CS, b);
+		if (rc != X_OK) {
+			m->ip = ip0;
+			return (rc);
+		}
+		m->r[R_SP] = (i16)(m->r[R_SP] + 4);
+		if (in->fl & IN_IMM)
+			m->r[R_SP] = (i16)(m->r[R_SP] + in->imm);
 		m->ip = a;
 		break;
 
@@ -1092,6 +1181,7 @@ struct i86in *in;
 	 * of these is a line in CPM86-STAGE-ONE.md §2.3's "no" column;
 	 * refusing loudly is the whole point of decoding them. */
 	case I_STRING:				/* no string/REP ops	*/
+	case I_IRET: case I_INTO:		/* no interrupt frames	*/
 	case I_ESC:				/* no 8087		*/
 	case I_IO:				/* no PC hardware	*/
 	case I_WAIT:

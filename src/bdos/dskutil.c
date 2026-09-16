@@ -25,6 +25,9 @@ EXTERN UWORD	crit_dsk;	/* critical disk vector */
 dirdrop()
 /* Forget what the directory buffer holds */
 {
+    BSETUP
+
+    GBL.dirsecn = -1;
 }
 
 
@@ -44,6 +47,7 @@ REG WORD parm;			/* 0 for read, write parm + 1 for write */
     struct iopb	rwpkt;
     BSETUP
 
+    if ( ! GBL.dirown ) GBL.dirsecn = -1;	/* foreign dma: the directory
 					   buffer may be the target */
     rwpkt.devnum = GBL.curdsk;		/* disk to read/write	*/
     if (parm)
@@ -79,7 +83,10 @@ UWORD secnum;
     REG UWORD rtn;
     BSETUP
 
+    GBL.dirown = 1;
     rtn = rdwrt((LONG)secnum, map_adr((XADDR)GBL.dirbufp, 0), 0);
+    GBL.dirown = 0;
+    GBL.dirsecn = rtn ? -1 : (WORD)secnum;
     return(rtn);
 }
 
@@ -96,7 +103,10 @@ REG WORD secnum;
     UBYTE dchksum();
     BSETUP
 
+    GBL.dirown = 1;
     rtn = rdwrt( (LONG)secnum, map_adr((XADDR)GBL.dirbufp, 0), 2);
+    GBL.dirown = 0;
+    GBL.dirsecn = (WORD)secnum;
     if ( secnum < (GBL.parmp)->cks )
 	*((GBL.dphp)->csv + secnum) = dchksum();
     dhrec((UWORD)secnum, GBL.dirbufp);
@@ -295,5 +305,10 @@ UWORD	getaloc()
 	    return(i);		/* return block number		*/
 	}
     }
+    UNLOCK		/* THE DISK IS FULL, AND THIS RELEASE WAS MISSING.
+			   Harmless while LOCK/UNLOCK were null macros
+			   (bdosdef.h) and a held-forever lock under a real
+			   one: every caller of getaloc() on a full disk
+			   would have leaked the file system.	*/
     return(~0);			/* if no free block found, return -1 */
 }

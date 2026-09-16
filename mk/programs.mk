@@ -181,6 +181,14 @@ $(UOBJDIR)/CONCY.Z8K: $(UOBJDIR)/concy.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCZ.Z8K: $(UOBJDIR)/concz.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# F14: the lock holder that is NOT also a creator, and the two creators
+# plus ballast it arranges around it (verify-concr2).
+$(UOBJDIR)/CONCL.Z8K: $(UOBJDIR)/concl.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/CONCR.Z8K: $(UOBJDIR)/concr.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/XDOSPOL.Z8K: $(UOBJDIR)/xdospol.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
