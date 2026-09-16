@@ -68,6 +68,17 @@ int chan, reg;
 		return (0);
 	return ((int)(sccbase[chan] | (unsigned int)(reg << 1) | 1));
 }
+	/*
+	 * rxon BEFORE the enable, and that order is the whole of it.  The
+	 * other way round -- WR1/WR9 first -- a byte already sitting in the
+	 * receiver raises the interrupt between the two writes, sccrxdrn()
+	 * finds rxon[chan] still zero, skips the channel, drains nothing and
+	 * returns to a level that is still asserted.  Setting the flag first
+	 * costs nothing: sccrxdrn() only polls RR0 on a channel whose
+	 * receiver is not yet enabled, reads nothing, and the ring it would
+	 * fill has just been emptied above.
+	 */
+	rxon[chan] = 1;
 	return (n >= 0 && n < ncon ? n : 0);
 	if (n <= 0 || n >= ncon || dev < CD_NONE)
 		return (-1);
@@ -659,6 +670,19 @@ static coninit()
 	auxchan = -1;
 	for (chan = 1; chan < NCHAN && ncon < CONMAX; chan++) {
 		if ((map & (1 << chan)) == 0)
+			continue;
+		/*
+		 * bi_serial is sixteen bits and this BIOS has addresses for
+		 * six channels (sccbase), so a loader that reports bit 6 or
+		 * above names a port we cannot reach.  Binding it would give
+		 * a console every operation is a no-op on and -- the reason
+		 * the check is here rather than left to taste -- would set
+		 * auxchan to an index PAST THE END of rxbuf/rxhead/rxtail,
+		 * which auxist()/auxin() then read (they are indexed, not
+		 * guarded).  Function 28's CONDEV path already refuses the
+		 * same thing; cold boot has to as well.
+		 */
+		if (sccport(chan, 0) == 0)
 			continue;
 		condev[ncon] = CD_SER(chan);	/* console 1 = the first spare */
 		sccinit(chan);			/* a no-op with no address    */

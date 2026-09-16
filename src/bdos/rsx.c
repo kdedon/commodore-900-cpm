@@ -15,12 +15,26 @@ EXTERN XADDR	tpa_hp;
 
 /*  The ceiling every module stacks down from.  v3's is `osbase' -- the
     base of the operating system, one page above the top of the TPA
+    (ccp3.asm:1798-1800, `lhld osbase ! dcr h').  Ours is the top of the
+    segment itself, because none of the system's own state lives in the
+    TPA any more: the CCP's state page used to be reserved at 0xFA00 and
+    is resident per-process storage now (src/ccp/ccpsv.h).
 
+    ZERO MEANS 0x10000.  rsxtop is a UWORD of TPA offsets and the top of
+    the segment does not fit in one, so the empty-chain value is 0 and
+    every reader turns it back into SEGLEN.  rsxchk() already had that
+    convention.  Nothing else compares rsxtop without going through those
+    readers except the SC-2 gate (src/bdos/bdosglue.s rsxenter), and the
+    gate is reached only when rsxhead is non-zero -- that is, only when a
+    module really is resident and rsxtop really is its base.  */
+
+#define	RSXCEIL		((UWORD)0)	/* the whole segment: see above	*/
 
 #define	SEGLEN		0x10000L	/* one Z8001 segment		*/
 #define	BPLEN		256		/* sizeof (struct b_page)	*/
 #define	DEFSTACK	0x100		/* pgmld.c's default stack	*/
 
+ * rsxtop is its base, or 0 -- meaning the top of the segment -- when empty. */
 
 GLOBAL UWORD	rsxhead = 0;
 GLOBAL UWORD	rsxtop = RSXCEIL;
@@ -36,6 +50,9 @@ GLOBAL UWORD	rsxtop = RSXCEIL;
 
 UWORD rsxres()
 {
+    if (rsxtop == 0)		/* no module: nothing is reserved, and
+				   the whole segment is the program's	*/
+	return (0);
     return ((UWORD)(SEGLEN - (long)rsxtop));
 }
 
@@ -51,6 +68,7 @@ UWORD rsxres()
 
 MLOCAL VOID rsxfence()
 {
+    tpa_hp = tpa_ht = TPABASE + (rsxtop ? (long)rsxtop : SEGLEN);
 }
 
 

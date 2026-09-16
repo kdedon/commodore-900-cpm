@@ -38,6 +38,19 @@
 extern UWORD	bdos();
 extern UWORD	fill_fcb();
 extern BYTE	cmdfcb[];		/* the FCB cmd_file opened	*/
+
+/*  THE CCP'S WORKING COPY OF ITS STATE.  The state itself is resident,
+    one per process (src/bdos/proc.c); this is the copy the CCP works in,
+    exchanged with it by BDOS 150/151.  It is defined here rather than in
+    ccp.c because ccp.c reaches every field through the macros in ccpsv.h
+    and never names the struct.
+
+    Its address is what makes the pointer fields work: BSS is at a fixed
+    link address, so this buffer sits at the same address in every
+    instance of the CCP, and a pointer into it stored before a program
+    load is still valid after one.  */
+
+struct ccpsv	ccpsv_buf;
 				/* `tail' needs no declaration: it	*/
 				/*  is a field of the state page	*/
 				/*  (ccpsv.h) and ccp.c reaches it by	*/
@@ -98,7 +111,15 @@ VOID __LOAD()
 	for (i = 0; i < FCB_LEN; i++)
 		CCPSV->sv_pfcb2[i] = cmdfcb[i];
 
+/*  Post the request, hand the state back, and go.  The CCP writes its
+    state into its working copy as it runs rather than saving it here, so
+    posting the request is the last thing that has to change before the
+    copy is stored, and there is no window in which a request is stored
+    and the state behind it is not.	*/
 
 	CCPSV->sv_pend = 1;
+	bdos(CCPSV_PUT, (long) CCPSV);	/* the working copy is in the TPA,
+					   and the program about to be
+					   loaded will overwrite it	*/
 	bdos(WARMBOOT, 0L);		/* does not return		*/
 }

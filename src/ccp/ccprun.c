@@ -111,9 +111,43 @@ static char	nofile[] = "\r\nCannot load A:CCP.Z8K -- system halted$";
 
 static BOOLEAN	sysinit = FALSE;	/* bdosinit has run		*/
 
+/*  THE STATE IS RESIDENT NOW, one per process descriptor, held by
+    src/bdos/proc.c and reached through ccpsvcur() -- the descriptor of
+    the process that is asking, so two sessions never share one.  It used
+    to be a page at a fixed TPA offset, which is why a TPA segment could
+    not be shorter than 64 KB.
 
+    `sv' stays as the working copy, so every sv.field reference in this
+    file is unchanged; what moved is the two ends of the exchange.
+    svload()/svstore() copy between it and this process's resident state
+    instead of cpy_in/cpy_out-ing the TPA.  Both ends are resident BSS, so
+    the copy is a plain byte loop and needs no address mapping.  */
+
+EXTERN struct ccpsv	*ccpsvcur();	/* src/bdos/proc.c		*/
 
 static struct ccpsv	sv;
+
+MLOCAL VOID svload()			/* resident state -> sv		*/
+{
+    REG UBYTE	*s, *d;
+    REG WORD	i;
+
+    s = (UBYTE *) ccpsvcur();
+    d = (UBYTE *) &sv;
+    for (i = 0; i < sizeof sv; i++)
+	d[i] = s[i];
+}
+
+MLOCAL VOID svstore()			/* sv -> resident state		*/
+{
+    REG UBYTE	*s, *d;
+    REG WORD	i;
+
+    s = (UBYTE *) &sv;
+    d = (UBYTE *) ccpsvcur();
+    for (i = 0; i < sizeof sv; i++)
+	d[i] = s[i];
+}
 
 
 /****************************************************
@@ -137,6 +171,16 @@ BYTE *m;
 
 /****************************************************
 **
+** ccpsvinit() -- build one process's CCP state.
+**		GLOBAL because it is not only the cold
+**		boot: proc.c pcrgen() builds a session's
+**		too.  It is HANDED the state to build
+**		rather than finding it, because the state
+**		is resident and per descriptor now.  It
+**		used to write to a fixed TPA offset in
+**		WHATEVER page was the TPA when it was
+**		called, which is why its caller had to be
+**		standing inside the page swap.
 **		v3 has no counterpart because v3's
 **		page is created on demand by
 **		`multistart' (ccp3.asm:1798-1812) and
@@ -148,15 +192,38 @@ BYTE *m;
 **
 ****************************************************/
 
+GLOBAL VOID ccpsvinit(p)
+struct ccpsv *p;			/* the descriptor's state to build */
 {
     REG WORD		i;
+    REG UBYTE		*q;
 
+    /*  The size this is budgeted at.  It is resident BSS now rather than a
+	reservation at the top of the TPA, so overrunning it no longer
+	corrupts a program -- but PNPROC copies of it are charged against
+	the 128 KB resident image check (mk/system.mk), and that is worth
+	holding to a stated figure.  */
 
     if ((long) sizeof sv > (long) CCPSVLEN)
+	ldfail("\r\nCCP state exceeds its budgeted size$");
 
+    q = (UBYTE *) p;
     for (i = 0; i < sizeof sv; i++)
+	q[i] = 0;
 
     /*  The initialisers ccp.c used to spell as `= TRUE' / `= DISK_A'.
+
+	THE THREE POINTERS ARE LEFT NULL ON PURPOSE.  They point into the
+	CCP's own copy of this state, which is BSS inside the transient's
+	image, and the system does not know where that is -- it could name
+	the fixed page before, and there is no fixed page now.  ccp.c's
+	main() points them at its own usercmd when it finds them null,
+	which is the same place this used to compute.  */
+
+    p->sv_magic     = CCPSVMAGIC;
+    p->sv_first_sub = 1;		/* ccp.c first_sub = TRUE	*/
+    p->sv_dirflag   = 1;		/* ccp.c dirflag   = TRUE	*/
+    p->sv_cur_disk  = 1;		/* ccp.c cur_disk  = DISK_A	*/
 }
 
 
@@ -268,12 +335,27 @@ VOID ccprun()
     if (!sysinit) {		/* the latch ccpif.s used to hold	*/
 	sysinit = TRUE;
 	bdosinit();
+	ccpsvinit(ccpsvcur());
     }
 
+    /*  THE RECOVERY THAT USED TO BE HERE IS GONE.  While the state was a
+	page at TPA 0xFA00 a program that ran past @MXTPA could scribble on
+	it, and a lost magic meant damage that had to be repaired.  The
+	state is resident and SYS-only now, so no Normal-mode program can
+	reach it at all.  What the magic still answers is "has this
+	descriptor's state ever been built?", which is false for a slot
+	whose process was created by fn 144 rather than as a session and
+	which then loads a CCP.  Resident BSS starts zeroed, so the test
+	is exactly that question and nothing more.  */
+
+    if (ccpsvcur()->sv_magic != CCPSVMAGIC)
+	ccpsvinit(ccpsvcur());
+    svload();
 
     pend = sv.sv_pend;
     if (pend) {				/* one request, one load	*/
 	sv.sv_pend = 0;
+	svstore();
     }
 
     if (pend) {
@@ -324,16 +406,59 @@ VOID ccprun()
 **		BDOS reaches them the way it reaches
 **		anything else in the TPA.
 **
+**		The state is read afresh here rather
 **		than reusing the copy ccprun() left,
 **		because this runs while a CCP is live
 **		and that copy is stale by definition.
+**		It acts on the RESIDENT copy: the CCP's
+**		own working copy dies with the warm boot
+**		this is part of, and the CCP reads the
+**		resident one back when it reloads.
 **
 ****************************************************/
 
 VOID ccpabort()
 {
+    svload();
     if (sv.sv_magic != CCPSVMAGIC)
 	return;
     sv.sv_submit = 0;
     sv.sv_morecmds = 0;
+    svstore();
+}
+
+
+/****************************************************
+**
+** ccpsvget()/ccpsvput() -- BDOS 150 and 151.
+**		The transient CCP's only way to its own
+**		state, which is resident and SYS-only.
+**		It GETs into its BSS copy when it starts
+**		a command line and PUTs the copy back
+**		when it finishes one, and again before
+**		the warm boot that launches a program
+**		(src/ccp/ccpgo.c __LOAD), because that
+**		copy is in the TPA the program is about
+**		to be loaded into.
+**
+**		Both act on the CALLER'S descriptor, so a
+**		second session's CCP reaches its own
+**		state and never another's.
+**
+****************************************************/
+
+UWORD ccpsvget(xp)
+XADDR xp;
+{
+    if (ccpsvcur()->sv_magic != CCPSVMAGIC)
+	ccpsvinit(ccpsvcur());
+    cpy_out(ccpsvcur(), xp, (long) sizeof sv);
+    return (0);
+}
+
+UWORD ccpsvput(xp)
+XADDR xp;
+{
+    cpy_in(xp, ccpsvcur(), (long) sizeof sv);
+    return (0);
 }

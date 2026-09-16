@@ -44,5 +44,49 @@
 					 * scan scratch begins at this offset
 					 * in the SPLITTSEG segment */
 
+ * using the ROM RAM report and reserves its top page for ROM state.
+ *
+ * THE POOL MUST NOT OVERLAP THE ROM'S VIDEO DESCRIPTORS.  It used to run
+ * 0x38..0x3E, which INCLUDES logical segments 0x3A and 0x3B -- the ROM's
+ * two display planes (crsr.c writes character cells in 0x3a and homes the
+ * HR bitmap through 0x3b; rom_source/display_re.c:46,47 names them
+ * VRAM_A_CHAR and VRAM_A_ATTR).  pgalloc() mapseg()s the segment it hands
+ * out, so the third allocation from an empty pool reprogrammed the display
+ * descriptor onto a pool page: console writes went into process memory and
+ * pgfree() never put the video page back.  No verify target saw it because
+ * the emulator's console is serial (crsr.c CK_SER), but on a machine with
+ * an LR or HR console the display died at the third allocation and stayed
+ * dead.  The pool is therefore moved wholesale, keeping all seven slots --
+ * shrinking it would cost the large-model CP/M-86 case, which holds six at
+ * once (tests/verify.mk verify-i86).
+ *
+ * 0x28..0x2E is free: the ROM identity-maps all 64 descriptors at reset
+ * (rom_source/reset_re.c:33) and thereafter only ever addresses segments 0,
+ * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32, 0x33, 0x35..0x37 and
+ * 0x3F (crt.s), and nothing in the tree names a segment between 0x02 and
+ * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
+ *
+ * AS MANY SLOTS AS RAM CAN BACK.  pginit() used to stop at seven whatever
+ * the ROM reported, which on a 2560 KB machine left 1536 KB idle.  Slot i
+ * needs physical page PGPGLO+i, and RAM cannot reach the LR card's
+ * character RAM at 0x37; pginit() keeps the top RAM page for the ROM, so
+ * the largest machine backs pages 0x10..0x35 -- 38 slots.  Their segments:
+ * slots 0..7 are 0x28..0x2F, exactly the numbers the first seven always
+ * were (verify-i86 names them), and slot 8 onwards counts DOWN from 0x27,
+ * which ends at 0x0A.  0x02..0x27 is otherwise unused, for the same reason
+ * given above.  pgsize() in pgalloc.c does the sizing; tests/pgtest.c runs
+ * it for 512, 1024 and 2560 KB, which the emulator (1 MB, fixed) cannot.
+ */
 #define	SYSPHYSPAGE	0x08		/* phys 0x080000: CPM.SYS's text */
+#define	PGSEGLO		0x28		/* slot 0's logical segment	 */
+#define	PGNUP		8		/* slots 0..7 ascend, 0x28..0x2F */
+#define	PGNSLOT		38		/* 0x28..0x2F, then 0x27..0x0A --
+					 * NOT 0x38..0x3E: 0x3A/0x3B are
+					 * the video planes */
+#define	PGSEG(i)	((i) < PGNUP ? PGSEGLO + (i) \
+				     : PGSEGLO - 1 - ((i) - PGNUP))
 #define	PGPGLO		0x10		/* SPLITMPHYSPAGE + 1		 */
+#define	PGSEGVIDA	0x3a		/* the ROM's display planes, named
+					 * here so the banner above and the
+					 * check in pgalloc.c agree	 */
+#define	PGSEGVIDB	0x3b

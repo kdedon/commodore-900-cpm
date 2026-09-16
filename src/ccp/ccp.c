@@ -1767,6 +1767,29 @@ main()
 {					 /*---------------------*/
 	REG BYTE *com_index;		 /* cmd execution ptr   */
 	REG UWORD i;			 /*---------------------*/
+
+/*  THIS CCP'S STATE, OUT OF RESIDENT STORAGE.  It is not in the TPA any
+    more (ccpsv.h): the system holds one per process and hands it over on
+    request, so it survives the transient programs this CCP loads without
+    occupying any of their address space.  Read it before touching a
+    single field -- every macro in ccpsv.h reads the buffer this fills.  */
+
+	bdos(CCPSV_GET,(long)CCPSV);
+
+/*  The three pointer fields, if the state has just been built.  The system
+    leaves them null because they point into THIS buffer and only the CCP
+    knows where that is.  They are what ccp.c's `BYTE *user_ptr = usercmd'
+    was when usercmd was a plain BSS array.  Non-null means an earlier
+    instance set them, and they are still right: the buffer is at the same
+    address in every instance.  */
+
+	if(user_ptr == 0)
+	{
+		user_ptr = usercmd;
+		glb_index = usercmd;
+		tail = usercmd;
+	}
+
 	dirflag = TRUE;		         /* init fcb fill flag  */
 	cbdos(SET_DMA_ADDR,dma);          /* set system dma addr */
 	cfg_init();			 /* read CCP.CFG once   */
@@ -1894,6 +1917,15 @@ main()
 				}
 			}
 		}
+		if(*com_index != NULL)
 			echo_cmd(com_index,GOOD);
 	}
+
+/*  Hand the state back.  ccpcrt.s calls main() once per command line in a
+    loop, so this runs between lines as well as before a reload, and the
+    resident copy is never more than one command line out of date.  The
+    program-launch path does not return through here: it stores the state
+    itself and warm boots (ccpgo.c __LOAD).  */
+
+	bdos(CCPSV_PUT,(long)CCPSV);
 }

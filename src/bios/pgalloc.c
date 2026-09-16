@@ -1,4 +1,17 @@
+ * Slot i pairs logical segment PGSEG(i) with a physical pool page.
  *
+ * pgrelall() restores the boot TPA mapping and releases unheld slots.
+ *
+ * OWNERSHIP IS A PROCESS, NOT A BOOLEAN.  pgown[i] holds pgcur+1, the
+ * process the slot was handed to; pgcur is the running process's
+ * descriptor index and src/bdos/proc.c keeps it (it is that file's `pcur',
+ * published here because the allocator is resident and proc.c is not the
+ * only caller).  It matters because pgrelall() runs on EVERY warm boot: a
+ * foreground ^C used to release every allocated, unheld slot, which is
+ * every scratch segment a BACKGROUND 8086 or Z80 interpreter was running
+ * out of -- and the pool then handed those segments to somebody else while
+ * the interpreter was still using them.  A warm boot now releases only the
+ * warm-booting process's own. */
 #include "stdio.h"
 #include "c900cfg.h"
 
@@ -11,6 +24,16 @@ extern int mapseg();
 /* clicks are 1 KB, a page is 64 KB: 64 clicks to the page */
 #define CLICKPAGE	6		/* clicks >> 6 = page		*/
 
+static char	pgown[PGNSLOT];	/* 0: slot i free.  Otherwise the owning
+				 * process's index plus one -- see the
+				 * banner.  Zero cannot be an owner code
+				 * because a bss-cleared table has to read
+				 * as empty. */
+int		pgcur;		/* THE RUNNING PROCESS, as a descriptor
+				 * index; proc.c assigns it wherever it
+				 * assigns pcur.  Zero before there are any
+				 * processes, which is right: everything
+				 * allocated then belongs to process 0. */
 static char	pghld[PGNSLOT];	/* slot i is a LIVE PROCESS's parked 64 KB
 				 * image (src/bdos/proc.c), not a transient's
 				 * scratch.  The distinction exists for one
@@ -29,14 +52,65 @@ int		tpaphys;	/* the page segment TPASEG points at now */
 int		pgnslot;	/* slots this machine can actually give	*/
 unsigned	pgbram, pgeram;	/* the ROM's report, kept for the record */
 
+/*
+ * The slot a logical segment belongs to: PGSEG() run backwards (c900cfg.h).
+ * Anything that is not a pool segment answers a negative index or one past
+ * PGNSLOT, which every caller already refuses along with slots this
+ * machine does not have.
+ */
+static int pgslot(seg)
+int seg;
+{
+	if (seg >= PGSEGLO)
+		return (seg - PGSEGLO < PGNUP ? seg - PGSEGLO : -1);
+	return (PGNUP + (PGSEGLO - 1 - seg));
+}
+
+/*
+ * How many slots a ROM report of [bram, eram) clicks can back.  Split
+ * from pginit() so that tests/pgtest.c can run the arithmetic for RAM
+ * sizes the emulator cannot be given.
+ */
+int pgsize(bram, eram)
+unsigned bram, eram;
+{
+	register int lo, hi, n;
+
+	lo = (int)(bram >> CLICKPAGE);
+	hi = (int)(eram >> CLICKPAGE);	/* one past the last page */
+
+	/*
+	 * The resident layout must lie inside the RAM the ROM reports,
+	 * or the report is not describing this machine and none of the
+	 * arithmetic below means anything.
+	 */
+	if (lo > SYSPHYSPAGE || hi <= PGPGLO)
+		return (0);
+
+	hi--;				/* the ROM's segment-1 page */
+	if (hi <= PGPGLO)
+		return (0);		/* 512 KB: nothing left over */
+
+	n = hi - PGPGLO;
+	if (n > PGNSLOT)
+		n = PGNSLOT;
+	return (n);
+}
+
 pginit()
 {
 	register long pp;
 	register unsigned *rc;
+	register int i;
 
 	pgnslot = 0;
 	pgbram = pgeram = 0;
+	pgcur = 0;
 	tpaphys = TPAPHYSPAGE;		/* where crt.s left segment TPASEG */
+	for (i = 0; i < PGNSLOT; i++) {
+		pgown[i] = 0;
+		pghld[i] = 0;
+		pgpg[i] = PGPGLO + i;
 	}
 
 	pp = *(long *)ROMCONF_PP;
@@ -46,6 +120,7 @@ pginit()
 	pgbram = rc[RC_BRAM];
 	pgeram = rc[RC_ERAM];
 
+	pgnslot = pgsize(pgbram, pgeram);
 	return (pgnslot);
 }
 
@@ -60,6 +135,9 @@ int pgalloc()
 
 	for (i = 0; i < pgnslot; i++)
 		if (!pgown[i]) {
+			pgown[i] = (char)(pgcur + 1);
+			mapseg(PGSEG(i), pgpg[i] << 8, 0x00);
+			return (PGSEG(i));
 		}
 	return (0);
 }
@@ -69,6 +147,7 @@ int seg;
 {
 	register int i;
 
+	i = pgslot(seg);
 	if (i < 0 || i >= pgnslot || !pgown[i])
 		return (0);
 	pgown[i] = 0;
@@ -82,6 +161,7 @@ int seg, on;
 {
 	register int i;
 
+	i = pgslot(seg);
 	if (i < 0 || i >= pgnslot || !pgown[i])
 		return (0);
 	pghld[i] = on ? 1 : 0;
@@ -104,6 +184,7 @@ int seg;
 {
 	register int i, old;
 
+	i = pgslot(seg);
 	if (i < 0 || i >= pgnslot || !pgown[i])
 		return (0);
 
@@ -133,6 +214,7 @@ pgtparest()
 			pgpg[i] = tpaphys;
 			tpaphys = TPAPHYSPAGE;
 			mapseg(TPASEG, TPAPHYSPAGE << 8, 0x00);
+			mapseg(PGSEG(i), pgpg[i] << 8,
 			       pgown[i] ? 0x00 : 0x02);
 			return (1);
 		}
@@ -151,9 +233,31 @@ int pgcount()
 	return (n);
 }
 
+/*
+ * Release the scratch segments of the process that is running now, and
+ * nobody else's.  A slot owned by another process is left exactly as it
+ * is even though it is unheld: unheld means "not a parked 64 KB process
+ * image", which is true of an 8086 guest's data group while the guest is
+ * running.  The TPA mapping is not touched here; pgrelall() does that.
+ * proc.c calls this for a dying background process, whose scratch would
+ * otherwise stay allocated to a descriptor index that has been freed.
+ */
+pgrelproc()
 {
 	register int i;
+	register int me;
 
+	me = pgcur + 1;
+	for (i = 0; i < pgnslot; i++)
+		if (pgown[i] == (char)me && !pghld[i])
+			pgfree(PGSEG(i));
+	return (0);
+}
+
+/* Give everything back.  The warm-boot path; see the banner. */
+pgrelall()
+{
 	if (!pgheld())
 		pgtparest();
+	return (pgrelproc());
 }

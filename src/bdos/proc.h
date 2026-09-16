@@ -41,8 +41,14 @@ struct context {
 	maps it at phys 0x0D0000 with limit 0xFF) and holds NOTHING but
 	these stacks -- the ROM's own routines frame below the running SP in
 	the same segment, which is why the C stack lives there at all -- so
+	0x3C00 of headroom remains under the lowest stack.  SEVEN fit, not
+	eight: 0xFC00/0x2000 is 7.875, so an eighth slot would get 0x1C00.
+	Six is what the decision asked for.
       * TPA PAGES.  One live process owns segment TPASEG and the rest are
 	parked in allocator slots, so six processes need five pool slots.
+	pginit() gives as many slots as RAM backs, up to PGNSLOT (c900cfg.h):
+	seven on the 1024 KB machine the suite runs, where verify-i86 already
+	holds six at once, and 31 on 2560 KB (tests/pgtest.c).
       * DESCRIPTOR INDEX.  Every loop in proc.c is written against PNPROC
 	and pgalloc.c's pgown[] holds pgcur+1 in a char, so an index of 5
 	costs nothing.  No table in the tree is dimensioned by a literal 4

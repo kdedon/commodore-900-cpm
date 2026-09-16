@@ -1,5 +1,30 @@
+ * It holds every value that must survive __LOAD: program-launch data,
+ * buffers. Scratch parse and DMA buffers remain in transient BSS because each
+ * CCP invocation initializes them before use.
+ *
+ * THIS IS RESIDENT PER-PROCESS STORAGE, NOT A PAGE IN THE TPA.  It used to
+ * sit at a fixed TPA offset of 0xFA00, which made it the first thing standing
+ * in the way of a TPA segment shorter than 64 KB, and left it within reach of
+ * a program that ran past @MXTPA.  The system now keeps one per process
+ * descriptor (src/bdos/proc.c), the transient CCP keeps a working copy in its
+ * own BSS, and the two are exchanged by the two BDOS calls below.  Nothing in
+ * the TPA is reserved for it any more, so the RSX ceiling is the top of the
+ * segment (src/bdos/rsx.c) and every program gets those 1,536 bytes back.
+ *
+ * The exchange is per process by construction: both calls act on the
+ * descriptor of the process that makes them, so two sessions never share one.
+ */
+#define	CCPSVLEN	0x0600		/* the size this must not exceed */
 
+#define	CCPSVMAGIC	0x4343		/* 'CC': the state is initialised */
 
+/*  The two BDOS calls the transient CCP reaches its state through.  The
+    parameter is the address of its own copy.  Resident storage is SYS-only
+    (src/bios/crt.s), so a Normal-mode program cannot address it directly and
+    these two calls are the whole of the interface.  */
+
+#define	CCPSV_GET	150		/* resident state -> my buffer	*/
+#define	CCPSV_PUT	151		/* my buffer -> resident state	*/
 
 /*  Command-line and buffer sizes.  These repeat ccpdef.h's CMD_LEN,
     FCB_LEN, ERRLINE, PATHMAX, NDMAX, NDNAME and IFMAX rather than
@@ -82,9 +107,18 @@ struct ccpsv {
     char	sv_profile;
 };
 
+/* Map the CCP globals to the transient's own copy of the state.  The pointer
+ * fields stay valid across a reload because the buffer is BSS at a fixed link
+ * address, so it is at the same address in every instance of the CCP -- which
+ * is also why the SYSTEM cannot initialise them: only the CCP knows where its
+ * own buffer is.  ccpsvinit() leaves them null and ccp.c's main() points them
+ * at its own usercmd when it finds them null. */
 
 #ifdef CCPTRANSIENT
 
+extern struct ccpsv	ccpsv_buf;	/* src/ccp/ccpgo.c		*/
+
+#define	CCPSV		(&ccpsv_buf)
 
 
 #define	profile_done	(CCPSV->sv_profile)

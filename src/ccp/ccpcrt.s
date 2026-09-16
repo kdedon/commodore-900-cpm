@@ -15,9 +15,17 @@
 /	everything ccpif.s held that a reload would have destroyed: the
 /	sysinit latch (now in sys/ccprun.c, which is resident), the
 /	bdosinit_ call (same), and the autost_/submit_/morecmds_/
+/	usercmd_ storage, which is now in the CCP state (sys/ccpsv.h).
 /	The saved stack pointer is gone too -- main_ is called from a
 /	loop that never grows the frame, so there is nothing to reset.
 /
+/  The BSS clear below DOES clear the CCP's copy of that state, and that
+/  is correct: the state itself is RESIDENT, one per process, and main_
+/  reads it back through BDOS 150 as its first act (sys/ccpsv.h).  It
+/  used to be a page at TPA 0xFA00 that this startup had to leave alone,
+/  because clearing it would have destroyed the very thing that had to
+/  survive the reload.  Nothing above @MXTPA belongs to the CCP any more,
+/  and nothing here has to know where the state lives.
 /
 / ********************************************************************
 

@@ -22,6 +22,8 @@ TC = $(C900_TOOLCHAIN)/host/build
 
 # Allow cleanup, dependency fetching and host checks without the cross toolchain.
 TCFREE = clean unpublish dirfmt-check help \
+	 verify-rtc-host splitcheck splittest i86test z80test deps farptrcheck \
+	 pgtest
 TCNEED = $(filter-out $(TCFREE),$(or $(MAKECMDGOALS),all))
 ifneq ($(strip $(TCNEED)),)
 # Refusal text is deps.sh's own, on stderr; $(error) only stops the read.
@@ -151,6 +153,9 @@ UGP	= $(UOBJDIR)/GET.Z8K $(UOBJDIR)/PUT.Z8K \
 	  $(UOBJDIR)/GET.RSX $(UOBJDIR)/PUT.RSX
 # Scheduler quantum measurement.
 UCONCV	= $(UOBJDIR)/CONCV.Z8K $(UOBJDIR)/CONCY.Z8K
+# Warm-boot segment ownership (F5): the foreground, the background that
+# outlives it, and the program the CCP runs afterwards.
+UCONCW	= $(UOBJDIR)/CONCW.Z8K $(UOBJDIR)/CONCWB.Z8K $(UOBJDIR)/CONCWC.Z8K
 
 # SESSION starts a CCP on a second console (BDOS function 142): it is the
 # only door to the multi-user feature, so it ships on both drive-A images.

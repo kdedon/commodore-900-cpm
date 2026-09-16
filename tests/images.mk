@@ -93,6 +93,19 @@ $(CPMAGP): $(CPMAIMG) $(UGP) $(wildcard src/dist/disk-a-gp/*) \
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAG)
 
+# Warm-boot segment ownership fixture (F5).
+CPMACONCW = build/cpma-concw.img
+DISKACW   = build/diska-concw
+$(CPMACONCW): $(CPMAIMG) $(UCONCW) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKACW)
+	@mkdir -p $(DISKACW)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKACW)/$$b || cp $$f $(DISKACW)/$$b; done
+	@for f in $(UCONCW); do b=`basename $$f`; \
+		cmp -s $$f $(DISKACW)/$$b || cp $$f $(DISKACW)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACW)
+
 # F14 fixtures for the DISCRIMINATING descriptor race: the development
 # medium plus CONCL and CONCR.  Its own image for the same reason
 # $(CPMACONCR) has one -- a shared image none of its users expects to grow.

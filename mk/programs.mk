@@ -204,6 +204,16 @@ $(UOBJDIR)/CONCS.Z8K: $(UOBJDIR)/concs.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCV.Z8K: $(UOBJDIR)/concv.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# The warm-boot segment-ownership trio (F5); src/cmd/concw.c explains them.
+$(UOBJDIR)/CONCW.Z8K: $(UOBJDIR)/concw.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/CONCWB.Z8K: $(UOBJDIR)/concwb.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/CONCWC.Z8K: $(UOBJDIR)/concwc.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/MSCOPY.Z8K: $(UOBJDIR)/mscopy.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

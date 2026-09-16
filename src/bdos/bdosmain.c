@@ -14,6 +14,8 @@
 EXTERN XADDR	setchain();	/* copy a function 47 command line */
 EXTERN WORD	pcreate();	/* fn 144: create a process	*/
 EXTERN WORD	proccnt();	/* fn 145: how many are live	*/
+EXTERN UWORD	ccpsvget();	/* fn 150: this process's CCP state out	*/
+EXTERN UWORD	ccpsvput();	/* fn 151:   ...and back in (src/ccp)	*/
 			/*  src/bdos/xdos.c -- the MP/M XDOS calls	*/
 EXTERN WORD	xmemrq();	/* fn 128/129: memory request	*/
 EXTERN WORD	xmemfr();	/* fn 130: memory free		*/
@@ -749,6 +751,21 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 148: return(xsetcon(info));	/* set console		*/
 	  case 149: return(xassigncon(infop));	/* assign console	*/
 	  case 153: return(xgetcon());		/* get console number	*/
+
+		  /*  150/151 -- THE TRANSIENT CCP'S STATE.  It is resident
+		      and per process (src/bdos/proc.c), and resident
+		      storage is SYS-only, so a Normal-mode program cannot
+		      address it: these two calls are the whole interface.
+		      They act on the CALLER'S descriptor, which is what
+		      makes a second session's CCP reach its own state and
+		      never another's.  This port's own numbers, in the
+		      range v3 answers "not present" for (the default below
+		      returns 0 for anything from 128 up), so a program
+		      that probes them on another CP/M gets that answer
+		      rather than a wrong one.  src/ccp/ccprun.c.	*/
+
+	  case 150: return(ccpsvget(infop));	/* CCP state -> caller	*/
+	  case 151: return(ccpsvput(infop));	/* caller -> CCP state	*/
 
 	  case 152: return(parsefn(infop));	/* parse filename	*/
 		    /* break; */

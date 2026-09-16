@@ -245,6 +245,23 @@ XADDR xlpbp;
 	if (seg) {			/* Locate text & data segments	*/
 					/* if segmented we know nothing	*/
 		textseg = dataseg = bssseg = stkseg = 0;
+
+		/*  C900: RESERVE THE BASE PAGE AND THE STACK HERE TOO.
+		    The non-segmented arm below subtracts them from the
+		    data segment's limit; this arm never did.  The only
+		    reduction written for a segmented image is loadseg's
+		    X_SG_STK case, and it never runs, because lout2cpm
+		    emits exactly COD, DAT and BSS and no stack segment
+		    (tc/tools/lout2cpm/lout2cpm.c).  So a segmented image
+		    whose text+data+bss reached within 0x200 bytes of the
+		    ceiling was loaded on top of the base page and the
+		    stack that setaddr/setbase were about to write there,
+		    and loadseg's overflow test never fired.  seglim is
+		    what that test reads, so reserving it here is what
+		    turns such an image into a clean NOMEM refusal.  */
+
+		for (i = 0; i < x_hdr.x_nseg; i++)
+			seglim[i] -= BPLEN + stksiz;
 	} else {			/* if nonsegmented ...		*/
 					/* assign segment numbers	*/
 		textseg = 0;
@@ -604,6 +621,35 @@ int space;
 	bp.lbss = bssloc;
 	bp.bsslen = bsssiz;
 
+	/*  C900: FREE MEMORY ENDS AT THE STACK POINTER, not at the segment
+	    limit.  DRI defines this field as "Length of free memory after
+	    bss" (pg/pgmac.tex:60) and puts the user stack at the highest
+	    address of the TPA, with "the maximum size of the stack equal to
+	    the address of the stack pointer minus the last address of the
+	    program" (pg/pgm4f.tex:516-518).  The span a program may use
+	    therefore runs from the end of bss up to its own initial SP,
+	    which is what htpa already is (set above from mylpb.stackptr).
+
+	    seglim is not that number.  On the segmented path it counted the
+	    program's OWN base page and default stack -- 0x208 bytes an
+	    0xEE01 program was told it could have and could not -- because
+	    nothing reduced the limit for them (see the reservation added in
+	    pgmld() above, which now refuses an image that would collide
+	    with them; this reports what is left).
+
+	    A SPLIT-I/D program keeps the old form and must: its bss is in
+	    the D bank and its stack is in the code bank, so htpa and lbss
+	    are offsets in DIFFERENT segments and subtracting one from the
+	    other would be meaningless.  Its base page and stack are not in
+	    the span being measured at all.  */
+
+	bp.freelen = bp.lbss + bp.bsslen;	/* end of the image	*/
+	if (split)
+		bp.freelen = seglim[bssseg] - segsiz[bssseg];
+	else if (bp.htpa > bp.freelen)
+		bp.freelen = bp.htpa - bp.freelen;
+	else
+		bp.freelen = 0L;	/* no room between bss and the SP */
 
 	cpy_out(&bp, map_adr((long) stkloc, space), sizeof bp);
 }

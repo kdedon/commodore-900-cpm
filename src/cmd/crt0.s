@@ -6,6 +6,14 @@
 / offset 2 must hold a warm-boot stub.
 /
 / Entry state (pgmld.c + go.c segmented path): segmented Normal mode,
+/ rr14 = TPA:0xFDF8 with no RSX resident, (SP) = far return address
+/ pgldaddr+2, (SP+4) = far base page pointer; BSS is NOT cleared by the
+/ loader.  0xFDF8 is the top of the segment less the base page, the
+/ default stack and the segmented entry frame.  This line was briefly
+/ untrue -- the CCP's state page reserved 0xFA00 upwards and made it
+/ 0xF7F8 -- and is true again now that the state is resident per-process
+/ storage (src/ccp/ccpsv.h).  A resident RSX still lowers it by its own
+/ fence.
 
 	.globl	start
 	.globl	_cstart_

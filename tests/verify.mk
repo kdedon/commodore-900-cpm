@@ -236,6 +236,14 @@ build/splittest: tests/splittest.c src/bdos/splitsc.c src/bdos/zsplit.c src/bdos
 	$(HOSTCC) -std=gnu89 -w -DHOSTCC -o $@ tests/splittest.c src/bdos/splitsc.c src/bdos/zsplit.c
 splittest: build/splittest
 	build/splittest
+# ---- the segment pool's sizing, host side (src/bios/pgalloc.c) ----
+# The emulator's RAM is 1 MB and nothing else, so pginit()'s arithmetic for
+# 512 KB, 2560 KB and the ceiling runs here: slots served, their segments
+# (the first seven must stay 0x28..0x2E), and the refusals.
+build/pgtest: tests/pgtest.c src/bios/pgalloc.c src/bios/c900cfg.h | $(OBJDIR)
+	$(HOSTCC) -std=gnu89 -w -Isrc/bios -o $@ tests/pgtest.c
+pgtest: build/pgtest
+	build/pgtest
 splitcheck: build/splitchk
 	@bins=`ls $(DISKA)/*.Z8K 2>/dev/null`; \
 	if [ -z "$$bins" ]; then \
@@ -421,6 +429,7 @@ verify-z80: all
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) 		--label-mode $(LABELMODE) $(Z80CPMA) $(CPMA_BLOCKS) $(Z80DISK)
 	$(MKDISK) $(Z80IMG) $(CPMSYS) $(Z80CPMA) $(CPMBIMG)
 	@$(EMUOK)
+	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- BIOS function 25 handed out no segment."; 		     echo "            That is the whole gate: without it the guest has"; 		     echo "            no 64 KB and nothing below this can run."; exit 1; }
 	@grep -q 'z80: load: ok' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP.COM did not load"; exit 1; }
 	@grep -q '0100: C3' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- the image is not in the guest segment"; exit 1; }
 	@grep -q '0000: 00 01 02 03' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP did not print the file's own bytes"; exit 1; }
@@ -493,6 +502,7 @@ verify-z80pip: all
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(Z80PLOG))
 	@$(EMUOK)
+	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80PLOG) \
 		|| { echo "verify-z80pip: FAIL -- BIOS function 25 handed out no segment."; exit 1; }
 	@grep -q 'z80: load: ok' $(Z80PLOG) \
 		|| { echo "verify-z80pip: FAIL -- PIP.COM did not load"; exit 1; }
@@ -624,6 +634,7 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(I86LOG))
 	@$(EMUOK)
+	@grep -q 'i86: code segment 29, data segment 2A, staging segment 2B' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- BIOS function 25 handed out no segments."; \
 		     echo "            That is the whole gate: a small-model .CMD needs"; \
 		     echo "            two 64 KB groups and nothing below this can run."; exit 1; }
@@ -684,15 +695,26 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@grep -q 'i86: model large, 5 groups, entry 0000' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the loader did not read I86MG.CMD's"; \
 		     echo "            five-group header as the large model."; exit 1; }
+	@# THE SEGMENTS, and this is what the task was about.  28, 29 and 2A
 	@# are taken before the header is read, exactly as they always were;
+	@# 2A is given back after the file is staged; three more come from
 	@# BIOS function 25 for the extra, stack and auxiliary groups.  Six
 	@# segments held at once out of a pool of seven (src/bios/pgalloc.c).
+	@# THE NUMBERS MOVED DOWN BY 0x10 AT F5, and again nothing else about
+	@# the claim did: the pool used to be logical segments 0x38..0x3E,
+	@# which included the ROM's two display planes 0x3A and 0x3B, so this
+	@# very target was proof that BIOS function 25 hands out the
+	@# framebuffer (first-release review P1 #9).  PGSEGLO is now 0x28.
+	@grep -q 'i86: extra segments: 2C 2D 2E' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- BIOS function 25 did not supply the"; \
 		     echo "            three further segments a five-group .CMD"; \
+		     echo "            1 session's, and this run holds six: 29 2A 2C"; \
+		     echo "            2D 2E for the groups and 2B to stage in."; exit 1; }
 	@# One line per group: form, the guest paragraph it was given, the
 	@# physical segment behind it.  The auxiliary group (form 5) is the
 	@# one with no segment register at all -- it is reachable only through
 	@# the base page -- so it is the one asserted by name.
+	@grep -q 'i86: group 5 at 5000:0000, segment 2E' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the auxiliary group got no segment"; \
 		     echo "            of its own.  src/cmd/i86load.c i86place()"; \
 		     echo "            gives one to every declared group."; exit 1; }
@@ -3315,7 +3337,13 @@ verify-ccpt: all
 #                         NOT, which is the pass-down path: UCASE claims
 #                         one function and hands the rest to the BDOS
 #
+# The htpa values are exact: FDF8 unfenced, EDF8 with a module at F000
 # (RSXORG), so a fence that fails to move, or moves by the wrong amount,
+# fails the check rather than merely looking different.  FDF8 is the top of
+# the segment less the base page, the default stack and the segmented entry
+# frame: the CCP's state is resident per-process storage now
+# (src/ccp/ccpsv.h) and reserves nothing in the TPA, so the 0x600 that used
+# to sit above this is the program's.
 RSXIMG	= build/rsxtest.bin
 RSXLOG	= build/verify-rsx.log
 RSXVERIFYIN = $(OSSEL)RSXT\rRSXLDR UCASE.RSX T\rRSXT\rRSXLDR UCASE.RSX\rRSXT\rRSXT\rMHELLO RSX\r$(ENDIN)
@@ -3330,7 +3358,15 @@ verify-rsx: all
 		|| { echo "verify-rsx: FAIL -- fn 60 was claimed when no module was resident (or the temporary module survived a warm boot)"; exit 1; }
 	@test "`grep -c 'rsxt: head=0000' $(RSXLOG)`" = 2 \
 		|| { echo "verify-rsx: FAIL -- the chain head is not empty when it should be"; exit 1; }
+	@# FDF8: nothing of the system's is reserved in the TPA, so with no
+	@# module resident the fence is the top of the segment and the program
+	@# gets all of it, less only its own base page and stack.  This read
+	@# F7F8 while the CCP's state page was reserved at 0xFA00; that state
+	@# is resident per-process storage now (src/ccp/ccpsv.h) and the 1,536
+	@# bytes came back to the program.  With a module at F000 the module
 	@# still dominates and the number below is unchanged.
+	@test "`grep -c 'rsxt: htpa=FDF8' $(RSXLOG)`" = 2 \
+		|| { echo "verify-rsx: FAIL -- the TPA top is not the top of the segment with no module resident"; exit 1; }
 	@grep -q 'RSXLDR: ATTACHED AT F000 TEMPORARY' $(RSXLOG) \
 		|| { echo "verify-rsx: FAIL -- the temporary attach did not report through the module it had just attached"; exit 1; }
 	@grep -q 'RSXLDR: ATTACHED AT F000 RESIDENT' $(RSXLOG) \
@@ -3406,6 +3442,9 @@ verify-rsx: all
 #   chain is intact afterwards.
 #
 # The htpa values are exact and each names one module's org: E5F8 for
+# PROT at E800, EDF8 for UCASE at F000, DDF8 for UCASEL at E000, FDF8
+# for none -- nothing of the system's is reserved in the TPA, because the
+# CCP's state is resident per-process storage (src/ccp/ccpsv.h).
 RSX2IMG	= build/rsx2test.bin
 RSX2LOG	= build/verify-rsx2
 RSX2IN1	= $(OSSEL)RSXT2\rRSXLDR UCASE.RSX PROT.RSX\rRSXT2\rRSXT2\r
@@ -3581,6 +3620,13 @@ verify-rsx2: all
 		|| { echo "verify-rsx2: FAIL -- the upper temporary module is still answering"; exit 1; }
 	@grep -q 'rsxt2: prot unclaimed' $(RSX2LOG)-5.log \
 		|| { echo "verify-rsx2: FAIL -- the lower temporary module is still answering"; exit 1; }
+	@# FDF8: with both temporary modules gone the fence goes back to the
+	@# top of the segment, because nothing of the system's is reserved in
+	@# the TPA -- the CCP's state is resident per-process storage now
+	@# (src/ccp/ccpsv.h).  This read F7F8 while that state was a page at
+	@# 0xFA00.  Same correction as verify-rsx.
+	@grep -q 'rsxt2: htpa=FDF8' $(RSX2LOG)-5.log \
+		|| { echo "verify-rsx2: FAIL -- the fence did not go back to the top of the segment"; exit 1; }
 #	--- 6: stock split-I/D tools with both modules resident
 	@grep -q 'Zilog CP/M-Z8000 Assembler' $(RSX2LOG)-6.log \
 		|| { echo "verify-rsx2: FAIL -- ASZ8K did not run, or its banner was folded: a split-I/D tool went through the chain"; exit 1; }
@@ -3716,6 +3762,11 @@ verify-gencom: all
 		|| { echo "verify-gencom: FAIL -- the bind or the strip did not complete"; exit 1; }
 	@test "`grep -c 'rsxt2: chain empty' $(GCLOG)-1.log`" = 2 \
 		|| { echo "verify-gencom: FAIL -- the strip left the container in place, or the stripped program no longer runs"; exit 1; }
+	@# FDF8: "the whole TPA" is the whole segment again.  This read F7F8
+	@# while the CCP's state page was reserved at 0xFA00; that state is
+	@# resident per-process storage now (src/ccp/ccpsv.h), so the stripped
+	@# program really does get all of it back.
+	@grep -q 'rsxt2: htpa=FDF8' $(GCLOG)-1.log \
 		|| { echo "verify-gencom: FAIL -- the stripped program did not get the whole TPA back"; exit 1; }
 #	--- 2: three modules bound, links read from inside the bound program
 	@grep -q 'gencom: UCASE    at F000 len 0076 nb=0000 resident' $(GCLOG)-2.log \
@@ -5626,6 +5677,16 @@ verify-put: all $(CPMAGP)
 		|| { echo "verify-put: FAIL -- a word PUT does not know was swallowed"; exit 1; }
 	@test "`grep -c 'Putting console output to file' $(GPLOG)-put3.log`" = 0 \
 		|| { echo "verify-put: FAIL -- one of the refused commands attached the module anyway"; exit 1; }
+#      awkward one.  Its four segments total 61,188 bytes (0xEF04,
+#      decoded from build/diska/DDT.Z8K), and an 0xEE03 image is given
+#      0x10000 - rsxres() - BPLEN - DEFSTACK: 0xFE00 with nothing
+#      resident, 0xF500 under UCASEH at 0xF700, but only 0xEE00 under
+#      UCASE at 0xF000 and less again under GET at 0xE400.  So it loads
+#      under UCASEH and under neither of the others, which is what
+#      src/cmd/ucrsxh.s at 0xF700 is for.  The unfenced figure was 0xF7F8
+#      while the CCP's state page held the top of the TPA and is 0xFDF8
+#      now that it does not; DDT fits under it either way, so what this
+#      leg exercises is unchanged.  DDT also never issues a
 # ---- verify-ddtseg: no program may write over a supervisor stack ----
 # Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: six
 # stacks from 0xFC00 down to 0x3C00).  Nothing may ever write BELOW the
@@ -5672,6 +5733,155 @@ verify-ddtseg: all $(CPMAGP)
 	@echo "               segment 0x3F is untouched: no program wrote over"
 	@echo "               another process's supervisor stack"
 
+
+# ---- the pool must not contain the framebuffer (verify-pgseg) ----
+#
+# First-release review P1 #9 and #10, and the two halves of this target
+# answer them in turn.
+#
+# #9.  src/bios/pgalloc.c hands out logical segments PGSEGLO..PGSEGLO+6 and
+# mapseg()s each one as it goes.  Those segments used to be 0x38..0x3E,
+# which INCLUDES 0x3A and 0x3B -- the ROM's two display planes
+# (src/bios/crsr.c writes character cells in 0x3a and homes the HR bitmap
+# through 0x3b; rom_source/display_re.c names them VRAM_A_CHAR and
+# VRAM_A_ATTR).  The third allocation from an empty pool therefore
+# reprogrammed the display descriptor onto a pool page: console output went
+# into process memory and pgfree() never put the video page back.  NOTHING
+# IN THIS SUITE COULD SEE IT, and it is worth being precise about why: the
+# emulator's console is serial (crsr.c picks CK_SER when the ROM's CONALT
+# and CONHIRES cells are clear, which is why verify-crsr reads the console
+# with tests/vt.py, an ANSI parser), so no verify target has ever put the
+# console on segment 0x3a.  "Print something after three allocations" is
+# consequently NOT a test that can fail here.  The tests that can are the
+# arithmetic, read out of the header rather than restated, and the segment
+# numbers the machine actually served.
+#
+# #10.  pgrelall() runs on every warm boot and used to release every
+# allocated, unheld slot.  Unheld means "not a parked 64 KB process image",
+# which is true of a background 8086 or Z80 interpreter's guest segments
+# while the interpreter is running -- so a foreground warm boot handed a
+# live program's memory back to the pool.  CONCW/CONCWB/CONCWC (see
+# src/cmd/concw.c) make that observable with no timing in it at all.
+PGSEGLO  = $(shell sed -n 's/^#define[ 	]*PGSEGLO[ 	][ 	]*\(0x[0-9a-fA-F]*\).*/\1/p' src/bios/c900cfg.h)
+PGNSLOT  = $(shell sed -n 's/^#define[ 	]*PGNSLOT[ 	][ 	]*\([0-9]*\).*/\1/p' src/bios/c900cfg.h)
+PGNUP    = $(shell sed -n 's/^#define[ 	]*PGNUP[ 	][ 	]*\([0-9]*\).*/\1/p' src/bios/c900cfg.h)
+PGSEGVIDA = $(shell sed -n 's/^#define[ 	]*PGSEGVIDA[ 	][ 	]*\(0x[0-9a-fA-F]*\).*/\1/p' src/bios/c900cfg.h)
+PGSEGVIDB = $(shell sed -n 's/^#define[ 	]*PGSEGVIDB[ 	][ 	]*\(0x[0-9a-fA-F]*\).*/\1/p' src/bios/c900cfg.h)
+PGSEGIMG = build/pgseg.bin
+PGSEGLOG = build/verify-pgseg.log
+PGSEGIN  = $(OSSEL)CONCW\rCONCWC\r
+
+.PHONY: verify-pgseg
+verify-pgseg: all $(CPMACONCW)
+	@test -n "$(PGSEGLO)" -a -n "$(PGNSLOT)" \
+		-a -n "$(PGSEGVIDA)" -a -n "$(PGSEGVIDB)" \
+		|| { echo "verify-pgseg: FAIL -- PGSEGLO/PGNSLOT/PGSEGVIDA/PGSEGVIDB"; \
+		     echo "              could not be read out of src/bios/c900cfg.h, so"; \
+		     echo "              this target does not know what the pool is."; exit 1; }
+	@# The whole pool, slot by slot, against the two display planes.
+	@# Slots 0..PGNUP-1 ascend from PGSEGLO and the rest descend below
+	@# it (c900cfg.h PGSEG); a slot outside 0x02..0x2F would be ROM,
+	@# resident or display territory.
+	@lo=$$(($(PGSEGLO))); n=$$(($(PGNSLOT))); up=$$(($(PGNUP))); \
+	 va=$$(($(PGSEGVIDA))); vb=$$(($(PGSEGVIDB))); \
+	 i=0; while [ $$i -lt $$n ]; do \
+		if [ $$i -lt $$up ]; then s=$$((lo + i)); \
+		else s=$$((lo - 1 - (i - up))); fi; \
+		if [ $$s -lt 2 ] || [ $$s -gt 47 ]; then \
+			printf "verify-pgseg: FAIL -- slot %d is segment 0x%x, outside 0x02..0x2F\n" $$i $$s; \
+			exit 1; \
+		fi; \
+		if [ $$s -eq $$va ] || [ $$s -eq $$vb ]; then \
+			echo "verify-pgseg: FAIL -- the allocator pool includes logical"; \
+			echo "              segment $(PGSEGVIDA)/$(PGSEGVIDB) territory: slot $$i is segment"; \
+			printf  "              0x%x, a ROM display plane.  pgalloc() mapseg()s\n" $$s; \
+			echo "              every segment it hands out, so that allocation"; \
+			echo "              redirects the console into process memory and"; \
+			echo "              pgfree() never restores the display mapping."; \
+			exit 1; \
+		fi; \
+		i=$$((i + 1)); \
+	 done
+	$(MKDISK) $(PGSEGIMG) $(CPMSYS) $(CPMACONCW) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(PGSEGIMG)) \
+		--input="$(PGSEGIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(PGSEGLOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(PGSEGLOG) > build/pgseg.txt
+	@grep -q 'CONCW: no segment' build/pgseg.txt \
+		&& { echo "verify-pgseg: FAIL -- the pool was empty, so nothing below this"; \
+		     echo "              could run.  A 512 KB machine has no free page"; \
+		     echo "              (src/bios/pgalloc.c); the emulator is 1 MB."; exit 1; } || true
+	@grep -q 'CONCW: no second process' build/pgseg.txt \
+		&& { echo "verify-pgseg: FAIL -- function 144 refused, so there was never a"; \
+		     echo "              background process whose memory a warm boot could take."; \
+		     exit 1; } || true
+	@# The three numbers this test is made of.
+	@sed -n 's/^CONCW: A seg \([0-9A-F][0-9A-F]\)$$/\1/p' build/pgseg.txt > build/pgseg-a.txt
+	@sed -n 's/^CONCWB: B seg \([0-9A-F][0-9A-F]\)$$/\1/p' build/pgseg.txt > build/pgseg-b.txt
+	@sed -n 's/^CONCWC: got //p' build/pgseg.txt > build/pgseg-c.txt
+	@test -s build/pgseg-a.txt -a -s build/pgseg-b.txt -a -s build/pgseg-c.txt \
+		|| { echo "verify-pgseg: FAIL -- one of the three programs never reported its"; \
+		     echo "              segments.  The transcript is above."; exit 1; }
+	@# No segment anybody was handed may be a display plane.  The check
+	@# above is the pool as configured; this is the pool as served.
+	@for s in `cat build/pgseg-a.txt build/pgseg-b.txt build/pgseg-c.txt | tr -d ' \n' | sed 's/../& /g'`; do \
+		case "$$s" in 3A|3B) \
+			echo "verify-pgseg: FAIL -- BIOS function 25 handed out segment $$s,"; \
+			echo "              which is one of the ROM's display planes."; \
+			exit 1;; \
+		esac; done
+	@# #10, and the assertion runs in two directions because either one
+	@# alone would be passed by a bug.  CONCW's own segment MUST come
+	@# back: a warm boot is still the end of the program that warm booted,
+	@# and a fix that leaked instead of over-freeing would be no better.
+	@a=`cat build/pgseg-a.txt`; c=`cat build/pgseg-c.txt`; \
+	 case " $$c " in *" $$a "*) : ;; \
+		*) echo "verify-pgseg: FAIL -- the warm boot did NOT reclaim CONCW's own"; \
+		   echo "              segment $$a.  CONCWC was given: $$c"; \
+		   echo "              pgrelall() must still free the scratch of the"; \
+		   echo "              process that warm booted."; exit 1;; esac
+	@# ...and CONCWB's must not, because CONCWB is still alive and still
+	@# using it.  This is the failure the review reported.
+	@b=`cat build/pgseg-b.txt`; c=`cat build/pgseg-c.txt`; \
+	 case " $$c " in *" $$b "*) \
+		echo "verify-pgseg: FAIL -- the foreground warm boot freed segment $$b,"; \
+		echo "              which belongs to the LIVE background process, and the"; \
+		echo "              pool then handed it to the next program to ask"; \
+		echo "              (CONCWC was given: $$c).  src/bios/pgalloc.c"; \
+		echo "              pgrelall() must release only the warm-booting"; \
+		echo "              process's own slots."; exit 1;; esac
+	@# And the memory itself, not only the bookkeeping.
+	@b=`cat build/pgseg-b.txt`; \
+	 grep -q "CONCWB: B still seg $$b, signature intact" build/pgseg.txt \
+		|| { echo "verify-pgseg: FAIL -- the background process did not read its own"; \
+		     echo "              signature back out of segment $$b after the"; \
+		     echo "              foreground warm boot."; \
+		     grep 'CONCWB' build/pgseg.txt; exit 1; }
+	@a=`cat build/pgseg-a.txt`; b=`cat build/pgseg-b.txt`; c=`cat build/pgseg-c.txt`; \
+	 echo "verify-pgseg: PASS -- pool $(PGSEGLO)..+$(PGNSLOT) clear of the display planes"; \
+	 echo "              $(PGSEGVIDA)/$(PGSEGVIDB); the warm boot reclaimed the foreground's $$a and"; \
+	 echo "              left the live background's $$b alone (CONCWC got:$$c)"
+
+# ---- a wedged disk controller must be reported, not retried for ever ----
+# src/bios/wd900.c:96 in the first-release review.  wdsec() looped `for (;;)'
+# on the controller's 0x76 "busy, retry" answer and each turn called
+# wdgo900(), which starts a fresh three-second deadline -- so a wedged
+# controller hung inside one BIOS read and the BDOS never got a status to
+# report.  tests/wdtest.c drives the real wdsec() on the host against a
+# controller that answers 0x76 every time.  `timeout' is the point: the old
+# code does not return, so the test has to be able to say that.
+.PHONY: verify-wdbusy
+verify-wdbusy: build/wdtest
+	@timeout 20 ./build/wdtest; rc=$$?; \
+	 test $$rc = 0 \
+		|| { echo "verify-wdbusy: FAIL -- wdsec() did not bound its retries on a"; \
+		     echo "               controller stuck at 0x76 (rc $$rc; 124 means it"; \
+		     echo "               never returned at all)."; exit 1; }
+	@echo "verify-wdbusy: PASS -- a wedged controller comes back as a status"
+
+build/wdtest: tests/wdtest.c src/bios/wd900.c | $(OBJDIR)
+	$(HOSTCC) -std=gnu89 -w -o $@ tests/wdtest.c
 
 # ---- a refusal that mutates first is not a refusal ----
 # P1 #2 and the password/XFCB P2 items of the first-release review, in one

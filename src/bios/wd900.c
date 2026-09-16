@@ -24,7 +24,13 @@
 #define WDIO		0x0500		/* controller go/stop port (word) */
 #define WDCBSEG		0x34		/* window segment over the block */
 #define WDCBPAGE	0x0800		/* phys 0x080000 in 256-byte pages */
+/* The command block's address is a guard-wrapped macro for the same reason
+ * crsr.c's VSET is: tests/wdtest.c compiles THIS source on the host with
+ * the block pointed at an array, so wdsec()'s retry behaviour can be
+ * driven and asserted without a controller (verify-wdbusy). */
+#ifndef WDCB
 #define WDCB		((char *)0x34000000L)
+#endif
 
 extern outw();
 extern mapseg();
@@ -40,6 +46,10 @@ wdinit900()
 }
 
 #define WDWAIT		300L		/* ticks (100 Hz) -- 3 seconds	*/
+/* Attempts on a 0x76 "controller busy, retry" answer.  Each one restarts
+ * WDWAIT, so this also bounds the total wait: five times three seconds,
+ * and then a status byte the caller can report instead of a hang. */
+#define WDRETRY		5
 
 static wdgo900()
 {
@@ -72,8 +82,10 @@ long blk, phys;
 {
 	register char *cb;
 	register int i, st;
+	register int tries;
 
 	cb = WDCB;
+	for (tries = WDRETRY; ; ) {
 		for (i = 0; i < 16; i++)
 			cb[i] = 0;
 		cb[0] = op;
@@ -90,6 +102,18 @@ long blk, phys;
 		if (st == 0x80)		/* done */
 			return (0);
 		if (st != 0x76)		/* not "busy, retry" */
+			return (st);
+		/*
+		 * "Busy, retry" used to be retried forever, and each attempt
+		 * called wdgo900(), which starts a FRESH three-second
+		 * deadline -- so a controller wedged in 0x76 hung the whole
+		 * machine inside one BIOS read with no error ever reaching
+		 * the BDOS.  Bound the total instead and hand 0x76 back as
+		 * the status, which is a real controller byte the disk error
+		 * path already knows how to report: WDRETRY attempts at up
+		 * to WDWAIT ticks each is the worst case the caller waits.
+		 */
+		if (--tries <= 0)
 			return (st);
 	}
 }

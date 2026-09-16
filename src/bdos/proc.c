@@ -3,6 +3,7 @@
 #include "bdosdef.h"		/* struct stvars, GBL/BSETUP		*/
 #include "biosdef.h"		/* cpy_in / cpy_out			*/
 #include "c900cfg.h"		/* TPASEG, TPABASE			*/
+#include "ccpsv.h"		/* struct ccpsv -- per-process CCP state */
 #include "proc.h"
 
 EXTERN	VOID	mem_cpy();
@@ -16,6 +17,18 @@ EXTERN	WORD	pgalloc();
 EXTERN	WORD	pgfree();
 EXTERN	WORD	pgtpaswap();
 EXTERN	VOID	pghold();
+EXTERN	WORD	pgrelproc();	/* free THIS process's scratch segments	*/
+EXTERN	WORD	pgcur;		/* and the allocator's idea of which
+				   process that is.  It is `pcur', and
+				   the two are assigned together: see
+				   PCUR() below and pgalloc.c's banner. */
+
+/*  pcur moves in exactly three places and every one of them must tell the
+    allocator, because pgrelall() on a warm boot releases the scratch of
+    the process named here and of no other.  Getting this wrong is not a
+    crash, it is a background interpreter's memory being handed away, so
+    the assignment is a macro rather than two statements to keep apart.  */
+#define	PCUR(x)		(pgcur = pcur = (x))
 
 EXTERN	LONG	tickget();	/* src/bios/trap.s: one LDL of tickcnt	*/
 EXTERN	WORD	conststat();	/* src/bios/bios900.c: poll console `n'	*/
@@ -33,6 +46,8 @@ EXTERN	UWORD	rsxhead, rsxtop;	/* rsx.c			*/
 EXTERN	XADDR	tpa_lp, tpa_lt, tpa_hp, tpa_ht;	/* bdosmain.c		*/
 EXTERN	WORD	spflag;			/* splitld.c			*/
 
+#define	RSXCEIL		((UWORD)0)	/* rsx.c, same value: 0 = 0x10000,
+					   the whole segment		*/
 
 #define	OPENF	15			/* Open File BDOS call		*/
 
@@ -60,6 +75,26 @@ WORD	prio;
 
 MLOCAL	struct pdesc	pd[PNPROC];
 MLOCAL	WORD		pcur = 0;	/* index of the running process	*/
+
+/*  THE CCP'S STATE, ONE PER PROCESS, AND RESIDENT.  It used to be a
+    1,536-byte page at a fixed TPA offset (0xFA00), which is why a TPA
+    segment could not be shorter than 64 KB and why a program that ran
+    past @MXTPA could scribble on it.  Here it is ordinary SYS-only BSS
+    indexed by descriptor, so every session has one of its own by
+    construction -- where the fixed address had to be built per page by
+    hand, inside the swap window, because it named whichever page was the
+    TPA at the time.
+
+    The transient CCP cannot address this: it runs in Normal mode and
+    resident storage is SYS-only.  It keeps a working copy in its own BSS
+    and exchanges it through BDOS 150/151 (src/ccp/ccprun.c).  */
+
+MLOCAL	struct ccpsv	psv[PNPROC];
+
+GLOBAL struct ccpsv *ccpsvcur()
+{
+	return (&psv[pcur]);
+}
 MLOCAL	WORD		pnlive = 0;	/* live descriptors; 0 until the
 					   first pcreate() adopts the one
 					   that was already running	*/
@@ -258,6 +293,7 @@ MLOCAL VOID padopt()
 		pd[0].pd_quant = pqfor(pd[0].pd_prio);
 		pd[0].pd_inc   = 0;
 		pd[0].pd_wait  = PW_RUN;	/* it is the one running */
+		PCUR(0);
 		pnlive = 1;
 		sysstk = pd[0].pd_stk;		/* which is PSTKTOP, the value
 						   it already held	*/
@@ -270,6 +306,7 @@ XADDR	infop;
 {
 	REG struct pdesc *me, *kid;
 	REG WORD	i, k, seg;
+	WORD		kidx;		/* the child's descriptor index	*/
 	struct context	ctx;
 
 	padopt();
@@ -281,6 +318,9 @@ XADDR	infop;
 	if (i >= PNPROC)
 		return (PC_NOPD);
 	kid = &pd[i];
+	kidx = i;			/* recorded here because `i' is a
+					   loop variable again below, and
+					   the child's CCP state is psv[kidx] */
 
 
 	/*  A page.  Zero means the pool is empty, which on a 512 KB
@@ -321,6 +361,15 @@ XADDR	infop;
 	tpa_ht  = tpa_hp = TPABASE + (long)rsxtop;
 	spflag  = 0;
 
+	/*  A SESSION NEEDS ITS CCP STATE INITIALISED.  It is the CHILD'S
+	    now, named directly, and no longer "whatever page is the TPA":
+	    the state is resident and indexed by descriptor, so this does
+	    not depend on standing inside the page swap the way the fixed
+	    address did.  ccprun() does the same for process 0 at the cold
+	    boot.  Without it the CCP loaded below starts on zeros -- no
+	    current disk, no command pointer -- and the second console's
+	    first prompt is a crash.  */
+		ccpsvinit(&psv[kidx]);
 	/*  Open and load, exactly as ccprun() does on a warm boot.  Where
 	    ccprun() forces user 0 (a session in user 5 must still find
 	    its command processor), this does not: a program launched by
@@ -411,6 +460,7 @@ GLOBAL VOID pgone()
 		pd[pcur].pd_seg = seg;	/* the outgoing image is on seg now */
 		p->pd_seg = 0;
 	}
+	PCUR(pnxt);
 	pload(p);
 	sysstk = p->pd_stk;		/* xfer_, ccpentry_ and presume_ all
 					   reset the system stack to this */
@@ -540,6 +590,14 @@ GLOBAL WORD procdead()
 					   program inside a locked region */
 		return (0);
 
+	/*  This process is about to stop existing, so its scratch segments
+	    have to go back NOW, while pgcur still names it.  The BIOS's
+	    ordinary warm boot does this through pgrelall(), but a background
+	    process never reaches it -- presume() below does not return -- and
+	    a descriptor index that has been freed and reused would otherwise
+	    inherit slots the allocator still thinks are spoken for.  */
+	pgrelproc();
+
 	nxt = pnextany(pcur);		/* NOT pnext(): see pnextany()	*/
 	seg = pd[nxt].pd_seg;
 
@@ -557,6 +615,7 @@ GLOBAL WORD procdead()
 	pd[pcur].pd_state = PS_FREE;
 	pd[pcur].pd_seg   = 0;
 	pnlive--;
+	PCUR(nxt);
 	psched = (pnlive > 1);
 	pload(&pd[nxt]);
 	sysstk = pd[nxt].pd_stk;
