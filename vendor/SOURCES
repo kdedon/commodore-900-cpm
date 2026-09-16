@@ -1,0 +1,22 @@
+vendor/ -- third-party material we did not write and do not maintain.
+
+Held unmodified.  A drop that needs changing to build is changed by a patch
+in src/ or a step in tools/, never by an edit here.
+
+Licensing is not settled: ../LICENSE covers work written for this project,
+not this material.  Settle it before redistributing.
+
+  z8001mb/    vendor/z8001mb/cpm8k/packages/base/, taken from 4sun5bu's
+              Z8001MB project, <https://github.com/4sun5bu/Z8001MB>, master
+              as of 2026-07-30.  Holds Digital Research's CP/M-8000 dev-pack
+              binaries and headers (zcc/zcc1/zcc2/zcc3, asz8k + asz8k.pd,
+              ld8k, ar8k, ddt, ed, pip, stat, dump, nmz8k, sizez8k, xcon,
+              xdump, libcpm.a, startup.o/startup.8kn, and the *.h headers) --
+              every file present is staged by name onto drive A: by
+              tools/stage-devpack.sh.  Nothing else from the upstream drop is
+              kept here: only what the build actually reads.
+
+The CP/M 3 and CP/M-8000 reference sources this port was derived from
+(Digital Research's 8080 CP/M 3, the May 1983 and October 1983 CP/M-8000
+snapshots, and CP/M-8000 v1.3 for the Olivetti M20) are reference material,
+not build inputs.  They live in c900oses/cpm8000/.

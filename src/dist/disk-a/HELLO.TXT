@@ -1,0 +1,3 @@
+Hello from CP/M-8000 on the Commodore 900!
+Packed by mkcpmfs.py on the Linux host.
+If you can TYPE this, the BDOS directory + extent walk works.

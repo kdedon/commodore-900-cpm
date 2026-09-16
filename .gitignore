@@ -1,0 +1,23 @@
+# Generated, disposable.
+build/
+__pycache__/
+*.pyc
+
+# Object files and archives are build output ANYWHERE WE BUILD -- but see the
+# un-ignore below.  A blanket `*.a' rule would eat
+# vendor/z8001mb/cpm8k/packages/base/libcpm.a, which is Digital Research's
+# CP/M-8000 dev-pack library, staged onto drive A: for the guest's own zcc.
+# This repository cannot regenerate it.  It is NOT what our own programs link
+# against: those use build/user/libcpm.o, compiled here from src/cmd/libcpm.c.
+*.o
+*.a
+
+# vendor/ is third-party bytes, not build output.  Nothing under it is ever
+# generated here, so nothing under it may ever be ignored.
+!vendor/**
+
+# `make hygiene' (tests/vendorcheck.sh) fails the build if any file in the
+# z8001mb drop has gone untracked, because these rules have eaten it before.
+
+# `make deps` unpacks pinned third-party release binaries here (DEPS).
+deps/

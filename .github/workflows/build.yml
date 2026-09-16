@@ -1,0 +1,46 @@
+# build -- the two freestanding links, against the toolchain this repository
+# floats on.
+#
+# CPM.SYS and split.mod each carry their own startup and their own runtime:
+# no crts0.s, no kernel symbol table behind them.  So every external symbol
+# the compiler names is one this tree has to define itself (SS, the stack
+# segment a frame reference relocates against, in src/bios/crt.s and
+# src/bdos/splitent.s).  A compiler change that adds one is invisible here
+# until somebody builds.  The toolchain runs the same links from its own side
+# on every push; this is the other direction, for a change made here.
+#
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  link:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: cpm }
+
+      # A RELEASE of the toolchain, not a checkout: DEPS pins the tag, and
+      # `make deps' is the one path that resolves it, the same as a developer
+      # building this tree gets.  A hardcoded checkout of `main' would link
+      # against a compiler this repository never pinned.
+      - name: The toolchain this system is built with
+        working-directory: cpm
+        run: make deps DEP=toolchain
+
+      # Set, never searched: a job that depended on directory adjacency breaks
+      # the first time a runner image moves its checkouts.  The search has its
+      # own test in resolver-isolation.yml.
+      - name: Link the resident system and the split-I/D module
+        working-directory: cpm
+        env:
+          C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
+        run: make build/cpm.sys build/split.mod
+
+      - name: The compiler's own log, when it does not
+        if: failure()
+        working-directory: cpm
+        run: cat build/build.log build/obj/link.txt build/obj/modlink.txt 2>/dev/null || true

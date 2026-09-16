@@ -1,0 +1,76 @@
+# resolver-isolation -- the regression test for the dependency SEARCH.
+#
+# Every other job sets C900_TOOLCHAIN, EMU, KBOOT and COHERENT_OS explicitly, as
+# it must: a job that depended on directory adjacency breaks the first time a
+# runner image moves its checkouts.  That leaves the search lists in
+# tools/deps.sh untested -- and the bug this repository actually had was an
+# `EMU ?= $(HOME)/...' default that reached out of a clone nested five levels
+# deep and ran the author's own emulator, reporting its results as the build's.
+#
+# So: the repository ALONE, in a deliberately deep directory, with an empty
+# $HOME and nothing beside it.  `make all' needs only the toolchain and must
+# refuse without it; the verify suite needs an emulator and must refuse
+# without one, and its search must never reach into $HOME; and a value the
+# user gave is refused as ITSELF rather than quietly replaced.  A pass means
+# the walk is still bounded at three parents and none of these behaviours
+# regressed -- the wording of any refusal message is free to change.
+name: resolver-isolation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: src }
+
+      # Six levels deep, and nothing but this repository anywhere in them:
+      # deeper than the three parents the search is bounded at, so a walk that
+      # went further would leave the sandbox and find the runner's own
+      # checkouts -- which is the failure being tested for.
+      - name: Stage a lone clone, six levels deep
+        run: |
+          mkdir -p iso/home iso/a/b/c/d/e/f
+          rsync -a --exclude .git src/ iso/a/b/c/d/e/f/commodore-900-cpm/
+
+      - name: The build refuses, and names C900_TOOLCHAIN
+        working-directory: iso/a/b/c/d/e/f/commodore-900-cpm
+        run: |
+          set +e
+          out=$(env -i HOME="$GITHUB_WORKSPACE/iso/home" PATH=/usr/bin:/bin \
+                make all 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test $rc -ne 0 || { echo "FAIL: built with no toolchain"; exit 1; }
+
+      - name: The verify suite refuses, and names EMU
+        working-directory: iso/a/b/c/d/e/f/commodore-900-cpm
+        run: |
+          set +e
+          out=$(env -i HOME="$GITHUB_WORKSPACE/iso/home" PATH=/usr/bin:/bin \
+                sh tools/deps.sh -n emu 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          test $rc -ne 0 || { echo "FAIL: resolved an emulator that is not there"; exit 1; }
+          echo "$out" | grep -q "$GITHUB_WORKSPACE/iso/home" && { echo "FAIL: the search reached into \$HOME"; exit 1; }
+          :
+
+      - name: A wrong value is refused as itself
+        working-directory: iso/a/b/c/d/e/f/commodore-900-cpm
+        run: |
+          for d in emu kboot toolchain userland; do
+            set +e
+            out=$(env -i HOME="$GITHUB_WORKSPACE/iso/home" PATH=/usr/bin:/bin \
+                  sh tools/deps.sh -n $d /nonexistent/$d 2>&1)
+            rc=$?
+            set -e
+            echo "$out"
+            test $rc -ne 0 || { echo "FAIL: $d accepted a value that is not there"; exit 1; }
+            echo "$out" | grep -q "/nonexistent/$d" || { echo "FAIL: $d refusal does not quote the value given"; exit 1; }
+          done

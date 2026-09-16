@@ -1,0 +1,31 @@
+;*******************************************************
+;*  RCERR.8KN -- set a nonzero program return code, exit
+;*
+;*  Assembled and converted ON TARGET (ASZ8K + XCON) by the
+;*  verify-ccp session: the point of the test is that a
+;*  transient's OWN exit status reaches the CCP through BDOS
+;*  function 108, so the CCP's `IF ERROR' must be reading the
+;*  program's word and not one of its own failures.
+;*
+;*  Position independent on purpose: XCON emits an x.out with
+;*  no relocation records, so this program must not name an
+;*  absolute address (no message, no jumps).
+;*******************************************************
+
+BDOS_SC	.equ	2		; BDOS system call
+EXIT	.equ	0		; BDOS warm boot request
+PROGRC	.equ	108		; BDOS get/set program return code
+
+__text	.sect
+
+	.global	_main
+_main:
+	ld	r5,#PROGRC	; set the program return code
+	ldk	r6,#0		; rr6 = the code, 32 bits
+	ldk	r7,#7		;   RCERR leaves 7 behind
+	sc	#BDOS_SC
+
+	ldk	r5,#EXIT	; warm boot: back to the CCP
+	sc	#BDOS_SC
+
+	.end

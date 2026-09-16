@@ -1,0 +1,54 @@
+# Reserve every fourth directory slot for SFCB timestamps.
+# Zero initial stamps are filled by the target clock.
+LABEL	= C900A
+LABELMODE = create,update
+# src/app binaries are checked in: verify-a3 and verify-sdb rebuild them
+# with the target toolchain and compare bytes. Stage them with source and fixtures.
+DISKA = build/diska
+$(CPMAIMG): mk/config.mk mk/images.mk src/dist/disk-a src/app $(ZBASE) tools/mkcpmfs.py tools/sparse.py tools/stage-devpack.sh $(wildcard $(ZBASE)/*) \
+		$(wildcard src/dist/disk-a/*) $(wildcard src/app/*) \
+		$(UPROGS) $(URSX) $(UCCP) | $(OBJDIR)
+	@rm -rf $(DISKA)
+	@mkdir -p $(DISKA)
+	@for f in src/dist/disk-a/* src/app/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKA)/$$b || cp $$f $(DISKA)/$$b; done
+	sh tools/stage-devpack.sh $(ZBASE) $(DISKA)
+	@for f in $(UPROGS) $(URSX) $(UCCP); do b=`basename $$f`; \
+		cmp -s $$f $(DISKA)/$$b || cp $$f $(DISKA)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKA)
+
+# Release images exclude exercisers and application source.
+# relcheck.sh requires every excluded name to exist in the development image.
+ASRC	= SDB.C CMD.C COM.C CRE.C ERR.C IEX.C INT.C IO.C JUNK.C MTH.C \
+	  SCN.C SEL.C SRT.C TBL.C SDB.H SDBIO.H \
+	  SORTFL.C KILLDU.C TOHEX.C FROMHEX.C
+ATEST	= MHELLO.Z8K CRSRDEMO.Z8K CONCOST.Z8K BIOCOST.Z8K CPUTCOST.Z8K MSCOPY.Z8K ERRTEST.Z8K CPM3FN.Z8K \
+	  CONC.Z8K CONCB.Z8K CONCP.Z8K CONCQ.Z8K \
+	  SCBTEST.Z8K STAMPT.Z8K TRUNCT.Z8K WILDT.Z8K PASST.Z8K ASTAMPT.Z8K LBLNEW.Z8K \
+	  V3RET.Z8K V3FREE.Z8K \
+	  RSXT.Z8K RSXT2.Z8K Z80.Z8K CPM86.Z8K \
+	  PROT.RSX PROTN.RSX UCASEL.RSX UCASE3.RSX UCASEH.RSX \
+	  BADP.SUB TEST.SUB BIG.TXT MINI.8KN SDBIN.TXT
+# UCASE.RSX remains as a usable example for RSXLDR.
+DISKAR	= build/diska-rel
+$(CPMARIMG): $(CPMAIMG) mk/images.mk tests/relcheck.sh tools/mkcpmfs.py tools/sparse.py
+	@rm -rf $(DISKAR)
+	@mkdir -p $(DISKAR)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		case " $(ATEST) $(ASRC) " in *" $$b "*) continue;; esac; \
+		cp $$f $(DISKAR)/$$b; done
+	@sh tests/relcheck.sh $(DISKA) $(DISKAR) $(ATEST) $(ASRC)
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAR)
+
+# Drive B uses the same packer and timestamp label mode as drive A.
+LABELB	= C900B
+$(CPMBIMG): mk/config.mk mk/images.mk src/dist/disk-b tools/mkcpmfs.py tools/sparse.py $(wildcard src/dist/disk-b/*) | $(OBJDIR)
+	python3 tools/mkcpmfs.py --label $(LABELB) --label-mode create,update \
+		$@ $(CPMB_BLOCKS) src/dist/disk-b
+
+# Use wildcard so a missing loader gets the resolver diagnostic instead of a make error.
+$(CPMDISK): $(CPMSYS) $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) tools/mkcpmdisk.py tools/cohfs.py tools/sparse.py
+	$(MKDISK) $@ $(CPMSYS) $(CPMARIMG) $(CPMBIMG)
+

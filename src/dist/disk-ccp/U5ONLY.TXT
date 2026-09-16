@@ -1,0 +1,3 @@
+This file lives in user area 5 of drive A:.
+The CCP found it through a named directory.
+

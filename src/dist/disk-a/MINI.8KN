@@ -1,0 +1,5 @@
+__text	.sect
+	.global	_main
+_main:
+	ret
+	.end

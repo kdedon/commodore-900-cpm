@@ -1,0 +1,2 @@
+BONLY.TXT lives on drive B: and nowhere else.
+Drive B: starts at disk block 59136, device track 1312.

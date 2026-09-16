@@ -1,0 +1,27 @@
+;*******************************************************
+;*  RCOK.8KN -- set a zero program return code, exit
+;*
+;*  The other half of the RCERR test: a transient that runs to
+;*  completion and says so.  `IF ERROR' after it must take the
+;*  ELSE branch, which is what proves the CCP reads the value
+;*  the program set rather than assuming a transient failed (or
+;*  succeeded).
+;*******************************************************
+
+BDOS_SC	.equ	2		; BDOS system call
+EXIT	.equ	0		; BDOS warm boot request
+PROGRC	.equ	108		; BDOS get/set program return code
+
+__text	.sect
+
+	.global	_main
+_main:
+	ld	r5,#PROGRC	; set the program return code
+	ldk	r6,#0		; rr6 = the code, 32 bits
+	ldk	r7,#0		;   RCOK leaves 0 behind
+	sc	#BDOS_SC
+
+	ldk	r5,#EXIT	; warm boot: back to the CCP
+	sc	#BDOS_SC
+
+	.end

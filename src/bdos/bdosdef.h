@@ -1,0 +1,193 @@
+
+/********************************************************
+*							*
+*		P-CP/M header file 			*
+*    Copyright (c) 1982 by Digital Research, Inc.	*
+*    Structure definitions for BDOS globals		*
+*	and BDOS data structures			*
+*							*
+********************************************************/
+
+
+#define snglthrd TRUE
+			/* TRUE for single-thread environment
+			undefined to create based structure for re-entrant model */
+#ifdef snglthrd
+#define GBL gbls 
+				/* In single thread case, GBL just names
+					the structure */
+#define BSETUP  EXTERN struct stvars gbls;
+				/* and BSETUP defines the extern structure */
+#else
+
+#define GBL (*statep)
+				/* If multi-task, state vars are based */
+	  statep = &gbls;
+				/* set up pointer to state variables */
+			/* This is intended as an example to show the intent */
+#endif
+
+
+ 
+#define robit 0			/* read-only bit in file type field of fcb */
+#define arbit 2			/* archive bit in file type field of fcb   */
+#define SECLEN 128		/* length of a CP/M sector		   */
+
+
+
+/* directory entry type byte (byte 0) */
+#define DE_XFCB	  0x10		/* 0x10 + user: password XFCB		*/
+#define DE_LABEL  0x20		/* directory label, at most one a drive	*/
+#define DE_SFCB	  0x21		/* date/time stamps for 3 entries	*/
+#define DE_EMPTY  0xe5		/* free slot				*/
+
+/* directory label mode byte (entry byte 12) */
+#define DL_PASSWD 0x80		/* passwords enabled on the drive	*/
+#define DL_ACCESS 0x40		/* stamp files on open (access)		*/
+#define DL_UPDATE 0x20		/* stamp files on write (update)	*/
+#define DL_CREATE 0x10		/* stamp files on make (create)		*/
+#define DL_STAMPS (DL_ACCESS|DL_UPDATE|DL_CREATE)
+#define DL_EXISTS 0x01		/* the directory label exists		*/
+
+/* the label's own two stamps live in its disk-map area */
+#define DL_CRSTAMP 24		/* label created			*/
+#define DL_UPSTAMP 28		/* label updated			*/
+
+/* SFCB geometry inside a 128-byte directory record */
+#define SF_MARK	  96		/* byte offset of the SFCB entry	*/
+#define SF_SUBLEN 10		/* one sub-record per described entry	*/
+#define SF_CREATE 0		/* sub-record: create-or-access stamp	*/
+#define SF_UPDATE 4		/* sub-record: update stamp		*/
+#define SF_PWMODE 8		/* sub-record: password mode		*/
+#define STAMPLEN  4		/* date word + BCD hour + BCD minute	*/
+
+/* fcb s2 bit 6: this open file's update stamp has already been written
+   (ref/cpm3/bdos30.asm:2469-2471 set$filewf, tested at :3349)	*/
+#define UPDSTAMPED 0x40
+
+
+union smallbig
+{
+  UBYTE	small[16];	/* 16 block numbers of 1 byte		*/
+  WORD	big[8];		/* or 8 block numbers of 1 word		*/
+};
+
+/* File Control Block definition */
+struct fcb
+{
+	UBYTE	drvcode;	/* 0 = default drive, 1..16 are drives A..P */
+	UBYTE	fname[8];	/* File name (ASCII)			*/
+	UBYTE	ftype[3];	/* File type (ASCII)			*/
+	UBYTE	extent;		/* Extent number (bits 0..4 used)	*/
+	UBYTE	s1;		/* Reserved				*/
+	UBYTE	s2;		/* Module field (bits 0..5), write flag (7) */
+	UBYTE	rcdcnt;		/* Nmbr rcrds in last block, 0..128	*/
+	union	smallbig dskmap;
+	UBYTE	cur_rec;	/* current record field			*/
+	UBYTE	ran0;		/* random record field (3 bytes)	*/
+	UBYTE	ran1;
+	UBYTE	ran2;
+};
+
+
+/* Declaration of directory entry	*/
+struct dirent
+{
+	UBYTE	entry;		/* 0 - 15 for user numbers, E5 for empty */
+				/* the rest are reserved		*/
+	UBYTE	fname[8];	/* File name (ASCII)			*/
+	UBYTE	ftype[3];	/* File type (ASCII)			*/
+	UBYTE	extent;		/* Extent number (bits 0..4 used)	*/
+	UBYTE	s1;		/* Reserved				*/
+	UBYTE	s2;		/* Module field (bits 0..5), write flag (7) */
+	UBYTE	rcdcnt;		/* Nmbr rcrds in last block, 0..128	*/
+	union	smallbig dskmap;
+};
+
+
+/* Declaration of disk parameter tables		*/
+struct dpb			/* disk parameter table		*/
+{
+	UWORD	spt;		/* sectors per track 		*/
+	UBYTE	bsh;		/* block shift factor		*/
+	UBYTE	blm;		/* block mask			*/
+	UBYTE	exm;		/* extent mask			*/
+	UBYTE	dpbdum;		/* dummy byte for fill		*/
+	UWORD	dsm;		/* max disk size in blocks	*/
+	UWORD	drm;		/* max directory entries	*/
+	UWORD	dir_al;		/* initial allocation for dir	*/
+	UWORD	cks;		/* number dir sectors to checksum */
+	UWORD	trk_off;	/* track offset			*/
+};
+
+struct	dph			/* disk parameter header	*/
+{
+	UBYTE	*xlt;		/* pointer to sector translate table	*/
+	UWORD	hiwater;	/* high water mark for this disk	*/
+	UWORD	dum1;		/* dummy (unused)			*/
+	UWORD	dum2;
+	UBYTE	*dbufp;		/* pointer to 128 byte directory buffer	*/
+	struct dpb *dpbp;	/* pointer to disk parameter block	*/
+	UBYTE	*csv;		/* pointer to check vector		*/
+	UBYTE	*alv;		/* pointer to allocation vector		*/
+};
+
+
+/* Declaration of structure containing "global" state variables */
+struct stvars
+{
+	UBYTE	delim;		/* Delimiter for function 9		   */
+	BOOLEAN	lstecho;	/* True if echoing console output to lst:  */
+	BOOLEAN echodel;	/* Echo char when getting <del> ?	   */
+	UWORD	column;		/* CRT column number for expanding tabs	   */
+	XADDR	chainp;		/* Used for chain to program call	   */
+	UBYTE	curdsk;		/* Currently selected disk		   */
+	UBYTE	dfltdsk;	/* Default disk (last selected by fcn 14)  */
+	UBYTE	user;		/* Current user number			   */
+	struct dph *dphp;	/* pointer to disk parm hdr for cur disk   */
+	struct dirent *dirbufp; /* pointer for directory buff for process  */
+				/* stored here so that each process can	   */
+				/* have a separate dirbuf.		   */
+	struct dpb *parmp;	/* pointer to disk parameter block for cur */
+				/* disk. Stored here to save ref calc	   */
+	UWORD	srchpos;	/* position in directory for search next   */
+	XADDR	dmaadr; 	/* Disk dma address			   */
+	XADDR	srchp;		/* Pointer to search FCB for function 17   */
+	UBYTE	*excvec[18];	/* Array of exception vectors		   */
+	UBYTE	multcnt;	/* Multi-sector count, 1..128 (fcn 44).	   */
+				/* Records moved per read/write call by	   */
+				/* fcns 20, 21, 33, 34 and 40.		   */
+	UBYTE	errmode;	/* BDOS error mode (fcn 45): 0 displays the */
+				/* error and terminates the program, 0xff   */
+				/* returns it silently, anything else	   */
+				/* displays it and returns it		   */
+	UBYTE	errcode;	/* Error code for the function in progress, */
+				/* 0 = none.  Returned in the high byte	   */
+				/* with 0xff in the low byte.		   */
+	UBYTE	curfx;		/* Function number in progress		   */
+	struct fcb *curfcb;	/* FCB of the function in progress, or NULL */
+	UWORD	conmode;	/* Console mode (fcn 109): bit 0 ^C-only    */
+				/* status, bit 1 no ^S/^Q, bit 2 raw	   */
+				/* output, bit 3 no ^C termination	   */
+	UWORD	retcode;	/* Program return code (fcn 108)	   */
+};
+
+/* console mode bits, function 109 */
+#define CM_CTLC   0x0001	/* fcn 11 reports only a waiting ^C	*/
+#define CM_NOSTOP 0x0002	/* ^S/^Q stop-scroll disabled		*/
+#define CM_RAW    0x0014	/* no tab expansion, no printer echo	*/
+#define CM_NOTERM 0x0008	/* ^C does not terminate the program	*/
+
+/* program return codes the BDOS sets when it ends a program itself */
+#define RC_CTLC   0xfffe	/* terminated by ^C			*/
+#define RC_BDOS   0xfffd	/* terminated by a BDOS error		*/
+
+
+/* Console buffer structure declaration */
+struct	conbuf
+{
+	UBYTE	maxlen;		/* Maximum length from calling routine */
+	UBYTE	retlen;		/* Length actually found by BDOS */
+	UBYTE	cbuf[1];	/* Console data			 */
+};
+
