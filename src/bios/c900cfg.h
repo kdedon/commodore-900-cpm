@@ -103,6 +103,21 @@
 #define	PGSEG(i)	((i) < PGNUP ? PGSEGLO + (i) \
 				     : PGSEGLO - 1 - ((i) - PGNUP))
 #define	PGPGLO		0x10		/* SPLITMPHYSPAGE + 1		 */
+/*
+ * The video-card probe's scratch segment (crsr.c vprobe, D8).  COHERENT
+ * probes through its transient segment ES, 0x3D (md.s:27, 1146-1150); in
+ * this BIOS 0x3D is unused too, but 0x2F is chosen because it sits in the
+ * range the paragraph above establishes as free (nothing names 0x02..0x31
+ * except the pool, 0x28..0x2E), so it cannot collide with a ROM or crt.s
+ * descriptor.  crsinit() maps it onto each framebuffer's physical base in
+ * turn and puts it back on its identity page afterwards.
+ */
+#define	VPROBESEG	0x2f
+#define	VPROBEADDR	0x2f000000L	/* (long)VPROBESEG<<24 */
+#define	VPROBEHOME	0x2f00		/* identity base page, as at reset */
+#define	VPHRBASE	0x3e00		/* HR bitmap, phys 0x3E0000 (md.s:1125) */
+#define	VPLRBASE	0x3700		/* text framebuffer, phys 0x370000
+					 * (md.s:1133) */
 #define	PGSEGVIDA	0x3a		/* the ROM's display planes, named
 					 * here so the banner above and the
 					 * check in pgalloc.c agree	 */

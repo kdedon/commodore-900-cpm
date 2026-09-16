@@ -8,6 +8,8 @@
 	.globl	tepa_, tprv_, tseg_, tnmi_, tnvi_, tvi_
 	.globl	faultcom_, faultpanic_
 	.globl	ttick_, tvidsm_, tickget_, tickei_
+	.globl	sccrxi_			/ SCC receive interrupt stub (C8)
+	.globl	sccrxdrn_		/   and its body (bios/bios900.c)
 	.globl	tickcnt_		/ the tick counter (bios/tick900.c)
 	.globl	pquant_			/ ticks left in this process's slice
 	.globl	psched_			/ nonzero when more than one process
@@ -160,6 +162,14 @@ tvidsm_:
 / All armed SCC receive vectors share this stub. Save r0-r13 for C;
 / sccrxdrn drains each channel's data register, clearing receive level.
 / Entry FCW disables interrupts, preventing nesting.
+sccrxi_:
+	sub	r15, $28
+	ldm	(rr14), r0, $14		/ r0-r13 under the hardware frame
+	call	sccrxdrn_
+	ldm	r0, (rr14), $14
+	add	r15, $28
+	iret
+
 / long tickget() -- the tick, read in ONE instruction.  A C `long' load
 / is two word loads and ttick_ can land between them; LDL cannot be split,
 / so this is the only sanctioned reader of tickcnt_.

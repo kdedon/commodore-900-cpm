@@ -12,6 +12,7 @@
 ********************************************************/
 
 EXTERN long	bios();		/* main BIOS entry point	    */
+EXTERN WORD	concur;		/* running process's console (proc.c) */
 EXTERN UBYTE	bios1();	/* used for character I/O functions */
 EXTERN 		bios2();	/* parm1 is word, no return value   */
 EXTERN		bios3();	/* used for set dma only	    */
@@ -25,6 +26,15 @@ EXTERN BYTE	*bios6();	/* for get memory segment table	    */
 #define bwboot()	bios1(1)	/* warm boot 		*/	
 /* Pass concur to console BIOS calls. Batched output packs the console
  * into count bits 23:16 and the character count into bits 15:0. */
+
+#define bconstat()	((UBYTE)bios(2, (long)concur, 0L))
+					/* console status	*/
+#define bconin()	((UBYTE)bios(3, (long)concur, 0L))
+					/* console input	*/
+#define bconout(parm)	bios(4, (long)(UWORD)(parm), (long)concur)
+					/* console output parm	*/
+#define bconoutn(p,n)	bios(27, map_adr((XADDR)(p),0), \
+			     (long)(UWORD)(n) | ((long)concur << 16))
 			/* console output, a whole RUN of characters at
 			   once (src/bios/bios900.c case 26).  The BDOS
 			   still owns tab expansion, the column, ^S/^Q,
@@ -34,6 +44,8 @@ EXTERN BYTE	*bios6();	/* for get memory segment table	    */
 			   switch for the plain text in between.  */
 #define bconcnt()	((WORD)bios(29, 0L, 0L))
 			/* runtime console count from the loader-supplied serial map */
+#define bconses()	((WORD)bios(33, 0L, 0L))
+			/* the console the cold boot starts a session on, 0 = none */
 #define blstout(parm)	bios2(5,parm)	/* list device output	*/
 #define bpun(parm)	bios2(6,parm)	/* punch char output	*/
 #define brdr()		bios1(7)	/* reader input		*/

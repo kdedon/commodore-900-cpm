@@ -28,6 +28,8 @@ char *argv[];
 {
 	register int	r;
 	int		startuser;
+	int		i;
+	static char	diverted[SECLEN];	/* G6: fn 26's decoy DMA target */
 
 	if (argc > 1 && argv[1][0] == 'P') {
 		/* ---- phase 2: only reachable by fn 47's chain ---- */
@@ -95,6 +97,49 @@ char *argv[];
 	check("fn 120 (113-127 gap)", __bdos(120, 0L), 0x00ff);
 	check("fn 146 (>=128, XDOS/MP/M)", __bdos(146, 0L), 0);
 	check("fn 200 (>=128, XDOS/MP/M)", __bdos(200, 0L), 0);
+
+	/* ---- G6: fn 13 resets the DMA address to base page + 0x80 ----
+	   (V2, docs/run/V2.md).  src/bdos/proc.h's pd_dma0 is set once
+	   at load by src/bdos/pgmld.c and is what bdosmain.c's fn 13
+	   restores GBL.dmaadr to.  The property, not a snapshot: move
+	   the DMA away with fn 26, reset with fn 13, and require an
+	   actual READ to land at _base->buff -- this process's own base
+	   page + 0x80 (basepage.h) -- and nowhere else.  Poisoning both
+	   candidate buffers first rules out stale-data false positives
+	   in either direction.  */
+	mkfcb("V2TMP.TXT", &f);
+	setdma(buf);
+	__bdos(BDOS_DELETE, (long) &f);	/* clean slate; ignore result */
+
+	mkfcb("V2TMP.TXT", &f);
+	r = __bdos(BDOS_MAKE, (long) &f) & 0xff;
+	check("create V2TMP.TXT for the fn 13 probe", (r == 0xff) ? 0xff : 0,
+	      0);
+	for (i = 0; i < SECLEN; i++)
+		buf[i] = (char) 0x5a;		/* the marker byte, 'Z' */
+	__bdos(BDOS_WRITESEQ, (long) &f);
+	__bdos(BDOS_CLOSE, (long) &f);
+
+	mkfcb("V2TMP.TXT", &f);
+	r = __bdos(BDOS_OPEN, (long) &f) & 0xff;
+	check("open V2TMP.TXT for the fn 13 probe", (r == 0xff) ? 0xff : 0, 0);
+
+	for (i = 0; i < SECLEN; i++) {
+		diverted[i]    = (char) 0x11;	/* poison: must stay untouched */
+		_base->buff[i] = (char) 0x22;	/* poison: the read should land here */
+	}
+	setdma(diverted);			/* fn 26: move the DMA away	*/
+	__bdos(BDOS_RESET, 0L);		/* fn 13: reset disk system	*/
+	r = __bdos(BDOS_READSEQ, (long) &f) & 0xff;
+	check("fn 20 (read) after fn 13, return", r, 0);
+	check("fn 13 put the read at base page + 0x80 (_base->buff)",
+	      (unsigned) (unsigned char) _base->buff[0], 0x5a);
+	check("fn 13 did not leave the DMA at fn 26's diverted buffer",
+	      (unsigned) (unsigned char) diverted[0], 0x11);
+
+	__bdos(BDOS_CLOSE, (long) &f);
+	mkfcb("V2TMP.TXT", &f);
+	__bdos(BDOS_DELETE, (long) &f);	/* clean up */
 
 	/* ---- G5, unaffected: fn 27 stays the bad-function 0FFFFh ---- */
 	check("fn 27 (won't-fix, structural) still 0FFFFh",

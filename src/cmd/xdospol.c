@@ -6,6 +6,8 @@
 
 #include "cpm.h"
 
+#define	BDOS_ATTCON	146		/* XDOS Attach Console		*/
+#define	BDOS_DETCON	147		/* XDOS Detach Console		*/
 #define	BDOS_SETCON	148		/* XDOS Set Console		*/
 #define	BDOS_XPOLL	131		/* XDOS Poll Device		*/
 #define	BDOS_CREATEPROC	144		/* XDOS create process		*/
@@ -107,6 +109,24 @@ char *argv[];
 		return (1);
 	}
 
+	/*  C10: console 1 has an OWNER, and 148 did not make this process
+	    it.  That matters twice here.  Function 131 only PEEKS, so it
+	    would return on a byte the session then read instead of this
+	    program; and the function 1 below CONSUMES, so it would block
+	    behind the owner anyway.  So ask for the console -- 146 blocks
+	    until the session detaches -- and print the marker the test
+	    reacts to ONE LINE EARLIER than the wait marker, so that the
+	    detach happens before, and the injected byte after, this
+	    process is parked in fn 131.  The ordering the target's whole
+	    proof rests on is unchanged; there is one more step in front
+	    of it.						*/
+	cputs("XDOSPOL: asking\r\n");		/* console 1 -- the wire */
+	if ((__bdos(BDOS_ATTCON, 0L) & 0xff) != 0) {
+		__bdos(BDOS_SETCON, 0L);
+		cputs("XDOSPOL: no console 1: 146 refused\r\n");
+		return (1);
+	}
+
 	/*  Console 1 from here on -- the wire.  This line is what
 	    verify-xdospoll5's wake half anchors its injected byte to: sent
 	    only once this has been seen, which is what makes "the call
@@ -130,6 +150,7 @@ char *argv[];
 	lbuf[14] = '\r'; lbuf[15] = '\n'; lbuf[16] = 0;
 	cputs(lbuf);				/* console 1, still */
 
+	__bdos(BDOS_DETCON, 0L);		/* give console 1 back	*/
 	__bdos(BDOS_SETCON, 0L);
 	cputs("XDOSPOL: back 0\r\n");		/* console 0 again */
 	cputs("XDOSPOL: done\r\n");

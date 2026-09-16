@@ -67,6 +67,7 @@ struct context {
 /* Ask the BIOS for the runtime console count when validating console numbers. */
 
 #define	PNCON		bconcnt()
+
 /*  Process states.  PS_FREE is zero so that a bss-cleared table is a
     table of free slots and nothing has to initialise it.
 
@@ -93,6 +94,13 @@ struct context {
 #define	PW_QWR		4	/* for queue pd_wobj to have room	*/
 #define	PW_CON		5	/* for a character on console pd_wobj	*/
 #define	PW_LOCK		6	/* for the file-system lock to be free	*/
+#define	PW_CATT		7	/* for console pd_wobj to be DETACHED by
+				   whoever owns it (C10).  SIGNALLED, not
+				   polled: the event is another process's
+				   fn 147, or its warm boot, and proc.c
+				   pcondet()/pconrel() hand the console
+				   STRAIGHT to one waiter rather than
+				   leaving it free for a race.		*/
 
 struct pdesc {
 	short	pd_state;	/* PS_FREE / PS_LIVE / PS_RSVD		*/
@@ -181,8 +189,13 @@ struct pdesc {
 
 	short	pd_quant;	/* how many ticks a slice of THIS process is
 				   worth.  pqfor(pd_prio), proc.c.	*/
+
 	/* Ownership is a bitmask because selecting another console does not
  * release earlier attachments. The descriptor table is the ownership map. */
+
+	short	pd_catt;	/* bit n set: this process has ATTACHED
+				   console n (XDOS 146) and has not
+				   detached it (147).			*/
 	short	pd_chome;	/* home console retained across session warm boots */
 };
 
@@ -215,6 +228,7 @@ struct pdesc {
 #define	PC_NOPD		5	/* no free process descriptor		*/
 #define	PC_NOPAGE	6	/* no free 64 KB page: a 512 KB machine	*/
 #define	PC_SPLIT	7	/* a second split-I/D program		*/
+#define	PC_NOCON	8	/* fn 142: no such console		*/
 
 /*  psched -- nonzero when the gate must call pdisp() on its way out.
     Read by sys/bdosglue.s at the SC #2 return, so it is a WORD and its

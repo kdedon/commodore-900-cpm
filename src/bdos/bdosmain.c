@@ -15,7 +15,9 @@
 
 EXTERN XADDR	setchain();	/* copy a function 47 command line */
 EXTERN WORD	pcreate();	/* fn 144: create a process	*/
+EXTERN WORD	psession();	/* fn 142: start a console session */
 EXTERN WORD	proccnt();	/* fn 145: how many are live	*/
+EXTERN XADDR	pdmaget();	/* this process's default DMA, for fn 13 */
 EXTERN UWORD	ccpsvget();	/* fn 150: this process's CCP state out	*/
 EXTERN UWORD	ccpsvput();	/* fn 151:   ...and back in (src/ccp)	*/
 			/*  src/bdos/xdos.c -- the MP/M XDOS calls	*/
@@ -30,6 +32,8 @@ EXTERN WORD	xqdelf();	/* fn 136: delete queue		*/
 EXTERN WORD	xqread();	/* fn 137/138: read queue	*/
 EXTERN WORD	xqwrite();	/* fn 139/140: write queue	*/
 EXTERN WORD	xdelay();	/* fn 141: delay		*/
+EXTERN WORD	xconatt();	/* fn 146: attach console	*/
+EXTERN WORD	xcondet();	/* fn 147: detach console	*/
 EXTERN WORD	xsetcon();	/* fn 148: set console		*/
 EXTERN WORD	xassigncon();	/* fn 149: assign console	*/
 EXTERN WORD	xgetcon();	/* fn 153: get console number	*/
@@ -268,6 +272,11 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    crit_dsk= 0;
 		    GBL.curdsk = 0xff;
 		    GBL.dfltdsk = 0;
+		    GBL.dmaadr = pdmaget();	/* C900: back to base page +
+						   0x80 -- whatever fn 26 did
+						   to it, this process's own
+						   default (proc.h pd_dma0,
+						   set at load by pgmld.c) */
 		    BTRACE1("<b>");	/* FIRST fn 13 body completion */
 		    break;
 
@@ -286,6 +295,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    clr_iatts(temp.fptr);	/* get$atts (:3928)	*/
 		    if ( ckpass(temp.fptr, 0) )
 			/*  bdos30.asm:4026-4057.  The three modes are not
 			    three refusals: READ protection refuses the
@@ -414,6 +424,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    newpw = (temp.fptr->fname[5]) & 0x80;
 			/* Capture the password assignment request before clearing interface flags.
  * The DMA supplies eight password bytes followed by the protection mode. */
+		    clr_iatts(temp.fptr);	/* get$atts (:4230)	*/
 		    temp.fptr->extent = 0;
 		    temp.fptr->s1 = 0;
 		    temp.fptr->s2 = 0;
@@ -489,6 +500,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    clr_iatts(temp.fptr);	/* get$atts (:1863)	*/
 		    if ( ckpass(temp.fptr, 0) )
 			/* `indicators' checks the password before it
 			   changes a single attribute (:1866-1868).  A
@@ -506,6 +518,8 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
  * cannot dereference the supervisor DPB directly. */
 	  case 31:  if (GBL.curdsk != GBL.dfltdsk) seldsk(GBL.dfltdsk);
 		    cpy_out( (GBL.parmp), infop, sizeof *(GBL.parmp) );
+		    rtnval = info;	/* return disk parameters */
+		    break;
 
 	  case 32:  /* get/set user number.  E = 0FFh interrogates; anything
 		       else is masked ani 0fh and SET, and the call
@@ -751,6 +765,9 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 
 		/* Start a CCP on the requested console, in the corresponding user area.
  * Sessions reload their CCP after a transient warm boot. */
+	  case 142: return(psession((WORD)(info & 0x0f)));
+		    /* break; */
+
 	  case 145: return(proccnt());		/* live processes	*/
 		    /* break; */
 
@@ -777,6 +794,16 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    break;		/* warmboot() does not return; this
 					   is here so that if it ever did,
 					   the next case would not run	*/
+
+		  /*  146/147 Attach and Detach Console -- C10.  A console
+		      has ONE owner and everybody else waits, so 146 is
+		      the only call in this dispatcher that can block on
+		      another PROCESS rather than on a device or on the
+		      clock.  Neither takes a parameter: they act on the
+		      console fn 148 has already chosen.  src/bdos/xdos.c,
+		      and the rule itself is src/bdos/proc.c pconatt().	*/
+	  case 146: return(xconatt());		/* attach console	*/
+	  case 147: return(xcondet());		/* detach console	*/
 
 	  case 148: return(xsetcon(info));	/* set console		*/
 	  case 149: return(xassigncon(infop));	/* assign console	*/
@@ -837,6 +864,18 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 
 /* Clear FCB interface flags before persisting a name. Callers must capture
  * requests such as password assignment before clearing them. */
+
+clr_iatts(fcbp)			/* clear the interface attributes f5'-f8' */
+
+REG struct fcb *fcbp;
+{
+    fcbp->fname[4] &= 0x7f;	/* f5' */
+    fcbp->fname[5] &= 0x7f;	/* f6' -- assign password	*/
+    fcbp->fname[6] &= 0x7f;	/* f7' -- XFCB read-only	*/
+    fcbp->fname[7] &= 0x7f;	/* f8' -- user-zero open	*/
+}
+
+
 /* Reject wildcards for operations requiring a single name. Rename checks
  * both names. Ignore attribute bits when comparing against question marks. */
 

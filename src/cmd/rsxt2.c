@@ -93,9 +93,14 @@ int sub;
 	register int	r;
 
 	r = rsxask(sub);
+	conputs("rsxt2: ");
+	conputs(what);
 	if (r == 0xff)
+		conputs(" unclaimed\r\n");
 	else {
+		conputs("=");
 		puthex((unsigned) r);
+		conputs("\r\n");
 	}
 }
 
@@ -107,15 +112,27 @@ VOID chain()
 
 	org = (unsigned) rsxask(RSX_QUERY);
 	if (org == 0) {
+		conputs("rsxt2: chain empty\r\n");
 		return;
 	}
 	while (org != 0) {
 		p = tpaptr(org);
+		conputs("rsxt2: mod ");
 		puthex(org);
+		conputs(" ");
 		for (i = 0; i < 8; i++)
 			conout(p[H_NAME + i]);
+		conputs(" ser=");
 		for (i = 0; i < 6; i++)
 			conout(p[H_SERIAL + i]);
+		conputs(" wf="); puthex2((unsigned) p[H_WARMFLG] & 0xff);
+		conputs(" nb="); puthex2((unsigned) p[H_NBANK] & 0xff);
+		conputs(" ec="); puthex2((unsigned) p[H_ENDCHAIN] & 0xff);
+		conputs(" pl="); puthex2((unsigned) p[H_PATCH] & 0xff);
+		conputs(" prev="); puthex(wordat(p, H_PREV));
+		conputs(" next="); puthex(wordat(p, H_NEXT));
+		conputs(" len="); puthex(wordat(p, H_LEN));
+		conputs("\r\n");
 		org = wordat(p, H_NEXT);
 	}
 }
@@ -129,10 +146,14 @@ char *name;
 
 	mkfcb(name, &fcb);
 	r = __bdos(func, (long) &fcb);
+	conputs("rsxt2: ");
+	conputs(what);
+	conputs("=");
 	putdec((unsigned) r);
 	/*  The verdict as a word as well as a number: a successful open
 	    answers with a directory code, 0 to 3, which depends on where
 	    the file landed and is not the same from run to run.  */
+	conputs(r == 255 ? " fail\r\n" : " ok\r\n");
 }
 
 int main()
@@ -169,6 +190,8 @@ int main()
 	fileop("reopen guard", BDOS_OPEN, GUARD);
 	report("prot", PROT_COUNT);
 
+	conputs("rsxt2: htpa=");
 	puthex((unsigned) (_base->htpa & 0xffffL));
+	conputs("\r\n");
 	return (0);
 }

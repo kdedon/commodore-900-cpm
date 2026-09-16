@@ -4,6 +4,39 @@
  * and supports only home/clear among the cursor operations. */
 #include "romabi.h"
 
+/*
+ * `console serial' MUST REACH THE SERIAL LINE (C11).
+ *
+ * The ROM's putchar/puts route by the ROM'S OWN flags (con_alt, con_hires
+ * -- romabi.h), not by anything CP/M decided.  On a machine whose ROM
+ * believes it is a video console, every byte written through them lands on
+ * the SCREEN however bi_console was set: the owner booted a `console
+ * serial' medium, CP/M chose serial (ck=0000), the A> prompt worked, and
+ * all of it came out on the LR display.  D8 recorded this as an open item.
+ *
+ * So a serial console is written by us, straight to SCC channel B -- the
+ * same line, and the same two registers, conpoll() in bios900.c already
+ * READS for serial input.  Video consoles keep the ROM dispatcher, which
+ * is correct for them.  Every byte crsr.c emits goes through crtty(), so
+ * redefining the two macros here covers the whole file at one point.
+ *
+ * CRSHOST is the host state-machine harness (tests/crsrtest.c, verify-crsr)
+ * which has no I/O ports and supplies its own putchar; it keeps both.
+ */
+#ifndef CRSHOST
+#undef	putchar
+#undef	puts
+#define putchar(c)	crtty(c)
+#define puts(s)		crputs(s)
+
+#define CRS_RR0		0x0101		/* SCC channel B: Rx/Tx status	*/
+#define CRS_RR8		0x0111		/* SCC channel B: data		*/
+#define CRS_TXEMPTY	0x04		/* RR0 D2: Tx buffer empty	*/
+
+extern int inb();
+extern outb();
+#endif
+
 #define ESC	033
 #define CAN	030
 
@@ -46,6 +79,62 @@
 #define CK_HR	2
 
 static int ckind;
+
+#ifndef CRSHOST
+/*
+ * One character to the console CP/M chose.  Video keeps the ROM's
+ * dispatcher; serial is driven here, with the '\n' -> CR+LF expansion ROM
+ * putchar performed (romabi.h) and the bounded Tx wait conout() uses, so
+ * a dead line costs a fixed number of INs and never wedges the boot.
+ */
+/*
+ * IS THE ROM ITSELF ON THE SERIAL LINE? (C12)
+ *
+ * The ROM picks its console before we run and records it in two flags
+ * (romabi.h): con_alt for the LR text console, con_hires for HR.  Both
+ * clear means the ROM is talking to the SCC -- and therefore that the ROM
+ * PROGRAMMED the SCC, baud and all.  Either set means the ROM is on a
+ * video board and has no reason ever to have touched the serial channel.
+ *
+ * This is NOT the same question as `which console did CP/M choose'.  A
+ * `console serial' medium makes CP/M choose serial (ckind == CK_SER) on a
+ * machine whose ROM is still a video console, which is exactly the owner's
+ * failing case: CP/M drives a channel nobody initialised.  convid cannot
+ * tell the two apart -- it is 0 for both -- so bios900.c asks here.
+ */
+crsromser()
+{
+	return (*(char *)ROMV_CONALT == 0 && *(char *)ROMV_CONHIRES == 0);
+}
+
+static crtty(c)
+int c;
+{
+	register int i;
+
+	if (ckind != CK_SER) {
+		((int (*)())ROM_PUTCHAR)((int)(c));
+		return;
+	}
+	if (c == '\n')
+		crtty('\r');
+	for (i = 0; i < 20000; i++)
+		if (inb(CRS_RR0) & CRS_TXEMPTY)
+			break;
+	outb(CRS_RR8, c & 0xff);
+}
+
+static crputs(s)
+register char *s;
+{
+	if (ckind != CK_SER) {
+		((int (*)())ROM_PUTS)((char *)(s));
+		return;
+	}
+	while (*s != '\0')
+		crtty(*s++);
+}
+#endif
 
 /*
  * Parser state.  Four states, based on the donor handlers (mm.c's mmfunc
@@ -519,6 +608,7 @@ int c;
 /*
  * crsmode() is the seam the host-side state-machine test drives
  * (host/crsrtest.c), which is why the console decision is a separate
+ * function from the probe below.
  */
 crsmode(k)
 int k;
@@ -530,10 +620,96 @@ int k;
 	return (k);
 }
 
-#ifndef CRSHOST
+/*
+ * crsreset() -- the warm boot's call: the escape parser back to ground, on
+ * the console crsinit() chose.  The console is decided once, at cold boot.
+ */
+crsreset()
 {
-		return (crsmode(CK_LR));
+	return (crsmode(ckind));
+}
+
+#ifndef CRSHOST
+#include "c900cfg.h"
+#include <bootinfo.h>
+
+extern int mapseg();
+
+/*
+ * vprobe(base) -- is there framebuffer RAM at physical base<<8?
+ *
+ * COHERENT's vprobe (commodore-900-coherent src/kernel/z8001/src/md.s
+ * 1140-1170): map a scratch segment onto the framebuffer's base, save the
+ * word at offset 0, write and read back 0x55AA, then its complement
+ * 0xAA55, and restore the word on either exit.  Both patterns must survive.
+ *
+ * ONE ADDITION, for an undecoded bus.  md.s relies on "undecoded reads
+ * return garbage on this machine" (md.s:1120-1121).  If instead the bus
+ * floated and held the last value driven onto it, a read straight after a
+ * write would echo the pattern and pass.  So each write at offset 0 is
+ * followed by a write of the OTHER pattern at offset 2 before offset 0 is
+ * read back: an echo then returns the wrong pattern at both offsets and
+ * fails.  Real framebuffer RAM has a word at offset 2 as well (a character
+ * cell, or 16 bitmap pixels), and it is saved and restored the same way.
+ */
+static vprobe(base)
+int base;
+{
+	register unsigned *p;
+	unsigned s0, s2, r0, r2;
+	int hit;
+
+	mapseg(VPROBESEG, base, 0x02);		/* md.s:1147-1150 */
+	p = (unsigned *)VPROBEADDR;
+	s0 = p[0];				/* md.s:1152 */
+	s2 = p[1];
+	p[0] = 0x55AA;
+	p[1] = 0xAA55;
+	r0 = p[0];
+	r2 = p[1];
+	hit = (r0 == 0x55AA && r2 == 0xAA55);
+	if (hit) {
+		p[0] = 0xAA55;			/* md.s:1158-1162 */
+		p[1] = 0x55AA;
+		r0 = p[0];
+		r2 = p[1];
+		hit = (r0 == 0xAA55 && r2 == 0x55AA);
+	}
+	p[0] = s0;				/* md.s:1163,1167 */
+	p[1] = s2;
+	mapseg(VPROBESEG, VPROBEHOME, 0x02);
+	return (hit);
+}
+
+/*
+ * crsinit(bicon) -- choose console 0, never from the ROM's con_alt/con_hires
+ * flags (owner decisions, 2026-09-15: D8, then K2).
+ *
+ *   BI_CON_SER			serial   } kboot DECIDED (its own probe, or
+ *   BI_CON_LR			low-res  } the entry's `console serial'):
+ *   BI_CON_HR			hi-res   } taken as sent, no probe here
+ *
+ *   BI_CON_ANY, BI_CON_VID,	FALLBACK: nobody decided, so probe HR,
+ *   a value not known here,	then the text framebuffer, as COHERENT's
+ *   no v3 handoff, or none	vidsel does (md.s:1124-1138); serial if
+ *				neither answers.  This is how CP/M comes up
+ *				from a loader that says nothing, or none.
+ *
+ * Returns the kind chosen: CK_SER is 0, so nonzero means video.
+ */
+crsinit(bicon)
+int bicon;
+{
+	if (bicon == BI_CON_SER)
+		return (crsmode(CK_SER));
+	if (bicon == BI_CON_HR)
 		return (crsmode(CK_HR));
+	if (bicon == BI_CON_LR)
+		return (crsmode(CK_LR));
+	if (vprobe(VPHRBASE))
+		return (crsmode(CK_HR));
+	if (vprobe(VPLRBASE))
+		return (crsmode(CK_LR));
 	return (crsmode(CK_SER));
 }
 #endif

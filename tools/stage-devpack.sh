@@ -44,6 +44,15 @@ rm -f -- "$DISKA"/*.CPM
 install dump.z8k    DUMP.Z8K
 install ddt.z8k     DDT.Z8K
 install ed.z8k      ED.Z8K
+# PIP.Z8K: not staged from here -- the Makefile builds it from src/cmd/
+# pip.c (DRI's own source, with the multio() BYTE/RECORD-count fix) and
+# copies it over this directory itself.  Staging the vendor binary here
+# too would race the rebuilt one for the same name.
+#
+# STAT.Z8K: no longer staged from here either, as of the 0x2031 bump.
+# The Makefile builds it from src/cmd/stat.c and copies it over this
+# directory, because DRI's columns() reads the wrong SCB byte at 3.x and
+# the vendor binary still has that bug.  See the USTAT comment there.
 install ar8k.z8k    AR8K.Z8K
 install nmz8k.z8k   NMZ8K.Z8K
 install sizez8k.z8k SIZEZ8K.Z8K

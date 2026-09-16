@@ -11,3 +11,4 @@
 #
 # format: RECORD <UTC timestamp> verify-legacy: PASS -- <what ran, what's
 #         KNOWN-FAILING>
+RECORD 2026-09-03T02:37Z verify-legacy: PASS -- PIP/STAT/DUMP OK; ASZ8K/XCON/XDUMP/AR8K/NMZ8K/SIZEZ8K ran without trapping

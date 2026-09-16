@@ -138,6 +138,8 @@ REG UWORD info;			/* the parameter word of this call	*/
 
     /* Publish zero for the SCB address: a transient cannot address its
  * supervisor segment. Function 49 remains the supported access path. */
+
+    scbputw(SCB_SCBADD, (UWORD)0);
     scbputw(SCB_CRDMA, (UWORD)(GBL.dmaadr & 0xffffL));
     scbimg[SCB_CRDSK] = GBL.curdsk;
     scbputw(SCB_VINFO, info);

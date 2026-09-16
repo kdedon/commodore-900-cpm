@@ -20,6 +20,8 @@ EXTERN		prt_line();		/* Print String function 	*/
 EXTERN UWORD	xbdos();		/* BDOS main routine (C900: was _bdos) */
 EXTERN UBYTE	*traphnd();		/* assembly language trap handler */
 EXTERN		rsxwboot();		/* RSX warm-boot removal (rsx.c)  */
+EXTERN		pcoldses();		/* the SCC-B session at a video
+					   console (C10/D8, proc.c)	  */
 EXTERN		initexc();		/* init the exception handler in  */
 					/* exceptn.s			*/
 EXTERN UWORD	dirscan();		/* Directory scanning routine	*/
@@ -124,6 +126,14 @@ bdosinit()
     tpa_lt = tpa_lp = segp->low;
     tpa_ht = tpa_hp = tpa_lp + segp->length;
     initexc( &(GBL.excvec[0]) );
+    /*	THE SCC-B SESSION AT A VIDEO CONSOLE (C10, narrowed by D8).  This
+	is the once-per-machine moment: the file system is up, so CCP.Z8K
+	can be loaded, and the first CCP has not run, so nothing is on the
+	consoles yet.  A serial operator gets no session here.  Every
+	refusal is ignored -- src/bdos/proc.c pcoldses() says why -- so a
+	512 KB machine and a disk with no CCP on it behave exactly as they
+	did before this line existed.  */
+    pcoldses();
 }
 
 

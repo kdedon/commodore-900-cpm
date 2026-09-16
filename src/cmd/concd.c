@@ -148,6 +148,7 @@ char *argv[];
 	int		n0;
 	unsigned	s0;
 	int		rounds, bad, nfail;
+	int		base;
 
 	cputs("CONCD: D start\r\n");
 
@@ -169,6 +170,14 @@ char *argv[];
 	for (k = 0; k < 128; k++)
 		req.pq_tail[k] = 0;
 
+	/*  HOW MANY PROCESSES THERE WERE BEFORE.  This loop used to wait
+	    for the count to fall back to ONE, which was the same thing on
+	    a machine whose only process was this one.  Since C10 the cold
+	    boot starts a session on every other console (src/bdos/proc.c
+	    pcoldses), so the floor is whatever was already live, and a
+	    literal 1 is a wait that never ends.  */
+	base = (int)(__bdos(BDOS_PROCCNT, 0L) & 0xff);
+
 	k = __bdos(BDOS_CREATEPROC, (long) &req);
 	if (k != 0) {
 		cputs("CONCD: no second process: ");
@@ -180,6 +189,7 @@ char *argv[];
 	rounds = 0;
 	bad = 0;
 	nfail = 0;
+	while ((int)(__bdos(BDOS_PROCCNT, 0L) & 0xff) > base) {
 		walk("????????.???");
 		rounds++;
 		if (wcount != n0 || wsum != s0) {

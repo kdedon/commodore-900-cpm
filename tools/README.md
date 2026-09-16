@@ -189,6 +189,8 @@ them: see the `$(CPMAIMG)` rule, which stages `src/dist/disk-a/`, runs
 
 ```
 mkcpmdisk.py [--kboot=FILE] [--mutate=cfg|kernel|base] [--cpmb-base=BLK]
+             [--no-bootinfo] [--console=serial|probe]
+             OUT CPMSYS CPMAIMG [CPMBIMG]
 ```
 
 Builds a whole disk image containing only what CP/M needs: a boot partition
@@ -212,6 +214,11 @@ are a default this file records rather than a number in C source.
   `part` lines, no `part` keyword, nothing handed over, so `cpm.sys` falls back
   to its compiled A: and B:.  That is what a medium built for an older kboot
   looks like, and `verify-bifallback` boots one.
+* `--console=serial|probe` writes a `console` line under the CP/M entry.
+  kboot decides the console it hands over (`bi_console`) and CP/M uses it
+  without probing: `serial` pins the serial line, `probe` has kboot test the
+  framebuffers.  No option writes no line, which kboot reads as `probe`.
+  `make CONSOLE=serial` passes it to every medium the Makefile builds.
 
 Every `verify-*` target builds its medium with this, so none of them needs a
 built COHERENT distribution — only the `kboot` binary, which the Makefile names

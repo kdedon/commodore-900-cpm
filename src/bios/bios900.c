@@ -29,13 +29,25 @@
 
 #define SCC_RR0		0x0101		/* SCC channel B: Rx/Tx status */
 #define SCC_RR8		0x0111		/* SCC channel B: data */
+#define RXAVAIL		0x01		/* RR0 D0: Rx character available */
+#define TXEMPTY		0x04		/* RR0 D2: Tx buffer empty */
+
 /* WR2 (vector) and WR9 (master interrupt control) are shared per SCC.
  * WR1 is per channel: the ROM console keeps WR1=0 and remains polled
  * while spare channels enable receive interrupts. Do not arm channel 0:
  * ROM console routines also access it. */
 
+/* The console table's size: console 0 and up to three bound lines.  It is
+ * NOT the process-descriptor count -- PNPROC has been 6 since F14
+ * (src/bdos/proc.h) -- but every console with a session running holds a
+ * descriptor, so a larger table costs program slots.  Additional reported
+ * channels remain unbound. */
 #define CONMAX		4
 #define NCHAN		16	/* bi_serial is 16 bits			*/
+
+#define CD_NONE		0	/* nothing is attached to this console	*/
+#define CD_ROM		1	/* the console the ROM selected at boot	*/
+#define CD_SCCA		2	/* SCC channel A, raw			*/
 /*
  * The device number of serial channel `c'.  CD_SCCA IS CD_SER(1) -- the
  * guest-visible numbering of BIOS function 28 is unchanged, and channels
@@ -49,7 +61,27 @@
 extern int inb();
 extern outb();
 
+/*
+ * The video console's keyboard is OURS, not the ROM's (D6's kbd900.h, made
+ * the default by C11 after the owner booted it and had working LR input
+ * for the first time).  The ROM path it replaces never worked on any
+ * machine: romabi.h's claim that the ROM sets the keyboard up at reset is
+ * false -- the ROM programs CIO #1 port A lazily, inside its own blocking
+ * getchar(), which a BIOS must never call, so kbd_poll() was polling a
+ * port nobody had ever initialised.
+ */
+#include "kbd900.h"
+
 static int convid;	/* nonzero: video console, input = local keyboard */
+/*
+ * CD_ROM on a console OTHER than 0, on a video machine, is SCC channel B
+ * as a raw line.  CD_SER(0) and CD_ROM are the same number, and on a
+ * serial machine that is literally one wire; on a video machine console 0
+ * is the screen and keyboard, and channel 0 is a free terminal that
+ * coninit() binds as console 1.  It stays polled: rxarm() and sccrxdrn()
+ * never take channel 0.
+ */
+#define CONRAW0(con)	((con) != 0 && convid)
 static int pend[CONMAX];	/* CONST lookahead, 0 = none, per console */
 static char condev[CONMAX];	/* console -> device; see the banner	*/
 static unsigned int conmap;	/* the serial map the table was built from */
@@ -83,16 +115,63 @@ int chan, reg;
 		return (0);
 	return ((int)(sccbase[chan] | (unsigned int)(reg << 1) | 1));
 }
+
+/************************************************************************/
+/*	The receive rings (C8)						*/
+/************************************************************************/
+
 /* Rings belong to hardware channels, so rebinding a console does not move
  * pending device input. The ISR alone advances rxhead; consumers advance
  * rxtail. Word-sized indices are atomic on the target.
  * A full ring still drains the receiver to clear its interrupt level,
  * counting discarded bytes in rxlost. */
+#define RXRING		64		/* characters buffered per channel */
+#define RXRMASK		(RXRING - 1)	/* RXRING must be a power of two	  */
+
+static char rxbuf[NSCCBASE][RXRING];
+static int rxhead[NSCCBASE];		/* the interrupt's end		*/
+static int rxtail[NSCCBASE];		/* the program's end		*/
+static char rxon[NSCCBASE];		/* 1: this channel is interrupt-fed */
+long rxlost;				/* characters no ring had room for */
+
 /* Drain every armed channel on an SCC receive interrupt. The stub saves
  * r0-r13; channel 0 stays polled. Reading RR8 clears receive availability. */
+sccrxdrn()
+{
+	register int chan;
+	register int p;
+	register int d;
+
+	for (chan = 1; chan < NSCCBASE; chan++) {
+		if (rxon[chan] == 0)
+			continue;
+		p = sccport(chan, 0);		/* RR0: status	*/
+		d = sccport(chan, 8);		/* RR8: data	*/
+		while (inb(p) & RXAVAIL) {
+			register int h;
+
+			h = (rxhead[chan] + 1) & RXRMASK;
+			if (h == rxtail[chan]) {
+				inb(d);		/* full: read it away, or
+						   the level never clears */
+				rxlost++;
+				continue;
+			}
+			rxbuf[chan][rxhead[chan]] = (char)inb(d);
+			rxhead[chan] = h;
+		}
+	}
+}
+
 /* Arm receive interrupts with vectors base|0x04 (B) or base|0x0c (A),
  * matching crt.s. WR9=0x09 enables MIE and low-position vector status
  * without resetting either channel. Returns 1 if armed, otherwise 0. */
+static rxarm(chan)
+int chan;
+{
+	if (chan <= 0 || chan >= NSCCBASE || sccport(chan, 0) == 0)
+		return (0);
+	rxhead[chan] = rxtail[chan] = 0;
 	/*
 	 * rxon BEFORE the enable, and that order is the whole of it.  The
 	 * other way round -- WR1/WR9 first -- a byte already sitting in the
@@ -104,7 +183,54 @@ int chan, reg;
 	 * fill has just been emptied above.
 	 */
 	rxon[chan] = 1;
+	outb(sccport(chan, 2), ((chan >> 1) + 1) << 4);	/* WR2 vector base  */
+	outb(sccport(chan, 1), 0x18);	/* WR1: interrupt on all Rx chars   */
+	outb(sccport(chan, 9), 0x09);	/* WR9: MIE, VIS, status low	    */
+	return (1);
+}
+
+/*
+ * rxpoll(chan) -- put a channel back on the polled path.  WR1 = 0 is the
+ * per-channel disable; WR9's master enable is left alone because it is
+ * shared and another channel may still want it.  Whatever is already in
+ * the ring stays there and is still read out first (conpoll()), so
+ * turning the interrupt off cannot itself lose a character.
+ */
+static rxpoll(chan)
+int chan;
+{
+	if (chan <= 0 || chan >= NSCCBASE || sccport(chan, 0) == 0)
+		return (0);
+	outb(sccport(chan, 1), 0x00);	/* WR1: every source off	*/
+	rxon[chan] = 0;
+	return (1);
+}
+
+/*
+ * conok(n) -- clamp a console number.  The BDOS always passes one out of
+ * a process descriptor, but BIOS functions 2/3/4 are reachable from a
+ * transient through BDOS function 50 (iosys.c bioscl), so the number is
+ * not this file's to trust.  An unknown console is console 0: a program
+ * that asks for a console that is not there talks to the one that always
+ * is, rather than indexing off the end of `pend'.
+ */
+static conok(n)
+int n;
+{
 	return (n >= 0 && n < ncon ? n : 0);
+}
+
+/*
+ * conattach(n, dev) -- bind console n to device dev, returning the
+ * device it was bound to, or -1 if either argument is not one.  BIOS
+ * function 28.  Console 0 cannot be unbound: it is the machine's own
+ * console and the last place an error message can go.
+ */
+static conattach(n, dev)
+int n, dev;
+{
+	register int was;
+
 	if (n <= 0 || n >= ncon || dev < CD_NONE)
 		return (-1);
 	/* A device that is not CD_NONE is a serial channel, and the only
@@ -116,8 +242,35 @@ int chan, reg;
 	 * console 0's device and the last place an error message can go. */
 	if (dev != CD_NONE && dev != CD_ROM
 	    && (conmap & (1 << (dev - 1))) == 0)
+		return (-1);
+	was = condev[n];
+	condev[n] = (char)dev;
+	pend[n] = 0;			/* a character polled off the old
+					   device is not the new one's */
+	return (was);
+}
+
 /* BIOS 30: mode 1 arms reception, 0 selects polling, other values query.
  * Returns 1 for interrupt reception, 0 for polling, -1 for no serial port. */
+static conrx(n, mode)
+int n, mode;
+{
+	register int chan;
+
+	if (n < 0 || n >= ncon)
+		return (-1);
+	if (condev[n] == CD_NONE || condev[n] == CD_ROM)
+		return (-1);
+	chan = condev[n] - 1;
+	if (sccport(chan, 0) == 0)
+		return (-1);
+	if (mode == 0)
+		rxpoll(chan);
+	else if (mode == 1)
+		rxarm(chan);
+	return (rxon[chan] ? 1 : 0);
+}
+
 /************************************************************************/
 /*	AUX -- the spare line as a device, not a terminal (N2)		*/
 /************************************************************************/
@@ -221,6 +374,7 @@ int c;
  * no parity, and BRG clocking. Arm receive interrupts after enabling it. */
 static sccinit(chan)
 int chan;
+{
 	if (sccport(chan, 0) == 0)
 		return;			/* no address for that channel */
 	outb(sccport(chan, 4), 0x44);	/* x16 clock, 1 stop bit, no parity */
@@ -232,6 +386,8 @@ int chan;
 	outb(sccport(chan, 14), 0x03);	/* BRG source = PCLK, BRG enable    */
 	outb(sccport(chan, 3), 0xc1);	/* receiver ON			    */
 	outb(sccport(chan, 5), 0x68);	/* transmitter ON		    */
+	rxarm(chan);			/* and its receive ring (C8)	    */
+}
 
 /* Only IOBYTE bits 7:6 (LST) affect routing: 0/1 use the ROM console,
  * 2/3 discard output. Other fields are stored but do not change devices. */
@@ -241,14 +397,41 @@ static char iobyte;
 #define LSTCON()	((iobyte & 0x80) == 0)
 
 /*
+ * One non-blocking poll of console `con'; ASCII or 0.
  */
+static conpoll(con)
+int con;
 {
 	register int c;
 
+	if (condev[con] == CD_NONE)
+		return (0);
+	if (condev[con] != CD_ROM || CONRAW0(con)) {
 		register int p;
+		register int chan;
 
+		chan = condev[con] - 1;
+		p = sccport(chan, 0);
 		if (p == 0)
+			return (0);	/* fitted, but not addressable here;
+					   also the bound on `chan' below   */
+		/*  The ring first, and BEFORE the rxon[] test: a channel
+		 *  put back on the polled path (rxpoll()) may still have
+		 *  characters in it, and they were received first.  */
+		if (rxhead[chan] != rxtail[chan]) {
+			c = rxbuf[chan][rxtail[chan]] & 0x7f;
+			rxtail[chan] = (rxtail[chan] + 1) & RXRMASK;
+			return (c);
+		}
+		if (rxon[chan])
+			return (0);	/* armed: the ring is the only source,
+					   and RR0 costs an IN per CONST	*/
 		if ((inb(p) & RXAVAIL) == 0)
+			return (0);
+		return (inb(sccport(chan, 8)) & 0x7f);
+	}
+	if (convid)
+		return (kbdpoll());	/* kbd900.h, not the ROM: see above */
 	if ((inb(SCC_RR0) & RXAVAIL) == 0)
 		return (0);
 	return (inb(SCC_RR8) & 0x7f);
@@ -256,32 +439,63 @@ static char iobyte;
 
 /* ROM console output uses the shared H19/Z19 parser; spare serial ports
  * send bytes unchanged. LIST bypasses the parser. Tx polling is bounded. */
+static conout(c, con)
+int c, con;
 {
+	register int i;
+
 	register int p;
 
+	if (condev[con] == CD_NONE)
+		return;
+	if (condev[con] == CD_ROM && !CONRAW0(con)) {
+		crsout(c);
+		return;
+	}
 	p = sccport(condev[con] - 1, 0);
 	if (p == 0)
 		return;			/* fitted, but not addressable here */
+	for (i = 0; i < 20000; i++)
 		if (inb(p) & TXEMPTY)
+			break;
 	outb(sccport(condev[con] - 1, 8), c & 0xff);
 }
 
 /* BIOS 27: output n bytes from a full XADDR. crsr.c batches LR screen
  * stores; other devices use character output. */
+static conoutn(p, n, con)
 long p;
+int n, con;
 {
+	register char *s;
+
+	if (condev[con] == CD_ROM && !CONRAW0(con)) {
+		crsrun((char *)p, n);
+		return;
+	}
+	for (s = (char *)p; n > 0; n--)
+		conout(*s++, con);
 }
 
 /* The scheduler calls this directly to wake console waiters, including
  * from tick dispatch when no BDOS activation is in progress.
  * pend[] preserves the polled character for the next CONIN. */
 conststat(con)
+int con;
 {
+	if (pend[con] == 0)
+		pend[con] = conpoll(con);
+	return (pend[con] != 0 ? 0xff : 0x00);
 }
 
+static conin(con)
+int con;
 {
 	register int c;
 
+	while ((c = pend[con]) == 0)
+		c = pend[con] = conpoll(con);
+	pend[con] = 0;
 	return (c);
 }
 
@@ -711,6 +925,10 @@ int vec, id, fcw, pcseg, pcoff;
 /*	Init + dispatcher						*/
 /************************************************************************/
 
+/* Build consoles from bi_serial at cold boot. Console 0 is whatever
+ * crsinit() chose; other fitted channels are bound in order up to CONMAX.
+ * When console 0 is video, channel 0 (SCC-B, the ROM's console line) is a
+ * free terminal and becomes console 1; the spare channels follow it.
  * Missing/older handoffs and zero bitmaps use the on-board channel map. */
 #define CONDFLMAP	0x0003		/* channels 0 and 1: the on-board SCC */
 
@@ -725,6 +943,37 @@ static coninit()
 		map = bootinf.bi_serial;
 	conmap = map;
 
+	/*  Program CIO #1 port A for the keyboard, once, here -- the ROM
+	 *  does it only inside its own getchar(), which we never call.
+	 *  Without this kbdpoll() reads a port that was never set up.  */
+	if (convid)
+		kbdinit();
+
+	/*  CHANNEL 0 IS WRITTEN BY US, AND NOBODY MAY HAVE SET IT UP (C12).
+	 *
+	 *  Two paths drive SCC channel 0 without going anywhere near the
+	 *  ROM: crsr.c's crtty() for a serial console, and conout() below
+	 *  for console 1 at a video console (condev == CD_ROM with
+	 *  CONRAW0(), which resolves to sccport(0, ...)).  Neither is
+	 *  covered by whatever the ROM did for its OWN console.
+	 *
+	 *  On a machine whose ROM believes it is a video console the ROM
+	 *  never programmed the SCC at all, so the transmitter is disabled,
+	 *  TXEMPTY never asserts, crtty()'s bounded wait expires and every
+	 *  byte is discarded in silence.  conpoll() only ever READ this
+	 *  channel, which is why the fault never showed on input.
+	 *
+	 *  crsromser() asks the ROM'S OWN flags whether the ROM is on the
+	 *  serial line.  If it is, it configured this channel and we leave
+	 *  its settings -- the baud above all -- alone, so a serial machine
+	 *  that works today is not touched.  If it is not, nothing has
+	 *  programmed the channel and this is the only reason it can ever
+	 *  transmit.  rxarm() inside sccinit() refuses channel 0, so no
+	 *  interrupt is armed on the ROM's line: it stays polled.
+	 */
+	if (!crsromser())
+		sccinit(0);
+
 	for (chan = 0; chan < CONMAX; chan++) {
 		condev[chan] = CD_NONE;
 		pend[chan] = 0;
@@ -738,6 +987,14 @@ static coninit()
 	 *  function 28 (`CONDEV(1, CD_NONE)') at the moment a transfer
 	 *  starts.  Binding AUX somewhere else, or nowhere, is function 32.  */
 	auxchan = -1;
+	/*  SCC-B as console 1 at a video console (D8).  Not sccinit(): the
+	 *  ROM configured this line, and it stays polled (CONRAW0).  AUX is
+	 *  not moved: it still starts on the first SPARE channel below, 0x0120,
+	 *  which Kermit and N2 rely on.  */
+	if (convid && (map & 1) != 0) {
+		condev[ncon] = CD_ROM;		/* channel 0, raw: CONRAW0() */
+		ncon++;
+	}
 	for (chan = 1; chan < NCHAN && ncon < CONMAX; chan++) {
 		if ((map & (1 << chan)) == 0)
 			continue;
@@ -767,6 +1024,12 @@ biosinit()
 	extern int mapseg();
 
 	BTRACE("<1>");		/* binit (BIOS fn 0) entered */
+	/* Console type as kboot decided it, in bi_console, and never the
+	 * ROM's flags (crsr.c crsinit).  No handoff, or one older than
+	 * version 3, carries no bi_console and is passed as BI_CON_ANY:
+	 * nobody decided, so crsinit() falls back to probing the cards. */
+	convid = (crsinit((bivalid() && bootinf.bi_len >= (unsigned short)BI_LEN3)
+			  ? (int)bootinf.bi_console : BI_CON_ANY) != 0);
 	drvinit();			/* the drive table: the loader bootinfo,
 					 * or the compiled fallback */
 	coninit();			/* the console table: the loader's
@@ -812,6 +1075,7 @@ long d1, d2;
 						 * a page a live process is
 						 * parked on */
 		flushhst();
+		crsreset();			/* a program killed mid-escape
 						 * must not leave the parser
 						 * eating the CCP's output */
 		ccpentry();			/* resets the stack; no return */
@@ -819,8 +1083,14 @@ long d1, d2;
 
 	/* CONST/CONIN take the console in d1; CONOUT takes it in d2.
 	 * Zero preserves the standard console-0 interface. */
+	case 2:					/* CONST(console) */
+		return ((long)conststat(conok((int)d1)));
 
+	case 3:					/* CONIN(console) */
+		return ((long)conin(conok((int)d1)));
 
+	case 4:					/* CONOUT(char, console) */
+		conout((int)d1, conok((int)d2));
 		break;
 
 	case 5:					/* LIST: console or bit-bucket */
@@ -933,16 +1203,23 @@ long d1, d2;
 	/* CONOUTN: d1 is the buffer XADDR; d2 packs the count in bits 15:0
 	 * and console number in bits 23:16. Reserved for resident callers. */
 	case 27:				/* CONOUTN */
+		conoutn(d1, (int)d2, conok((int)(d2 >> 16)));
 		break;
 
 	/* CONDEV binds console d1 to device d2, returning its old device or -1.
 	 * CD_NONE detaches; serial channel c is device c+1. */
+	case 28:				/* CONDEV(console, device) */
+		return ((long)conattach((int)d1, (int)d2));
+
 	/* CONCNT returns the number of configured consoles (1..CONMAX). */
 	case 29:				/* CONCNT */
 		return ((long)ncon);
 
 	/* CONRX: d2=1 arms, 0 polls, other values query console d1.
 	 * Returns 1 (interrupt), 0 (polled), or -1 (no serial channel). */
+	case 30:				/* CONRX(console, mode) */
+		return ((long)conrx((int)d1, (int)d2));
+
 	/* AUXIST returns 1 for pending input, 0 for none, -1 for no AUX port. */
 	case 31:				/* AUXIST */
 		return ((long)auxist());
@@ -957,6 +1234,22 @@ long d1, d2;
 	 */
 	case 32:				/* AUXDEV(device) */
 		return ((long)auxattach((int)d1));
+
+	/*
+	 * CONSES: the console the cold boot starts its one extra session on,
+	 * or 0 for none (src/bdos/proc.c pcoldses).  That is the console bound
+	 * to SCC-B, and only when console 0 is video; a serial operator gets
+	 * no cold-boot session.  Resident only: not on bioscl()'s list.
+	 */
+	case 33:				/* CONSES */
+		if (convid) {
+			register int n;
+
+			for (n = 1; n < ncon; n++)
+				if (condev[n] == CD_ROM)
+					return ((long)n);
+		}
+		return (0L);
 
 	/*
 	 * BIOCOST-only, cpm.h BIOS_ROMCHAR/BIOS_VSETCHAR: not stock CP/M-8000

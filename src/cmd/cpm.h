@@ -190,6 +190,7 @@ extern long	__bios();	/* __bios(func, p1, p2) -> the SC #3 raw
 extern int	conout();
 extern int	conin();
 extern VOID	cputs();
+extern VOID	conputs();
 extern VOID	printstr();
 extern VOID	putdec();
 extern VOID	setdma();

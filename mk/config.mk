@@ -90,6 +90,15 @@ KBOOT	:= $(if $(KBOOT),$(KBOOT),$(shell sh tools/deps.sh kboot))
 CPMDISK	= build/cpmonly.bin
 # Report missing kboot before invoking the disk builder.
 KBOOTCHK = sh tools/deps.sh -n kboot '$(KBOOT)' || exit 1;
+MKDISKRAW = $(KBOOTCHK) python3 tools/mkcpmdisk.py --kboot=$(KBOOT)
+# CONSOLE=serial pins the CP/M entry of the media built here to the serial
+# console (kboot.cfg `console serial').  Empty, the default, writes no line
+# and kboot probes the cards; CONSOLE=probe writes that line explicitly.
+# Only a value given to make counts: an environment's CONSOLE names a device.
+ifneq ($(origin CONSOLE),command line)
+CONSOLE	=
+endif
+MKDISK	= $(MKDISKRAW) $(if $(CONSOLE),--console=$(CONSOLE))
 # Without kboot, all builds standalone images; boot tests require it.
 CPMDISKALL = $(if $(wildcard $(KBOOT)),$(CPMDISK))
 # Stock DRI utilities, staged verbatim.

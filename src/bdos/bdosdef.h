@@ -50,6 +50,10 @@ EXTERN VOID punlock();
     character off the PRINTING process's console (bconstat/bconin pass
     concur, biosdef.h) and parks it here, and getch() hands the parked
     character to the first reader on ANY console, before it looks at the
+    BIOS at all.  A session's CCP sits in getch() on console 1 (SESSION 1,
+    or the cold boot's at a video console, proc.c pcoldses), so the other
+    console's reader is not merely eligible to take the keystroke, it is
+    already waiting for it.
 
     Indexed by concur.  NOT part of stvars: stvars is per-PROCESS, copied
     wholesale at a switch (proc.c), and type-ahead must survive a switch
@@ -65,6 +69,7 @@ EXTERN UBYTE	kbchar[CONBUFS];
  
 /* Function 12 encodes Portable CP/M as 0x20 and level 3.1 as 0x31.
    DRI utilities use this value to enable SCB, XFCB and multi-sector calls. */
+#define VERSION 0x2031		/* fn 12: Portable CP/M, level 3.1	   */
 #define robit 0			/* read-only bit in file type field of fcb */
 #define arbit 2			/* archive bit in file type field of fcb   */
 #define SECLEN 128		/* length of a CP/M sector		   */

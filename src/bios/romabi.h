@@ -26,6 +26,14 @@
 #define ROM_PUTS	0x0900
 
 /*
+ * Local keyboard (Z8036 CIO #1, port A = scancode).  The ROM does NOT
+ * initialize it at reset: its kbd_init (0x3ed4) runs lazily inside the
+ * ROM's own getchar(), behind a once-only flag at 01:041c, and CP/M never
+ * calls getchar (docs/run/D5.md in c900oses).  The BIOS therefore does not
+ * use these ROM calls; kbd900.h replaces them.  kbd_poll is NON-blocking:
+ * raw scancode or 0.  kbd_decode maps a raw scancode to ASCII (0 for
+ * key-up/modifier-only events; bit7 of the raw code = key-up), tracking
+ * shift/ctrl/alt/caps/num in seg-1 state.
  * See ~/git/C900/firmware/rom_source/keyboard_re.c.
  */
 #define ROM_KBDPOLL	0x3f1e

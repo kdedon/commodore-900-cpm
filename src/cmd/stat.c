@@ -1222,11 +1222,24 @@ prcount()					/*   remaining on the	    */
 {						/*   current disk	    */
 
 	LONG	free;				/* The no of free sectors   */
+	BYTE	dfs[4];				/* fn 46's wire form	    */
 
 	free = 0;
 	if (HAS_GET_DFS(ver))			/* BDOS can return free     */
 	{					/*   space into curent DMA  */
+		/*  Function 46 answers with THREE LITTLE-ENDIAN BYTES of
+		    128-byte record count, fourth byte zero.  DRI's STAT.C
+		    pointed the DMA straight at a LONG and read it back,
+		    which is correct only on a little-endian 8080; on this
+		    big-endian Z8001 it took the bytes in the wrong order
+		    and printed free space off by orders of magnitude.
+		    Assemble the count by hand instead.		    */
+		dfs[0] = dfs[1] = dfs[2] = dfs[3] = 0;
+		_setdma(dfs);			/*   buffer		    */
 		_get_dfs(cdisk);		/* Covert from record count */
+		free =	  ((LONG) (dfs[0] & 0xff))
+			| ((LONG) (dfs[1] & 0xff) <<  8)
+			| ((LONG) (dfs[2] & 0xff) << 16);
 		free >>= SPKSHF;		/*   to kbytes (8 secs/k)   */
 	}
 	else					/* Not BDOS 3: we must	    */
@@ -1701,7 +1714,18 @@ display()					/*   (STAT afn [SIZE])	    */
 	register int	l;
 
 	add = sizecols = 0; 			/* Calculate layout for     */
+	/* Deviation from DRI source (see also columns() and ro_msg above):   */
+	/* DRI declares kblks and tall as automatics and never initialises    */
+	/* them, then accumulates into both inside the file loop below        */
+	/* (`kblks +=', `tall +=') and prints them on the Total: line.  The   */
+	/* totals are therefore whatever the stack held on entry to display() */
+	/* plus the real sum -- the same shape of bug as PIP's `nsbuf +=      */
 	/* exten' (src/cmd/pip.c, since fixed), and DRI's, not this           */
+	/* port's: cpm8k13/STAT.C:1665 and ref/newos/stat.c:1672-1673 both    */
+	/* declare them uninitialised.  Observed: a drive holding one 1-record*/
+	/* file reported `Total: 5k ... 5-1k blocks' against a per-file line  */
+	/* of 1k, at 0x2022 and at 0x2031 alike.                              */
+	kblks = tall = 0;
 	if ((wide = (columns() > 48))) 		/*   displayed data	    */
 		add = 7;
 	if (sizeset)  				/* Printing physical size?  */

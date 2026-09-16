@@ -18,7 +18,12 @@
 #             bytes and reports its record count; the error path reports a
 #             file that is not there; the copy TYPEs back identical to the
 #             file the packer put on the disk; the CCP's own DIR sees the
+#             new file; and three DRI utilities -- STAT, PIP, DDT -- still
+#             run against this BDOS, with STAT's record arithmetic
 #             agreeing with the copy and PIP's copy TYPEing back identical
+#             too.  Only DDT is still the 1984 binary: STAT and PIP are
+#             built here from DRI's own source and staged over the vendor
+#             .Z8K (Makefile, $(USTAT)/$(UPIP)).
 #   reverify  a SECOND cold boot of the same image: the two files the
 #             first session wrote (one by a transient, one by PIP) are
 #             still there and one of them still reads back byte for byte.
@@ -26,6 +31,12 @@
 # Where the text belongs to this tree it is derived from the source that
 # prints it rather than pinned here, the way tests/signoncount.py reads the
 # banner out of bdosinit(): a reword is then not a failure.  Where it
+# belongs to a 1984 Digital Research binary (DDT) it is pinned, because
+# nothing in this tree can reword it and its exact wording is part of what
+# "the stock utility still runs" means.  STAT's and PIP's text is DRI's
+# too, but this tree now compiles it, so what is asserted about those two
+# is arithmetic and content -- things a reword cannot break and a
+# regression cannot survive.
 #
 # Prints one `FAIL [name] ...' line per broken assertion, in the shape
 # tests/bannerchk.sh and tests/rtctest.c use, and exits nonzero if any.
@@ -123,6 +134,29 @@ verify)
 	want dir 1 "COPY2    TXT"
 	# ---- twice: once TYPEd from FCOPY's copy, once from PIP's
 	typed type 2
+	# ---- STAT: its record arithmetic has to agree with the copy -- 2
+	# records, one FCB, one 1k block -- and it has to read the DPB well
+	# enough to report the drive.
+	#
+	# STAT is no longer the stock binary (see the header): src/cmd/stat.c
+	# is DRI's cpm8k13 STAT.C built here.  Two assertions moved with it.
+	# The Bytes column now reads 1k, not the vendor's 2k, because this
+	# source prints the file's own rounded-up record content,
+	# (rcnt + 7) / 8 (src/cmd/stat.c:1746) -- 2 records is 1k -- where the
+	# vendor binary printed the allocated block instead; the Total: line
+	# below still carries the allocation, and both numbers are now on
+	# screen at once.  And `CP/M-8000 STAT', the vendor sign-on, is gone:
+	# this source prints no sign-on at all (its only version string is
+	# values()'s usage text, src/cmd/stat.c:1185).  What replaced that
+	# assertion is the totals check, which is what the rebuild was for --
+	# DRI accumulates into kblks without initialising it
+	# (src/cmd/stat.c:1687-1698), and over a single file the "-1k blocks"
+	# figure is that file's own k column by construction.
+	grep -qE '^ +2 +1k +1 Dir RW +A:COPY2 +\.TXT$' "$work" ||
+		bad stat "no STAT row reading 2 records / 1k / 1 FCB for A:COPY2.TXT"
+	grep -qE '^Total: +[0-9]+k +1 \( +1 file, +1-1k blocks\)$' "$work" ||
+		bad stattotal "STAT's Total: line does not read one file in one 1k block; \
+display()'s kblks is summing into an uninitialised automatic again"
 	grep -q '^A: RW, Free Space: ' "$work" ||
 		bad statfree "STAT printed no drive free-space line"
 	# ---- PIP (stock DRI) created OUT2.TXT; its contents are covered by

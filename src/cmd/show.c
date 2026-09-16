@@ -299,11 +299,25 @@ int relog;
 
 /* ---------------- reports ---------------- */
 
+/* free kilobytes on the current drive (show.plm:1174-1188).
+
+   Function 46 answers with THREE LITTLE-ENDIAN BYTES of 128-byte record
+   count at the DMA address, fourth byte zero -- CP/M 3's wire form.
+   This used to point the DMA straight at a `long' and read it back,
+   which is right only on a little-endian 8080; on this big-endian Z8001
+   it took the bytes in the wrong order and printed free space wrong by
+   orders of magnitude.  Assemble the count by hand instead.  */
 static VOID prcount()
 {
 	long	recs;
+	char	dfs[4];
 
+	dfs[0] = dfs[1] = dfs[2] = dfs[3] = 0;
+	setdma(dfs);
 	__bdos(BDOS_FREESP, (long) cdisk);
+	recs =	  ((long) (dfs[0] & 0xff))
+		| ((long) (dfs[1] & 0xff) <<  8)
+		| ((long) (dfs[2] & 0xff) << 16);
 	p3(recs >> 3);
 	conout('k');
 }

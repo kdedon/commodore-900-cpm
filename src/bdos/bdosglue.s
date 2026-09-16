@@ -99,6 +99,11 @@ setsupf	=	62
 /           fn 50 = direct BIOS call through a 5-word parameter block
 /    SC #3  BIOS:  r3 = function, rr4 = P1, rr6 = P2, result -> rr6
 /           (syscall.z8k _bios contract)
+/    SC #254 the RSX return trampoline (rsxback): issued by the two
+/           bytes rsxgon plants on a non-segmented caller's stack, and
+/           by nothing else.  A program that issues one by hand unwinds
+/           itself with rubbish, exactly as one that jumps into its own
+/           stack does; it used to reach the panic path instead.
 /    other  a handler recorded via BIOS fn 22 (vector 32+n), else panic
 /
 /  A non-segmented Normal caller's pointer parameters carry a
@@ -131,6 +136,10 @@ traphnd_:
 	jr	eq, biosgate
 	cp	r0, $0x7F01
 	jr	eq, memgate
+	cp	r0, $0x7FFE		/ RSX return trampoline (rsxgon); it
+	jp	eq, rsxback		/   is here and not higher up because
+					/   only a non-segmented caller with a
+					/   module in the chain ever issues it
 	/ any other SC: trap-vector number 32+n (M20 numbering), then the
 	/ recorded-vector-or-panic path shared with the fault stubs
 	ld	r4, r0
@@ -329,6 +338,36 @@ scret:
 /   - a System-mode caller: that is the resident CCP, which reaches the
 /     BDOS by C call anyway (src/seam.c:17) and only arrives here
 /     through the fn-50/62 services above;
+/   - a SPLIT-I/D caller.  Its data references are trapped and rewritten
+/     (Option 6), which an RSX's would not be: the module arrives after
+/     the load and is never scanned, so its own data references would
+/     resolve to the TPA rather than to the D bank.  8080 CP/M 3 has no
+/     split I/D to be faithful to.  DEVIATIONS.md #7 records this one as
+/     structural, and it still is.
+/
+/ THAT SECOND TEST USED TO BE FCW BIT 15, and bit 15 is the SEGMENTED
+/ bit, not the split bit.  Non-segmented covers two containers, not one:
+/ 0xEE0B (split I/D) and 0xEE03 (non-segmented, combined I/D --
+/ x.out.h:21,23).  Only the first has the trapped-data-reference problem;
+/ an 0xEE03 program's data is in the TPA, in the same segment the module
+/ occupies.  So the bit test excluded DDT.Z8K, SDB.Z8K and every other
+/ stock combined-I/D binary for a reason that does not apply to them, and
+/ what it should have asked is what the LOADER knows: `spflag'
+/ (splitld.c:30, set at pgmld.c:331, per-process and saved across a swap
+/ at proc.c:351,364) is exactly "the loaded program is split I/D".
+/
+/ Letting an 0xEE03 caller in costs one thing the bit test hid.  The gate
+/ hands the module control by IRET with the CALLER'S FCW, so the module
+/ ran in the caller's mode -- and every module is assembled segmented
+/ (`.shri': rr14 as a stack pointer, segmented register indirect, 4-byte
+/ `ret' frames), because it must also serve the CCP, which is segmented,
+/ and one image cannot be both.  So a non-segmented caller's module call
+/ is entered in SEGMENTED mode and has to come back out of it, and `ret'
+/ cannot change mode.  rsxgon below builds a return trampoline on the
+/ caller's own stack -- in the TPA, the segment the module lives in --
+/ whose one instruction is `sc 254', and rsxback restores the caller's
+/ mode, r14, r6 and PC from the words beneath it.  The cost is one extra
+/ trap per intercepted call, and only for a non-segmented caller.
 /
 / A third caller -- one already inside the RSX area -- is a module
 / passing the call down, and that is NOT the same thing as a call for
@@ -348,6 +387,9 @@ rsxenter:
 	ld	r1, rr14(30)		/ caller's FCW
 	bit	r1, $14
 	jr	nz, notrsx		/ system caller
+	ld	r1, spflag_
+	test	r1
+	jr	nz, notrsx		/ split-I/D program (see above)
 	ld	r2, rr14(32)		/ caller's PC segment word.  The
 	ld	r1, r2			/   hardware pushes it in the LONG
 	and	r1, $0x7F00		/   form -- bit 15 set, segment in
@@ -394,6 +436,9 @@ rsxup:
 	jr	z, notrsx		/ the last module: on to the BDOS
 	inc	r3, $1			/ the return address again
 rsxgo:
+	ld	r1, rr14(30)		/ caller's FCW
+	bit	r1, $15
+	jr	z, rsxgon		/ non-segmented: the trampoline below
 	ldctl	r1, NSPOFF		/ push the return address on the
 	sub	r1, $4			/   caller's own stack, segment
 	ldctl	NSPOFF, r1		/   first: a segmented `ret' frame
@@ -408,6 +453,93 @@ rsxgo:
 	ld	r3, rr4(6)
 	ld	rr14(34), r3
 	jr	scret
+
+/
+/ A non-segmented (0xEE03) caller.  Four things differ from the path
+/ above, and each of them is the same fact seen from a different side:
+/ in non-segmented Normal execution the user's r14 is a DATUM, not a
+/ segment, so the stack is addressed as TPASEG:NSPOFF; the module is
+/ segmented code, so it is entered with the segmented bit set and needs
+/ r14 to BE the TPA segment word while it runs; its parameter register
+/ rr6 must be the segmented pointer the module reads, which for a
+/ non-segmented caller is TPASEG:r7 (the same substitution notrsx makes
+/ below); and its `ret' cannot put any of that back, so it returns into
+/ a trampoline instead.
+/
+/ The frame built below the caller's stack pointer, low address first:
+/
+/	+0  TPASEG	the module's segmented `ret' address ...
+/	+2  TSP+4	  ... which is the word after it
+/	+4  sc 254	the one instruction: back into rsxback
+/	+6  caller r14	  the four words rsxback puts back
+/	+8  caller r6
+/	+10 caller FCW
+/	+12 caller PC
+/
+/ Fourteen bytes of the caller's stack, which has DEFSTACK (pgmld.c) of
+/ headroom above the base page, plus whatever the module itself uses.
+/ The trampoline is code on the stack because the stack is in the TPA --
+/ the one segment every module and every transient shares -- so there is
+/ nowhere else a Normal-mode `ret' could land that would not have to be
+/ allocated and accounted for.
+/
+rsxgon:
+	ldctl	r1, NSPOFF
+	sub	r1, $14
+	ldctl	NSPOFF, r1
+	ld	r4, $[TPASEG*256]	/ NOT NSPSEG: see above
+	ld	r5, r1
+	ld	r2, $[TPASEG*256]
+	ld	(rr4), r2		/ +0 return segment
+	ld	r2, r1
+	add	r2, $4
+	ld	rr4(2), r2		/ +2 return offset: the `sc' at +4
+	ld	r2, $0x7FFE
+	ld	rr4(4), r2		/ +4 sc 254
+	ldctl	r2, NSPSEG
+	ld	rr4(6), r2		/ +6 the caller's own r14
+	ld	r2, rr14(12)
+	ld	rr4(8), r2		/ +8 the caller's own r6
+	ld	r2, rr14(30)
+	ld	rr4(10), r2		/ +10 the caller's own FCW
+	ld	rr4(12), r3		/ +12 the caller's return offset
+	or	r2, $0x8000		/ the module runs segmented
+	ld	rr14(30), r2
+	ld	r2, $[TPASEG*256]
+	ldctl	NSPSEG, r2		/ ... on a segmented stack pointer
+	ld	rr14(12), r2		/ ... with a segmented rr6
+	ld	r4, r2			/ resume at r0's entry, as above
+	ld	r5, r0
+	ld	r3, rr4(6)
+	ld	rr14(34), r3
+	jr	scret
+
+/
+/ SC #254: the return trampoline above, reached by the module's `ret'.
+/ The module's exit registers are in the frame -- r7 is the result it
+/ answers with -- and NSPOFF is TSP+4, because the `ret' popped the four
+/ bytes at +0.  Everything the caller owned and this path borrowed comes
+/ back from the words at +6..+12, and the caller resumes at the
+/ instruction after its own `sc 2' in its own mode, having seen nothing
+/ but a BDOS call that answered.
+/
+rsxback:
+	ldctl	r1, NSPOFF		/ = TSP+4
+	ld	r4, $[TPASEG*256]
+	ld	r5, r1
+	ld	r2, rr4(2)		/ +6 the caller's r14
+	ldctl	NSPSEG, r2
+	ld	r2, rr4(4)		/ +8 the caller's r6
+	ld	rr14(12), r2
+	ld	r2, rr4(6)		/ +10 the caller's FCW
+	ld	rr14(30), r2
+	ld	r2, rr4(8)		/ +12 the caller's PC offset
+	ld	rr14(34), r2
+	ld	r2, $[TPASEG*256]
+	ld	rr14(32), r2		/ its segment: the gate checked it
+	add	r1, $10			/ drop the trampoline
+	ldctl	NSPOFF, r1
+	jp	scret
 
 /
 / direct BIOS call function (BDOS fn 50): rr6 points at a 5-word block

@@ -25,6 +25,7 @@ EXTERN	XADDR	map_adr();
 EXTERN	UWORD	bdos();
 EXTERN	VOID	initexc();
 EXTERN	WORD	ldimage();	/* the loader half of ccprun (src/ccp)	*/
+EXTERN	VOID	ccpsvinit();	/* and its state-page builder		*/
 
 /*  src/bios/pgalloc.c -- the pages themselves.  */
 EXTERN	WORD	pgalloc();
@@ -94,6 +95,9 @@ WORD	prio;
 }
 
 /* Mirror the running process's console for the per-character BIOS path. */
+
+GLOBAL	WORD		concur = 0;
+
 MLOCAL	struct pdesc	pd[PNPROC];
 MLOCAL	WORD		pcur = 0;	/* index of the running process	*/
 
@@ -323,6 +327,8 @@ MLOCAL VOID padopt()
 		pd[0].pd_state = PS_LIVE;
 		pd[0].pd_seg   = 0;		/* it is the TPA */
 		pd[0].pd_con   = 0;
+		pd[0].pd_chome = 0;		/* console 0 is where the
+						   adopted process belongs */
 		for (i = 0; i < 8; i++)
 			pd[0].pd_name[i] = ' ';	/* nothing recorded the file
 						   this one came from	*/
@@ -331,6 +337,7 @@ MLOCAL VOID padopt()
 		pd[0].pd_inc   = 0;
 		pd[0].pd_wait  = PW_RUN;	/* it is the one running */
 		PCUR(0);
+		concur = 0;
 		pnlive = 1;
 		sysstk = pd[0].pd_stk;		/* which is PSTKTOP, the value
 						   it already held	*/
@@ -385,7 +392,14 @@ GLOBAL WORD pspother()
  * Swap the child into the TPA for loading, then restore the parent.
  * Nested BDOS calls use child stvars; parent state is restored on exit. */
 
+/*  pcrgen() is what pcreate() has always been, plus the two things a
+    CONSOLE SESSION needs and a launched program must not have: a console
+    of its own rather than its parent's, and the CCP state page built in
+    its page.  `con' < 0 means "inherit", which is fn 144.  */
+
+MLOCAL WORD pcrgen(infop, con, sess)
 XADDR	infop;
+WORD	con, sess;
 {
 	REG struct pdesc *me, *kid;
 	REG WORD	i, k, seg;
@@ -491,7 +505,9 @@ XADDR	infop;
 	    boot.  Without it the CCP loaded below starts on zeros -- no
 	    current disk, no command pointer -- and the second console's
 	    first prompt is a crash.  */
+	if (sess)
 		ccpsvinit(&psv[kidx]);
+
 	/*  Open and load, exactly as ccprun() does on a warm boot.  Where
 	    ccprun() forces user 0 (a session in user 5 must still find
 	    its command processor), this does not: a program launched by
@@ -565,6 +581,16 @@ XADDR	infop;
 	kid->pd_f.pf_nspseg = ctx.regs[14];
 	kid->pd_f.pf_nspoff = ctx.regs[15];
 
+	/*  THE USER AREA IS THE CONSOLE NUMBER, which is what MP/M did
+	    and what makes a second console a second SESSION rather than a
+	    second window on the same files.  It is set here and not before
+	    the load, because the load opens CCP.Z8K and CCP.Z8K is in user
+	    zero: a session logged in first would not find its own command
+	    processor.  `gbls' is still the child's at this point -- pload()
+	    below is what gives the caller its own back.  */
+	if (sess)
+		gbls.user = (UBYTE)con;
+
 	psave(kid);			/* the child's stvars and fence,
 					   which are live in the globals
 					   right now		*/
@@ -576,6 +602,11 @@ XADDR	infop;
 					   process at the gate is: pd_f is
 					   the whole of it	*/
 	kid->pd_seg   = seg;		/* its image is parked on seg	*/
+	kid->pd_con   = (con < 0 ? me->pd_con : con);
+	kid->pd_chome = kid->pd_con;	/* where it belongs, which is where
+					   it starts and never moves: C10,
+					   proc.h and procdead()	*/
+	kid->pd_sess  = sess;
 	for (i = 0; i < 8; i++)
 		kid->pd_name[i] = pq.pq_fcb[1 + i];	/* the FCB's name field,
 							   blank-padded already */
@@ -596,8 +627,68 @@ XADDR	infop;
 }
 
 
+/****************************************************
+**
+** pcreate() -- BDOS function 144.  A program
+**		launching a program: the child gets its
+**		parent's console and dies at its warm
+**		boot, which is what a transient is.
+**
+****************************************************/
+
+GLOBAL WORD pcreate(infop)
+XADDR	infop;
+{
+	return (pcrgen(infop, (WORD)-1, (WORD)0));
+}
+
+
 /* Start a CCP on console con in user area con. Multiple sessions may
  * share a console; ownership serializes their input. */
+
+MLOCAL struct pcreq	sq;		/* the request psession builds	*/
+
+/*  "CCP     Z8K", the eleven FCB name bytes, blank-padded.  Not a local
+    initialiser: this compiler puts one of those on the stack every call
+    and this table is constant.  It is the same name ccprun()'s `ccpfcb'
+    carries, and if the two ever disagree the second console loads
+    something other than the command processor.  */
+
+MLOCAL BYTE	ccpname[11] = { 'C','C','P',' ',' ',' ',' ',' ','Z','8','K' };
+
+GLOBAL WORD psession(con)
+WORD	con;
+{
+	REG WORD	i;
+
+	if (con <= 0 || con >= PNCON)
+		return (PC_NOCON);
+
+	for (i = 0; i < sizeof sq; i++)
+		((BYTE *)&sq)[i] = 0;
+	for (i = 0; i < 11; i++)
+		sq.pq_fcb[i + 1] = ccpname[i];	/* drive byte stays 0 = default */
+
+	return (pcrgen(map_adr((XADDR)&sq, 0), con, (WORD)1));
+}
+
+
+/* Start the cold boot's ONE extra session: on the console bound to SCC-B,
+ * and only when console 0 is video (BIOS function 33 decides; D8, the
+ * owner's decision following COHERENT's /etc/ttys).  A serial operator gets
+ * none.  Other bound consoles get nothing automatically; SESSION n still
+ * reaches them.  Insufficient memory or a missing CCP leaves no session. */
+
+GLOBAL VOID pcoldses()
+{
+	REG WORD c;
+
+	c = bconses();
+	if (c > 0)
+		psession(c);
+}
+
+
 /* Resume pnxt after the caller saves its state. Gate-parked processes use
  * presume; processes parked in a BDOS call resume their supervisor stack. */
 
@@ -615,6 +706,7 @@ GLOBAL VOID pgone()
 		p->pd_seg = 0;
 	}
 	PCUR(pnxt);
+	concur = p->pd_con;
 	pload(p);
 	sysstk = p->pd_stk;		/* xfer_, ccpentry_ and presume_ all
 					   reset the system stack to this */
@@ -755,6 +847,14 @@ GLOBAL WORD procdead()
 					   unless a BDOS error killed the
 					   program inside a locked region */
 	pconrel();			/* release console ownership on every termination path */
+	/*  A SESSION DOES NOT DIE HERE.  Returning 0 sends the BIOS on to
+	    the ordinary warm boot (bios900.c case 1), which reloads the CCP
+	    into the page this process is already on -- its own page, its own
+	    console, its own user area, because all three are this process's
+	    and none of them is in the transient that just ended.  That is
+	    precisely what process 0 has always done; a session is process 0
+	    with a different console number.  */
+	if (pnlive < 2 || pcur == 0 || pd[pcur].pd_sess)
 		return (0);
 
 	/*  This process is about to stop existing, so its scratch segments
@@ -783,6 +883,7 @@ GLOBAL WORD procdead()
 	pd[pcur].pd_seg   = 0;
 	pnlive--;
 	PCUR(nxt);
+	concur = pd[nxt].pd_con;
 	psched = (pnlive > 1);
 	pload(&pd[nxt]);
 	sysstk = pd[nxt].pd_stk;
@@ -823,6 +924,7 @@ WORD	con;
 {
 	padopt();
 	pd[pcur].pd_con = con;
+	concur = con;
 	return (con);
 }
 
@@ -842,15 +944,129 @@ WORD	con;
 				break;
 		if (j == 8) {
 			pd[i].pd_con = con;
+			if (i == pcur)
+				concur = con;
 			return (1);
 		}
 	}
 	return (0);
 }
+
+
 /* Console input requires ownership; attach waits until its owner detaches.
  * Detach hands ownership directly to one waiter so the previous owner
  * cannot retake it before that waiter runs. Selecting a console alone
  * does not acquire it. Warm boot preserves the home console. */
+
+GLOBAL WORD pconown(con)
+WORD	con;
+{
+	REG WORD i, m;
+
+	m = 1 << con;
+	for (i = 0; i < PNPROC; i++)
+		if (pd[i].pd_state == PS_LIVE && (pd[i].pd_catt & m))
+			return (i);
+	return (-1);
+}
+
 /* Output polling may consume input only on an unowned console or one
  * owned by this process. It cannot block to acquire another owner's console. */
+
+GLOBAL WORD pconmine(con)
+WORD	con;
+{
+	REG WORD o;
+
+	if (pnlive == 0)
+		return (1);		/* nothing adopted: no owners yet */
+	o = pconown(con);
+	return (o < 0 || o == pcur);
+}
+
+MLOCAL VOID pconhand(con)
+REG WORD con;
+{
+	REG WORD n, j;
+
+	j = pcur;
+	for (n = 0; n < PNPROC; n++) {
+		if (++j >= PNPROC)
+			j = 0;
+		if (pd[j].pd_state == PS_LIVE && pd[j].pd_wait == PW_CATT &&
+		    pd[j].pd_wobj == con) {
+			pd[j].pd_catt |= (1 << con);
+			pd[j].pd_wait = PW_RUN;
+			pnwait--;
+			return;
+		}
+	}
+}
+
+GLOBAL WORD pconatt(con)
+WORD	con;
+{
+	padopt();
+	if (con < 0 || con >= PNCON)
+		return (0);
+	for (;;) {
+		if (pd[pcur].pd_catt & (1 << con))
+			return (1);	/* mine -- including the case
+					   pconhand() has just made true */
+		if (pconown(con) < 0) {
+			pd[pcur].pd_catt |= (1 << con);
+			return (1);
+		}
+		/*  Somebody else has it.  Out of the rotation until they
+		    let go.  pwait() answering FALSE says nobody else could
+		    run just now, which is not an answer about the console,
+		    so go round again -- the same thing getch() does with
+		    the same FALSE.					*/
+		pwait(PW_CATT, con, 0L);
+	}
+}
+
+GLOBAL WORD pcondet(con)
+WORD	con;
+{
+	padopt();
+	if (con < 0 || con >= PNCON)
+		return (0);
+	if ((pd[pcur].pd_catt & (1 << con)) == 0)
+		return (0);
+	pd[pcur].pd_catt &= ~(1 << con);
+	pconhand(con);
+	return (1);
+}
+
+GLOBAL VOID pconrel()
+{
+	REG WORD c, m, keep;
+
+	if (pnlive == 0)
+		return;			/* nothing adopted, so there is no
+					   mask to give back		*/
+	keep = 1 << pd[pcur].pd_chome;
+	if ((m = pd[pcur].pd_catt & ~keep) == 0)
+		return;
+	pd[pcur].pd_catt &= keep;
+	for (c = 0; m; c++, m >>= 1)
+		if (m & 1)
+			pconhand(c);
+}
+
+
 /* Store/read the running descriptor's default DMA for function 13. */
+
+GLOBAL VOID pdmaset(addr)
+XADDR	addr;
+{
+	padopt();
+	pd[pcur].pd_dma0 = addr;
+}
+
+GLOBAL XADDR pdmaget()
+{
+	padopt();
+	return (pd[pcur].pd_dma0);
+}

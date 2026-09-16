@@ -1704,6 +1704,7 @@ free_sp(dsknum)
 UBYTE dsknum;		/* disk number to get free space of */
 {
     LONG records;
+    UBYTE dmabuf[4];		/* the v3 wire form, assembled by hand	*/
     REG UWORD   *alvec;
     REG UWORD	bitmask;
     REG UWORD	alvword;
@@ -1727,4 +1728,10 @@ UBYTE dsknum;		/* disk number to get free space of */
     }
     /* Function 46 returns three little-endian count bytes and a zero fourth
  * byte, independent of the CPU's native byte order. */
+
+    dmabuf[0] = (UBYTE)( records	 & 0xffL);
+    dmabuf[1] = (UBYTE)((records >>  8) & 0xffL);
+    dmabuf[2] = (UBYTE)((records >> 16) & 0xffL);
+    dmabuf[3] = 0;
+    cpy_out(dmabuf, GBL.dmaadr, (LONG)sizeof dmabuf);
 }

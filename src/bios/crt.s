@@ -16,6 +16,7 @@
 	.globl	scentry_		/ SC trap gate (sys/bdosglue.s)
 	.globl	tepa_, tprv_, tseg_, tnmi_, tnvi_, tvi_	/ fault stubs (trap.s)
 	.globl	ttick_, tvidsm_		/ tick + dismiss stubs (trap.s)
+	.globl	sccrxi_			/ SCC receive interrupt (trap.s, C8)
 
 / The segment every compiled frame reference is relocated against: cc2 emits
 / each frame address's segment byte as a relocation adding SS, so the objects
@@ -73,21 +74,33 @@ psa:
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	sccrxi_			/ vector 0x14: SCC Rx available,
+					/   chip 0 (motherboard U74) channel B
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	sccrxi_			/ vector 0x1C: SCC Rx available,
+					/   chip 0 channel A -- the spare port, /dev/tty51
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	sccrxi_			/ vector 0x24: SCC Rx available,
+					/   chip 1 (LR board U31) channel B
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	sccrxi_			/ vector 0x2C: SCC Rx available,
+					/   chip 1 channel A
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	sccrxi_			/ vector 0x34: SCC Rx available,
+					/   chip 2 (LR board U36) channel B
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_
+	.long	sccrxi_			/ vector 0x3C: SCC Rx available,
+					/   chip 2 channel A
 	.long	tvi_
 	.long	tvi_
 	.long	tvi_

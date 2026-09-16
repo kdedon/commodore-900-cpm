@@ -25,6 +25,12 @@ ENDIN	= $(ENDWORD)\r
 
 # A CP/M-only disk has one boot entry, so scripted input needs no menu selection.
 OSSEL	=
+# Typed first by every target that needs a session on console 1.  Until D8
+# the cold boot started one on every bound console (src/bdos/proc.c
+# pcoldses); it now starts one only at a VIDEO console, on SCC-B, and the
+# emulator's console is serial, so those targets start it themselves.  What
+# they assert is unchanged: the same session exists, it is just asked for.
+SESS1	= SESSION 1\r
 # POSIX sh reports tee's status for a pipeline. Save the emulator status
 # inside the group, then check it with EMUOK after tee drains the transcript.
 # EMUCD validates the dependency before changing directories.
@@ -207,16 +213,106 @@ verify-v1: all
 # conbrk()'s own path -- after a preamble that forces conbrk()'s poll
 # counter to a known zero, so the first poll inside the measured loop is
 # exactly its 8th character (CONBRK_POLL, conbdos.c) and not some
+# unknowable offset left by CCP's own command-line echo.  `CONBRK R'
+# reports the BDOS's program return code (function 108).
 #
+# HOW A KEYSTROKE REACHES A PROGRAM THAT IS PRINTING.  It could not,
 # until the emulator grew a primitive for it, and an earlier revision had to strip
+# the ^S/^Q/^C sessions out of this target for that reason: the
+# emulator PACES --input, holding each byte until the guest looks ready
+# to read it (a prompt printed, the console quiet, or the guest spinning
+# on the receiver), because a byte handed over early is swallowed by
+# whatever read the guest is actually in.  A guest in a print loop never
+# looks ready -- so the ^S arrived only once CONBRK had finished, which
+# is the one moment it means nothing.  The emulator now says this
+# explicitly instead of inferring it:
 #
+#   \\i   marks ONE byte as type-ahead -- handed to the receiver the
+#        moment it is free, with no pacing at all, the way a person
+#        typing ahead of a running program delivers one.  The rest of
+#        the script stays paced, which is why the ^C session's
+#        following `CONBRK R' still waits for its A> prompt.
+#   --input-mark=CONBRK-START holds those type-ahead bytes until the
+#        guest has PRINTED that text.  "Send it the moment that
+#        appears" is the one synchronisation this test can state
+#        exactly, and unlike an instruction count it does not move when
+#        the BDOS or the CCP is rebuilt.
 #
+# CONBRK-START is printed under CM_NOSTOP, with conbrk()'s counter
+# forced to zero and no poll made, so the control byte is sitting in the
+# receiver before the measured loop emits its first character -- the
+# type-ahead conbrk.c's own header has always assumed.  \023/\021/\003
+# are ^S/^Q/^C: unlike \\i they are printf OCTAL escapes and reach the
+# guest as the real bytes.
+#
+# Four sessions, one `CONBRK P' invocation, differing only in what is
+# typed at it:
+#
+#   plain log   nothing typed -- the control case, and the regression
 #               the widening could have introduced silently: the widened
+#               poll interval must not disturb an ORDINARY run.
+#   halt log    ^S and nothing else ever -- proves ^S stops output, by
+#               proving the session neither completes nor returns to a
+#               prompt.
+#   resume log  ^S then ^Q -- proves ^Q resumes it LOSSLESSLY, by
+#               proving the session does complete with the same exact,
+#               unbroken sequence the plain one produced.
+#   ^C log      ^C -- proves ^C warm boots: the program is abandoned
+#               where it stood, yet A> returns with nothing sent to
+#               release it, which the halt session shows a ^S does not
+#               do.  tests/conbrkcheck.py's header records why RC_CTLC
+#               is NOT read back afterward (the CCP clears the return
+#               code before every command it runs).
+#
+# The stopped sessions also carry the poll interval's own bound:
+# whatever prefix of the pattern got out before the stop must be an
+# exact, unbroken prefix no longer than CONBRK_POLL - 1.  conbrkcheck.py
+# reads CONBRK_POLL out of src/bdos/conbdos.c rather than restating it.
+#
+# The halt session is the one run here that is SUPPOSED to hit its
+# instruction budget -- a stopped guest never goes idle at a prompt, so
+# there is nothing to stop the run -- and it pays that budget in full,
+# so it gets its own smaller one.  CBRKHALTMAX is about three times the
+# ~47M instructions a COMPLETE `CONBRK P 0200' session takes: long past
+# where an unstopped run would have finished and gone quiet at A>.
 CBRKTOKENS = 0200
+CBRKHALTMAX = 150000000
+CBRKMARK = CONBRK-START
 CBRKFMT       = $(OSSEL)CONBRK P $(CBRKTOKENS)\rCONBRK R\r$(ENDIN)
+CBRKHALTFMT   = $(OSSEL)CONBRK P $(CBRKTOKENS)\r\\i\023
+CBRKRESUMEFMT = $(OSSEL)CONBRK P $(CBRKTOKENS)\r\\i\023\\i\021
+CBRKCTLCFMT   = $(OSSEL)CONBRK P $(CBRKTOKENS)\r\\i\003CONBRK R\r
+# CBRKIMG, not $(CPMDISK): CONBRK.Z8K is an exerciser (ATEST), stripped
+# from the release medium $(CPMDISK) builds -- this needs the dev image.
+CBRKIMG = build/conbrktest.bin
+CBRKLOG = build/verify-conbrk.log
+CBRKHALTLOG   = build/verify-conbrk-halt.log
+CBRKRESUMELOG = build/verify-conbrk-resume.log
+CBRKCTLCLOG   = build/verify-conbrk-ctlc.log
 .PHONY: verify-conbrk
 verify-conbrk: all
+	$(MKDISK) $(CBRKIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CBRKIMG)) \
+		--input="$$(printf '$(CBRKFMT)')" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } | tee $(abspath $(CBRKLOG))
 	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CBRKIMG)) \
+		--input="$$(printf '$(CBRKHALTFMT)')" --input-mark='$(CBRKMARK)' \
+		--max=$(CBRKHALTMAX) --stop-on=none 2>/dev/null; \
+		$(EMUSTAT); } | tee $(abspath $(CBRKHALTLOG))
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CBRKIMG)) \
+		--input="$$(printf '$(CBRKRESUMEFMT)')" --input-mark='$(CBRKMARK)' \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } | tee $(abspath $(CBRKRESUMELOG))
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CBRKIMG)) \
+		--input="$$(printf '$(CBRKCTLCFMT)')" --input-mark='$(CBRKMARK)' \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } | tee $(abspath $(CBRKCTLCLOG))
+	@$(EMUOK)
+	python3 tests/conbrkcheck.py $(CBRKTOKENS) $(CBRKLOG) $(CBRKHALTLOG) \
+		$(CBRKRESUMELOG) $(CBRKCTLCLOG)
 
 # ---- split-I/D shim offline validation (dev instruments; the on-target
 # scanner (src/bdos/zsplit.c, run by pgmld at load time) is what actually
@@ -428,6 +524,7 @@ verify-z80: all
 	python3 -c 'import sys; sys.stdout.buffer.write(bytes(range(128)))' 		> $(Z80DISK)/Z80IN.BIN
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) 		--label-mode $(LABELMODE) $(Z80CPMA) $(CPMA_BLOCKS) $(Z80DISK)
 	$(MKDISK) $(Z80IMG) $(CPMSYS) $(Z80CPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(Z80IMG)) 		--input="$(OSSEL)$(SESS1)Z80 DUMP.COM Z80IN.BIN" 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } 		| tee $(abspath $(Z80LOG))
 	@$(EMUOK)
 	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- BIOS function 25 handed out no segment."; 		     echo "            That is the whole gate: without it the guest has"; 		     echo "            no 64 KB and nothing below this can run."; exit 1; }
 	@grep -q 'z80: load: ok' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP.COM did not load"; exit 1; }
@@ -499,6 +596,7 @@ verify-z80pip: all
 		--label-mode $(LABELMODE) $(Z80PCPMA) $(CPMA_BLOCKS) $(Z80PDISK)
 	$(MKDISK) $(Z80PIMG) $(CPMSYS) $(Z80PCPMA) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(Z80PIMG)) \
+		--input="$(OSSEL)$(SESS1)Z80 PIP.COM VERIFY.OUT=VERIFY.IN" \
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(Z80PLOG))
 	@$(EMUOK)
@@ -601,6 +699,7 @@ I86SUB	= build/i86sub.txt
 # group reached only through the paragraph i86bpage() published for it.
 # It must come before SUBMIT for the same reason GENCMD does -- SUBMIT
 # ends the session.
+I86VERIFYIN = $(OSSEL)$(SESS1)CPM86 PIP.CMD I86OUT.TXT=I86IN.TXT\rCPM86 GENCMD.CMD I86HEX\rCPM86 I86MG.CMD\rCPM86 SUBMIT.CMD I86SUB\r
 # The host run's own $$$.SUB, written by tests/i86test.c section 8c as it
 # runs, so that the target's copy is compared against bytes a run produced
 # and not against bytes someone typed out.
@@ -634,6 +733,12 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(I86LOG))
 	@$(EMUOK)
+	@# ONE HIGHER SINCE C10.  A session runs on console
+	@# 1 (SESSION 1, typed first: since D8 a serial boot starts none) and it takes the first page out of
+	@# the pool, so every number handed out below it moves up by one.
+	@# The numbers are still pinned rather than matched loosely: what
+	@# they say is that fn 25 handed out THREE DIFFERENT consecutive
+	@# segments, and that is the gate.
 	@grep -q 'i86: code segment 29, data segment 2A, staging segment 2B' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- BIOS function 25 handed out no segments."; \
 		     echo "            That is the whole gate: a small-model .CMD needs"; \
@@ -700,6 +805,12 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@# 2A is given back after the file is staged; three more come from
 	@# BIOS function 25 for the extra, stack and auxiliary groups.  Six
 	@# segments held at once out of a pool of seven (src/bios/pgalloc.c).
+	@# EVERY NUMBER HERE MOVED UP BY ONE AT C10 and nothing else about
+	@# the claim did: the console-1 session (SESSION 1 since D8) holds the
+	@# first page (src/bdos/proc.c psession), so the pool this run draws
+	@# on starts one higher.  Six segments held at once out of the
+	@# seven, with one of the seven now permanently spoken for, is the
+	@# tightest this target has ever run -- and it still fits.
 	@# THE NUMBERS MOVED DOWN BY 0x10 AT F5, and again nothing else about
 	@# the claim did: the pool used to be logical segments 0x38..0x3E,
 	@# which included the ROM's two display planes 0x3A and 0x3B, so this
@@ -708,6 +819,7 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@grep -q 'i86: extra segments: 2C 2D 2E' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- BIOS function 25 did not supply the"; \
 		     echo "            three further segments a five-group .CMD"; \
+		     echo "            needs.  The pool is seven, one is the console"; \
 		     echo "            1 session's, and this run holds six: 29 2A 2C"; \
 		     echo "            2D 2E for the groups and 2B to stage in."; exit 1; }
 	@# One line per group: form, the guest paragraph it was given, the
@@ -1442,6 +1554,18 @@ verify-sdb: all
 #          leap 29 February, a Monday -- must round-trip, and out-of-range
 #          arguments must still be rejected without touching the chip.
 #  race    the same, with the crystal overclocked (--rtc-ips) so seconds
+#          carry often, and DATE C -- the continuous form, which reads the
+#          clock over and over -- run for a fixed instruction budget.  The
+#          thousands of reads that produces sweep the whole second, so a
+#          carry lands inside a thirteen-register read because there is
+#          nowhere else for it to land, not because anything was aimed.
+#          rtc900.c takes the image twice and retries until the two agree,
+#          so every read must still print a valid time AND at least one
+#          read must have been retried -- more register reads than the 26
+#          a clean pair needs per line printed, and at least one carry
+#          inside a /CS transaction (both counted by the emulator and
+#          reported on stderr).  See the RTCRACEIPS block below for why
+#          this leg no longer moves when resident text changes size.
 #  noclock --rtc=none, a board with no module fitted: fn 23 must report
 #          "no clock" rather than invent a time, and a set must say so.
 RTCIMG	= build/rtctest.bin
@@ -1451,10 +1575,20 @@ RTCSEED	= 2026-07-31T14:32:10
 # The rate must allow rtcget's four retry pairs to converge while producing
 # at least one retry (26 excess register reads) in the instruction budget.
 # Use rtc-race-sweep to check that margin after changing the driver.
+RTCRACEIPS = 20000
+# The race leg cannot end on its own: DATE C loops until a key it will never
+# be sent, which is the point -- the reads have to keep coming for the sweep
+# to cover the second.  So it coasts to this budget by design, as
+# verify-conclk does to $(CONCLMAX).  ~3,400 clock reads and ~2,900 carries,
+# which is roughly 800 retried reads at $(RTCRACEIPS); a hundredth of that
+# would still pass.  $(EMUIDLE) is still passed so that a leg which DID end
+# early -- a give-up returns to the CCP -- fails fast instead of coasting.
+RTCRACEMAX = 60000000
 RTCLOG	= build/verify-rtc.log
 RTCRACELOG = build/verify-rtc-race.log
 RTCNONELOG = build/verify-rtc-noclock.log
 RTCVERIFYIN = $(OSSEL)DATE\rDATE\rDATE 03/01/04 07:08:09\rDATE\rDATE 13/45/99 99:99:99\rDATE Q\rDATE 01/01/78 00:00:00\rDATE 12/31/77 12:34:56\rDATE\rDATE 07/04/05 12:34:56\r$(ENDIN)
+RTCRACEIN = $(OSSEL)DATE C\r
 RTCNONEIN = $(OSSEL)DATE\rDATE 07/31/26 14:32:10\rDATE\r$(ENDIN)
 .PHONY: verify-rtc
 verify-rtc: all
@@ -1486,11 +1620,23 @@ verify-rtc: all
 		|| { echo "verify-rtc: FAIL -- 2005-07-04 did not round-trip"; exit 1; }
 	@test "`sed -n 's/.*, leap \([0-9]*\),.*/\1/p' $(RTCLOG).err`" = 3 \
 		|| { echo "verify-rtc: FAIL -- the leap-year selection written for 2005 is not the datasheet's countdown code 11"; exit 1; }
+	@echo "verify-rtc: race leg -- DATE C for $(RTCRACEMAX) instructions;"
+	@echo "            thousands of clock lines, so this one is not tee'd:"
+	@echo "            the transcript is $(RTCRACELOG)."
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(RTCIMG)) --rtc=$(RTCSEED) \
+		--rtc-ips=$(RTCRACEIPS) --input="$(RTCRACEIN)" --max=$(RTCRACEMAX) \
+		$(EMUIDLE) 2>$(abspath $(RTCRACELOG)).err; $(EMUSTAT); } \
+		> $(abspath $(RTCRACELOG))
 	@$(EMUOK)
+	@tail -2 $(RTCRACELOG)
 	@tail -1 $(RTCRACELOG).err
 	@grep -q 'No clock' $(RTCRACELOG) \
 		&& { echo "verify-rtc: FAIL -- a read across a carry was not recovered"; exit 1; } || true
+	@n=`tr -d '\r' < $(RTCRACELOG) | grep -cE '^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) [0-9][0-9]/'`; \
+	r=`sed -n 's/.*, \([0-9]*\) reads,.*/\1/p' $(RTCRACELOG).err`; \
+	test "$$n" -ge 100 \
+		|| { echo "verify-rtc: FAIL -- DATE C printed only $$n times: the continuous read did not loop, so nothing swept the second"; exit 1; }; \
+	test "`expr $$r - 26 \* $$n`" -ge 26 \
 		|| { echo "verify-rtc: FAIL -- no read was retried, so no carry was straddled"; exit 1; }
 	@test "`sed -n 's/.*(\([0-9]*\) inside a .CS transaction).*/\1/p' $(RTCRACELOG).err`" -ge 1 \
 		|| { echo "verify-rtc: FAIL -- no carry landed inside a transaction"; exit 1; }
@@ -1504,6 +1650,16 @@ verify-rtc: all
 		|| { echo "verify-rtc: FAIL -- fn 23 set did not report the missing clock"; exit 1; }
 	@echo "verify-rtc: PASS -- live clock read, set round-tripped, carry straddle recovered, absent clock reported"
 
+# ---- rtc-race-sweep: the RTCRACEIPS band, measured ----
+# This target measures; it does not tune.  RTCRACEIPS stopped being an aim
+# when the race leg went to DATE C (see the block above), so there is no
+# constant here to re-choose after a size change.  What tests/rtcsweep.sh
+# still produces is the EVIDENCE: the two-stage table (a range on the base
+# seed, survivors x six seeds) that shows where the give-up floor is, how
+# much retry margin each rate has, and that the setting above sits in the
+# middle of a wide flat band rather than on a spike.  That table is what the
+# comment block above quotes.  Worth re-running when rtc900.c's own read
+# loop changes length -- the one thing the floor depends on.
 #
 # Deliberately named without a `verify-' prefix: verify-all enumerates
 # targets by matching `^verify-[a-z0-9-]*:' against this file, and a sweep
@@ -1512,10 +1668,14 @@ verify-rtc: all
 # slow to sit in the suite. `make all' does not reach it either: nothing in
 # `all's dependency graph names it. Reached only by `make rtc-race-sweep'.
 #
+# Uses the SAME race medium, input and budget as verify-rtc (rebuilt fresh,
+# since a stale $(RTCIMG) from some other target would measure a different
+# system), so the band it reports is the band the leg actually runs in.
 .PHONY: rtc-race-sweep
 rtc-race-sweep: all
 	$(MKDISK) $(RTCIMG) $(CPMSYS) $(CPMAIMG)
 	@sh tools/deps.sh -n emu '$(EMU)'
+	@EMU='$(EMU)' sh tests/rtcsweep.sh "$(abspath $(RTCIMG))" "$(RTCRACEMAX)" "$(EMUIDLE)" "$(RTCRACEIN)" "$(RTCSEED)"
 
 # ---- the clock, on the host ----
 # tests/rtctest.c runs the REAL src/bios/rtc900.c and src/cmd/date.c, compiled
@@ -1654,6 +1814,52 @@ verify-v2: all
 	@grep -q 'SCBTEST: PASS' $(V2LOG) \
 		|| { echo "verify-v2: FAIL -- SCBTEST did not finish"; exit 1; }
 	@echo "verify-v2: PASS"
+
+# ---- Function 46's wire form, and function 31's return value ----
+# Two silent-wrong-answer bugs, both fixed by naming the bytes.
+#
+# Function 46 used to end free_sp() with `cpy_out(&records, dma, sizeof
+# records)' on a LONG -- a 4-byte BIG-endian value on this Z8001 -- where
+# CP/M 3 specifies THREE LITTLE-ENDIAN BYTES of 128-byte record count and
+# a zero fourth byte.  A conforming v3 program read our top three bytes
+# reversed and reported free space wrong by orders of magnitude, with no
+# failure signal.  V3FREE therefore asserts the four bytes ONE AT A TIME
+# against a count derived by hand from the drive B image (2042 free
+# blocks * 32 records = 65,344 = 0x00FF40, so 40 FF 00 00) -- the only
+# shape of test that separates the two forms.  Drive B is the medium
+# because it is packed from src/dist/disk-b/ and nothing writes to it,
+# so its free space is a constant of the build; $(CPMBIMG) is mounted
+# here for exactly that reason.  V3FREE also checks fn 31, which used to
+# deliver the DPB to the caller's buffer and then return 0, so a caller
+# testing the answer concluded the call had failed.
+#
+# V3FREE.Z8K is named in $(ATEST), so it is stripped from the release
+# medium by $(CPMARIMG) and reaches no shipped disk.
+V3FIMG	= build/v3free.bin
+V3FLOG	= build/verify-v3free.log
+.PHONY: verify-v3free
+verify-v3free: all
+	$(MKDISK) $(V3FIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(V3FIMG)) \
+		--input="$(OSSEL)V3FREE\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(V3FLOG))
+	@$(EMUOK)
+	@grep -q 'dma\[0\] (recs bits  0.. 7) -> 40 OK' $(V3FLOG) \
+		|| { echo "verify-v3free: FAIL -- fn 46 byte 0 is not 40h"; exit 1; }
+	@grep -q 'dma\[1\] (recs bits  8..15) -> FF OK' $(V3FLOG) \
+		|| { echo "verify-v3free: FAIL -- fn 46 byte 1 is not FFh"; exit 1; }
+	@grep -q 'dma\[2\] (recs bits 16..23) -> 00 OK' $(V3FLOG) \
+		|| { echo "verify-v3free: FAIL -- fn 46 byte 2 is not 00h"; exit 1; }
+	@grep -q 'dma\[3\] (must be zero)    -> 00 OK' $(V3FLOG) \
+		|| { echo "verify-v3free: FAIL -- fn 46 byte 3 is not 00h"; exit 1; }
+	@grep -q 'free records on B = 65344' $(V3FLOG) \
+		|| { echo "verify-v3free: FAIL -- the count is not 65344"; exit 1; }
+	@test "`grep -c ' BAD' $(V3FLOG)`" = 0 \
+		|| { echo "verify-v3free: FAIL -- see the BAD lines above"; exit 1; }
+	@grep -q 'V3FREE: PASS' $(V3FLOG) \
+		|| { echo "verify-v3free: FAIL -- V3FREE did not finish"; exit 1; }
+	@echo "verify-v3free: PASS -- fn 46 writes 40 FF 00 00 (65344 records"
+	@echo "               free on B), and fn 31 returns the buffer it filled"
 
 # ---- CP/M 3 V3 wave: the return-value shapes fixed by G7-G12 ----
 # (CPM3-V3-DELTA.md section 2).  V3RET does everything in one cold boot:
@@ -2048,6 +2254,18 @@ verify-setb: all
 	@# ---- 5: the read-only DRIVE, and the BDOS error code SET reports
 	@grep -q 'Drive A: set to Read Only (RO)' $(SETBLOG)-5.log \
 		|| { echo "verify-setb: FAIL -- [RO] on a drive did not report"; exit 1; }
+	@# The refusal is PIP's to REPORT, not the BDOS's.  With fn 12 saying
+	@# 0x2031 PIP's HAS_RETERR is true (src/cmd/pip.c:420), so it opens
+	@# with _ret_errors(0xff) and the BDOS hands the code back instead of
+	@# printing: cpm3src/BDOS30.ASM:114, `lda error$$mode! inr a! cnz error'
+	@# -- 0ffh+1 is zero, so the console message is skipped and rtn$$phy$$errs
+	@# returns the code.  What must appear is therefore PIP's OWN text,
+	@# error 22 + extended 2 (cpm3src/PIP.PLM:558 "CAN'T DELETE TEMP FILE",
+	@# :590 "R/O DISK"), naming the scratch file it could not remove.  At
+	@# 0x2022 the same refusal read "CP/M Disk change error on drive A"
+	@# because the BDOS was the one talking; the write is refused either way.
+	@grep -q 'ERROR: CAN.T DELETE TEMP FILE R/O DISK - A:RONEW[.][$$][$$][$$]' $(SETBLOG)-5.log \
+		|| { echo "verify-setb: FAIL -- a write to the read-only drive was allowed, or PIP did not report the R/O DISK code the BDOS returned it"; exit 1; }
 	@grep -q '^ERROR: A: Drive Read Only' $(SETBLOG)-5.log \
 		|| { echo "verify-setb: FAIL -- SET's bdoserror() did not report code 2"; exit 1; }
 	@grep -q 'A: RONEW    TXT' $(SETBLOG)-5.log \
@@ -2324,6 +2542,14 @@ verify-signon: all
 	@# hold for a session that never warm-booted at all.
 	@test "`grep -c 'MWC hello from the Coherent Z8001 pipeline' $(SIGNLOG)`" = 2 \
 		|| { echo "verify-signon: FAIL -- MHELLO did not run twice"; exit 1; }
+	@# STAT is built here from DRI source now (Makefile $(USTAT)), and the
+	@# cpm8k13 source prints no sign-on -- its only version string is the
+	@# usage text values() writes (src/cmd/stat.c:1185), which `STAT
+	@# HELLO.TXT' never reaches.  All this assertion has to establish is
+	@# that STAT ran to completion and so warm-booted, so it looks for the
+	@# report it was asked for: the row naming the file on the command line.
+	@grep -q 'A:HELLO   .TXT' $(SIGNLOG) \
+		|| { echo "verify-signon: FAIL -- STAT did not run, or printed no row for HELLO.TXT"; exit 1; }
 	@grep -q 'BEEP' $(SIGNLOG) \
 		|| { echo "verify-signon: FAIL -- BEEP did not run"; exit 1; }
 	@python3 tests/signoncount.py src/bdos/bdosmisc.c $(OBJDIR)/cpmver.h $(SIGNLOG) $(SIGNWARMBOOTS) \
@@ -3024,8 +3250,16 @@ verify-arx: all
 # against HELLO.C (which `all' stages), and DUMP against the same file
 # for a known-bytes check.  ED, DDT and LD8K are already proven by
 # verify-ed, verify and selfhost; this target does not repeat them.
+# ASZ8K, XCON, XDUMP, AR8K, NMZ8K and SIZEZ8K used to die here with a
 # privileged-instruction TRAP; fixing the split-I/D fast path they
+# fault through, all six run, and tests/legacychk.sh asserts that
 # strictly rather than recording it.
+# PIP and STAT are NO LONGER the vendor's binaries -- both are built from
+# DRI source in src/cmd and staged over the vendor .Z8K ($(UPIP),
+# $(USTAT) in the Makefile) -- so what is asserted about those two is
+# their behaviour, not their identity.  legacychk.sh's header says which
+# is which.  It also prints the dated summary line that is this row's
+# retention record (see the script header for how to keep one).
 LEGIMG	= build/legacytest.bin
 LEGLOG	= build/verify-legacy.log
 LEGIN	= $(OSSEL)PIP LEGCOPY.TXT=HELLO.C\rSTAT LEGCOPY.TXT\rDUMP HELLO.C\rNMZ8K STARTUP.O\rSIZEZ8K MHELLO.Z8K\rASZ8K MINI.8KN\rXCON -o MINI.O MINI.OBJ\rXDUMP MINI.O\rAR8K rv TEST.A MINI.O\r$(ENDIN)
@@ -4015,6 +4249,34 @@ verify-crsr: all build/crsrtest
 build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ tests/crsrtest.c
 
+# ---- the owned video-console keyboard, on the host (verify-kbd) ----
+# src/bios/kbd900.h, the video console's keyboard, against COHERENT's own
+# C900 keyboard driver, compiled unmodified as the oracle: the init writes, every scan
+# code up and down in all 64 shift states, and the poll/ack path.  No
+# emulator here has a keyboard, so this is the test.  COH_KBDDIR is the
+# original driver's directory in the commodore-900-coh-kernel3 checkout,
+# found as tools/deps.sh finds a sibling: walking outward from here, then in
+# repos/.  Four parents, not deps.sh's three, so that a worktree nested at
+# <repo>/.claude/worktrees/<id> still reaches the workspace.
+COH_KBDREL = commodore-900-coh-kernel3/os/sys/z8001/rec
+COH_KBDDIR ?= $(or $(patsubst %/kb.c,%,$(firstword $(wildcard $(foreach d,\
+	.. ../.. ../../.. ../../../.. repos,$(abspath $(d))/$(COH_KBDREL)/kb.c)))),\
+	$(abspath ..)/$(COH_KBDREL))
+
+.PHONY: verify-kbd
+verify-kbd: build/kbdtest
+	./build/kbdtest
+
+# kbtab.h has no include guard, so the driver and its table are two objects.
+build/kbdtest: tests/kbdtest.c tests/kbdoracle.c tests/kbdorat.c \
+		src/bios/kbd900.h | $(OBJDIR)
+	@mkdir -p build/kbdstub
+	@: > build/kbdstub/coherent.h; : > build/kbdstub/tty.h; : > build/kbdstub/io.h
+	$(HOSTCC) -std=gnu89 -w -c -o build/kbdoracle.o -Ibuild/kbdstub \
+		-I$(COH_KBDDIR) tests/kbdoracle.c
+	$(HOSTCC) -std=gnu89 -w -c -o build/kbdorat.o -I$(COH_KBDDIR) tests/kbdorat.c
+	$(HOSTCC) -std=gnu89 -w -o $@ tests/kbdtest.c build/kbdoracle.o build/kbdorat.o
+
 # ---- two programs alive at once (verify-conc) ----
 # The process descriptor and the cooperative switch: src/bdos/proc.c, BDOS
 # function 144.  CONC.Z8K creates a second process out of CONCB.Z8K -- a
@@ -4043,6 +4305,7 @@ CONCLOG	= build/verify-conc.log
 verify-conc: all
 	$(MKDISK) $(CONCIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCIMG)) \
+		--input="$(OSSEL)$(SESS1)CONC\rCONCB\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCLOG))
 	@$(EMUOK)
 	@grep -q 'CONC A: two processes' $(CONCLOG) \
@@ -4051,6 +4314,14 @@ verify-conc: all
 		&& { echo "verify-conc: FAIL -- function 144 refused; the reason is in the transcript above."; \
 		     echo "            A 512 KB machine has no free page and this cannot work there"; \
 		     echo "            (src/bios/pgalloc.c) -- but the emulator models 1 MB."; exit 1; } || true
+	@# THREE, not two, since C10: a session (SESSION 1, typed first since D8) runs on
+	@# console 1, and it is live for the whole
+	@# run.  The claim here is that fn 144's child is COUNTED, and that
+	@# is the same claim at 3 as it was at 2 -- the pair of numbers this
+	@# target reads, 3 while the child lives and 2 after it ends, still
+	@# differ by exactly the one process it created.
+	@grep -q 'CONC: live processes = 3' $(CONCLOG) \
+		|| { echo "verify-conc: FAIL -- function 145 does not see three live processes"; exit 1; }
 	@grep -q 'CONCB: B alive' $(CONCLOG) \
 		|| { echo "verify-conc: FAIL -- the second image never ran"; exit 1; }
 	@# THE INTERLEAVING, and it is asserted as three ORDERING properties
@@ -4112,6 +4383,7 @@ verify-conc: all
 	@grep -q 'CONCB: B done, 4096 bytes of my own intact' $(CONCLOG) \
 		|| { echo "verify-conc: FAIL -- the second process's memory did not survive;"; \
 		     echo "            the two images are sharing a page instead of each having one"; exit 1; }
+	@grep -q 'CONC: A done, live processes = 2' $(CONCLOG) \
 		|| { echo "verify-conc: FAIL -- the ended process was not reclaimed"; exit 1; }
 	@# The control: CONCB alone, no interleaving, and the CCP came back
 	@# after a background process had lived and died in a swapped page.
@@ -4346,9 +4618,11 @@ verify-conc5: all $(CPMACONCZ)
 	$(MKDISK) $(CONCZAIMG) $(CPMSYS) $(CPMACONCZ) $(CPMBIMG)
 	cp $(CONCZAIMG) $(CONCZBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCZAIMG)) \
+		--input="$(OSSEL)$(SESS1)CONCZ\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCZALOG))
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCZBIMG)) \
+		--input="$(OSSEL)$(SESS1)CONCZ S\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCZBLOG))
 	@$(EMUOK)
 	@tr -d '\r' < $(CONCZALOG) > build/conc5a.txt
@@ -4363,8 +4637,17 @@ verify-conc5: all $(CPMACONCZ)
 		     echo "              free page (src/bios/pgalloc.c).  The emulator is 1 MB."; \
 		     exit 1; } || true
 	@# The session was really there, and only in the second run.
+	@# ONE MORE IN BOTH RUNS SINCE C10: SESSION 1, typed first since D8, starts a session
+	@# on console 1, so the baseline is 3 and
+	@# the idle-console run is 4.  Both runs carry it, so the DIFFERENCE
+	@# -- which is the only thing this target measures -- is the session
+	@# `CONCZ I' asks for and nothing else.
+	@grep -q 'CONCZ: live=3' build/conc5a.txt \
+		|| { echo "verify-conc5: FAIL -- the ALONE run did not see exactly three live"; \
 		     echo "              processes, so it is not the baseline it claims to be."; \
 		     grep 'CONCZ: live' build/conc5a.txt; exit 1; }
+	@grep -q 'CONCZ: live=4' build/conc5b.txt \
+		|| { echo "verify-conc5: FAIL -- the IDLE-CONSOLE run did not see four live"; \
 		     echo "              processes.  Without the session there is nothing to"; \
 		     echo "              measure the cost of and the comparison is empty."; \
 		     grep 'CONCZ: live' build/conc5b.txt; exit 1; }
@@ -4703,6 +4986,7 @@ XDOSMIN	= 3
 verify-xdos2: all $(CPMAXDOS)
 	$(MKDISK) $(XDOS2IMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(XDOS2IMG)) \
+		--input="$(OSSEL)$(SESS1)XDOSD\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(XDOS2LOG))
 	@$(EMUOK)
 	@tr -d '\r' < $(XDOS2LOG) > build/xdos2-plain.txt
@@ -4758,6 +5042,15 @@ verify-xdos2: all $(CPMAXDOS)
 		|| { echo "verify-xdos2: FAIL -- the message did not survive the trip from"; \
 		     echo "              one process's page to the other's"; exit 1; }
 	@# 143: the child terminated itself and was reclaimed.
+	@# THREE, not two, since C10: a session (SESSION 1, typed first since D8) runs on
+	@# console 1, so a machine with one
+	@# foreground program and one child has three live processes and
+	@# two after the child terminates itself.  The claim -- that 143
+	@# reclaimed exactly one -- is the difference between the two
+	@# numbers and is unchanged.
+	@grep -q '^XDOSD: live=3' build/xdos2-plain.txt \
+		|| { echo "verify-xdos2: FAIL -- function 145 did not see three live processes"; exit 1; }
+	@grep -q '^XDOSD: after=2' build/xdos2-plain.txt \
 		|| { echo "verify-xdos2: FAIL -- after XDOSE called function 143 the process"; \
 		     echo "              table still says more than one is live, so Terminate"; \
 		     echo "              did not reclaim it"; exit 1; }
@@ -4766,6 +5059,155 @@ verify-xdos2: all $(CPMAXDOS)
 	@echo "verify-xdos2: PASS -- 141/132/137 each blocked (`cat build/xdos2-delay.txt`,"
 	@echo "              `cat build/xdos2-flag.txt`, `cat build/xdos2-msg.txt` lines from the other process"
 	@echo "              while each was waiting), and 143 reclaimed the caller"
+
+# ---- verify-con1: THE CONSOLE NUMBER SELECTS THE DEVICE (C3 steps 1-2) ----
+# The only target in this file that drives TWO consoles, and the only one
+# that cannot run under bare ./c900: console 1 is SCC channel A, which the
+# emulator reaches as an AF_UNIX socket (--wire, src/wire.c), so something
+# has to be listening on the far end.  tests/wirecon.py is that something --
+# it listens, starts the emulator, collects console 1's output and types a
+# character back once a given text appears there.  Console 0 is captured the
+# ordinary way, from the emulator's stdout.
+#
+# WHAT IS ASSERTED IS A PROPERTY, NOT AN INTERLEAVING: each of the six lines
+# CON1.Z8K prints must appear in ONE transcript and be absent from the other,
+# and the character read on console 1 must be the one typed into the socket.
+# Nothing routes between the two files, so a line in the wrong one is a
+# driver fault.  No line number, count or ordering is involved.
+#
+# C10 ADDED A STEP AND DID NOT CHANGE THE CLAIM.  Console 1 now has an
+# OWNER -- the session SESSION 1 starts there, typed first -- and CON1's function
+# 148 no longer buys it the right to read: moving is not reading.  So CON1
+# says 146 and waits, and this script types `CATT D' at console 1 to make
+# that session let go before the `Z' is sent.  What is asserted below is
+# exactly what it was; what changed is that the character now reaches CON1
+# because the rule gave it the console, rather than because nothing was
+# stopping it.
+CON1IMG = build/con1test.bin
+CON1C0	= build/verify-con1-c0.log
+CON1C1	= build/verify-con1-c1.log
+.PHONY: verify-con1
+verify-con1: all $(CPMAXDOS)
+	$(MKDISK) $(CON1IMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(CON1IMG) \
+		--input='$(SESS1)CON1\r$(ENDIN)' --max=$(EMUMAX) --stop-on=idle \
+		--stop-mark='$(ENDMARK)' \
+		--send-after='CON1: on 1' --send='USER 0\r' \
+		--send-after='A>' --send='CATT D\r' \
+		--send-after='CATT: gave 1' --send='Z' \
+		--log $(CON1C0) --wire-log $(CON1C1)
+	@tr -d '\r' < $(CON1C0) > build/con1-c0.txt
+	@tr -d '\r' < $(CON1C1) > build/con1-c1.txt
+	@grep -q 'CON1: FAIL' build/con1-c0.txt build/con1-c1.txt \
+		&& { echo "verify-con1: FAIL -- CON1 refused to start:"; \
+		     grep -h 'CON1: FAIL' build/con1-c0.txt build/con1-c1.txt; \
+		     exit 1; } || true
+	@grep -q '^CON1: start' build/con1-c0.txt \
+		|| { echo "verify-con1: FAIL -- CON1 did not run at all"; exit 1; }
+	@grep -q '^CON1: back 0' build/con1-c0.txt \
+		|| { echo "verify-con1: FAIL -- CON1 never came back to console 0"; \
+		     exit 1; }
+	@grep -q 'CON1: on 1' build/con1-c0.txt \
+		&& { echo "verify-con1: FAIL -- console 1's output reached console 0,"; \
+		     echo "              so the console number is not selecting a device"; \
+		     exit 1; } || true
+	@grep -q 'CON1: got' build/con1-c0.txt \
+		&& { echo "verify-con1: FAIL -- console 1's echo reached console 0"; \
+		     exit 1; } || true
+	@# Not anchored since C10: console 1 now has a session on it from the
+	@# SESSION 1, so its `1A>' prompt is what this line prints after.
+	@grep -q 'CON1: on 1' build/con1-c1.txt \
+		|| { echo "verify-con1: FAIL -- nothing printed on console 1 reached"; \
+		     echo "              SCC channel A (build/con1-c1.txt is what did)"; \
+		     exit 1; }
+	@grep -q 'CON1: got Z' build/con1-c1.txt \
+		|| { echo "verify-con1: FAIL -- the character typed at console 1 did not"; \
+		     echo "              reach the program: console input is not coming"; \
+		     echo "              from the channel the console number names"; \
+		     exit 1; }
+	@grep -q 'CON1: start' build/con1-c1.txt \
+		&& { echo "verify-con1: FAIL -- console 0's output reached console 1"; \
+		     exit 1; } || true
+	@grep -q 'CON1: back 0' build/con1-c1.txt \
+		&& { echo "verify-con1: FAIL -- console 0's output reached console 1"; \
+		     exit 1; } || true
+	@echo "verify-con1: PASS -- console 0 has start/back, console 1 has on/got,"
+	@echo "              neither has the other's, and the character read on"
+	@echo "              console 1 came off SCC channel A"
+
+# ---- verify-sess: A SECOND USER, ON THE SECOND CONSOLE (C3 step 4) ----
+# `SESSION 1' (BDOS function 142, src/bdos/proc.c psession) starts a CCP on
+# console 1 in a 64 KB page of its own, logged into user area 1 because a
+# session's user area is its console number.  Three claims, none of them an
+# ordering or a count:
+#
+#   1. the prompt on console 1 is `1A>' -- there IS a command processor
+#      there, and the 1 in front of it is the user area, so "console N logs
+#      into user area N" is read straight off the machine;
+#   2. a transient started from console 1 runs and prints THERE;
+#   3. a prompt comes back on console 1 after that transient ended -- the
+#      session survived its own warm boot, which is what makes it a session
+#      rather than a one-command process (proc.c pd_sess);
+#
+# and the mirror of all three on console 0, which must see none of it.
+#
+# The two lines typed at console 1 are PACED, one per prompt, for the reason
+# tests/wirecon.py's banner gives: a CP/M console driver polls the keyboard
+# while it prints, so a line typed into another line's output is eaten there.
+# That is CP/M, not this port, and the emulator's own console feeder does the
+# same thing for console 0.
+#
+# SESSMAX is larger than $(EMUMAX) because two processes are alive for the
+# whole run and one of them is BLOCKED READING -- which under C2's blocking
+# primitive is a spin through pyield(), so the machine does about twice the
+# instructions per second of wall progress.  It is the cost this stage has,
+# stated, not a threshold anything is tuned to.
+SESSIMG	= build/sesstest.bin
+SESSC0	= build/verify-sess-c0.log
+SESSC1	= build/verify-sess-c1.log
+SESSMAX	= 900000000
+.PHONY: verify-sess
+verify-sess: all $(CPMAXDOS)
+	$(MKDISK) $(SESSIMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(SESSIMG) \
+		--input='SESSION 1\r' --max=$(SESSMAX) --stop-on=idle \
+		--send-after='1A>' --send='USER 0\r' \
+		--send-after='A>'  --send='CON1 P\r' \
+		--log $(SESSC0) --wire-log $(SESSC1)
+	@tr -d '\r' < $(SESSC0) > build/sess-c0.txt
+	@tr -d '\r' < $(SESSC1) > build/sess-c1.txt
+	@grep -q 'SESSION: refused' build/sess-c0.txt \
+		&& { echo "verify-sess: FAIL -- function 142 refused:"; \
+		     grep 'SESSION: refused' build/sess-c0.txt; \
+		     echo "              A 512 KB machine has no free page"; \
+		     echo "              (src/bios/pgalloc.c); the emulator models 1 MB."; \
+		     exit 1; } || true
+	@grep -q 'SESSION: console 1 up' build/sess-c0.txt \
+		|| { echo "verify-sess: FAIL -- SESSION did not run at all"; exit 1; }
+	@grep -q '1A>' build/sess-c1.txt \
+		|| { echo "verify-sess: FAIL -- no \`1A>' prompt on console 1, so either"; \
+		     echo "              no CCP is running there or it is not logged into"; \
+		     echo "              user area 1 (build/sess-c1.txt is what it printed)"; \
+		     exit 1; }
+	@grep -q 'CON1: transient' build/sess-c1.txt \
+		|| { echo "verify-sess: FAIL -- a transient started from console 1 did"; \
+		     echo "              not run, or did not print there"; exit 1; }
+	@sed -n '/CON1: transient/,$$p' build/sess-c1.txt | grep -q 'A>' \
+		|| { echo "verify-sess: FAIL -- no prompt came back on console 1 after"; \
+		     echo "              its transient ended, so the session died at the"; \
+		     echo "              warm boot (src/bdos/proc.c pd_sess)"; exit 1; }
+	@grep -q '1A>' build/sess-c0.txt \
+		&& { echo "verify-sess: FAIL -- console 1's prompt reached console 0"; \
+		     exit 1; } || true
+	@grep -q 'CON1: transient' build/sess-c0.txt \
+		&& { echo "verify-sess: FAIL -- console 1's transient printed on console 0"; \
+		     exit 1; } || true
+	@grep -q 'SESSION: console 1 up' build/sess-c1.txt \
+		&& { echo "verify-sess: FAIL -- console 0's output reached console 1"; \
+		     exit 1; } || true
+	@echo "verify-sess: PASS -- a CCP on console 1 in user area 1, a transient"
+	@echo "              run from it, and a prompt back afterwards; console 0"
+	@echo "              saw none of it"
 
 # ---- verify-kbcon: TYPE-AHEAD BELONGS TO ONE CONSOLE (F10) ----
 # The P2 finding on src/bdos/conbdos.c: `kbchar' was ONE byte for the whole
@@ -4834,6 +5276,7 @@ KBCONC1TOK = 0400
 verify-kbcon: all
 	$(MKDISK) $(KBCONIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	python3 tests/wirecon.py --emu '$(EMU)' --disk $(KBCONIMG) \
+		--input='$(SESS1)CONBRK P $(KBCONC0TOK)\r' \
 		--max=$(EMUMAX) --stop-on=idle \
 		--send-after='1A>' --send='USER 0\r' \
 		--send-after='A>' --send='CONBRK P $(KBCONC1TOK)\r' \
@@ -4967,6 +5410,94 @@ verify-conn: all $(CPMAXDOS)
 	@echo "             three channels = 3, a map of sixteen = CONMAX 4, and"
 	@echo "             the BDOS's function 148 agrees with the BIOS every time"
 
+# ---- verify-rxov: THE RECEIVE RING KEEPS WHAT THE POLLED DRIVER LOSES (C8) ----
+# C3 built the consoles polled and stopped before the interrupt receive rings,
+# for a reason that was a premise and not effort: the emulator HELD the next
+# wire byte until the guest had read the previous one, so a polled read lost
+# exactly as many characters as a ring did -- none, at any speed -- and no
+# test could tell the two apart (C3.md 6).  `--rx-overrun' ended that: a byte
+# arriving on a wired port while the previous one is unread now overwrites it
+# and latches RR1 D5, as the chip does.  This target is the discriminating
+# test that option made possible, and it is the ONLY one that passes it.
+#
+# C10 ADDED ONE STEP IN FRONT OF IT.  Console 1 has an owner now -- the
+# session SESSION 1 starts there, typed first -- and both bursts are read with
+# function 6, which consumes.  So RXOV asks for the console (function
+# 146) and this script types `CATT D' at console 1 to make the session
+# let go, before either burst is sent.  Nothing about what is compared
+# changed: the same program reads the same burst twice on the same
+# channel, and now nobody else is reading it at the same time.
+#
+# ONE BOOT, TWO DRIVERS, THE SAME INPUT.  RXOV.Z8K (src/cmd/rxov.c) runs the
+# same burst twice on console 1, switching the channel between the ring and
+# the polled path with BIOS function 30 (CONRX) in between, and each phase
+# anchors on the GUEST's clock: it prints its mark, blocks until the burst's
+# first character arrives, and only then goes busy.  So what is compared is
+# two drivers under one machine, not a number remembered from another run.
+#
+# WHAT IS ASSERTED IS A PROPERTY: the ring receives EVERY character sent, in
+# order, and the polled path receives fewer than were sent.  The counts are
+# read out of the transcript rather than written here, so the burst can be
+# resized in one place; nothing depends on a line position, an ordering
+# between the two consoles, or an instruction count.
+#
+# WHY THE BYTES ARE PACED (--send-delay).  A burst written to the socket in
+# one call is handed to the receiver a byte every 64 emulated instructions,
+# which is faster than the interrupt can be taken, serviced and dismissed --
+# so an unpaced burst would measure the emulator's write granularity and not
+# the driver.  2 ms a byte is a wire, and it is still far shorter than the
+# program's busy period, which is what makes the polled phase lose.
+RXOVIMG	= build/rxovtest.bin
+RXOVC0	= build/verify-rxov-c0.log
+RXOVC1	= build/verify-rxov-c1.log
+RXOVBURST = ABCDEFGHIJKLMNOP
+.PHONY: verify-rxov
+verify-rxov: all $(CPMAXDOS)
+	$(MKDISK) $(RXOVIMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(RXOVIMG) \
+		--input='$(SESS1)RXOV\r' --max=$(EMUMAX) --stop-on=idle \
+		--rx-overrun --send-delay=0.002 \
+		--send-after='RXOV: on 1' --send='USER 0\r' \
+		--send-after='A>' --send='CATT D\r' \
+		--send-after='RXOV: burst 1' --send='$(RXOVBURST)' \
+		--send-after='RXOV: burst 2' --send='$(RXOVBURST)' \
+		--log $(RXOVC0) --wire-log $(RXOVC1)
+	@tr -d '\r' < $(RXOVC0) > build/rxov-c0.txt
+	@tr -d '\r' < $(RXOVC1) > build/rxov-c1.txt
+	@grep -q 'RXOV: FAIL' build/rxov-c0.txt \
+		&& { echo "verify-rxov: FAIL -- RXOV said so itself:"; \
+		     grep -A1 'RXOV: FAIL' build/rxov-c0.txt; \
+		     exit 1; } || true
+	@grep -q '^RXOV: start' build/rxov-c0.txt \
+		|| { echo "verify-rxov: FAIL -- RXOV did not run at all"; exit 1; }
+	@grep -q '^RXOV: burst 1' build/rxov-c1.txt \
+		|| { echo "verify-rxov: FAIL -- nothing RXOV printed on console 1"; \
+		     echo "             reached SCC channel A, so no burst was ever"; \
+		     echo "             typed at it"; exit 1; }
+	@sent=`sed -n 's/^RXOV: sent=\([0-9][0-9]*\)$$/\1/p' build/rxov-c0.txt`; \
+	 ring=`sed -n 's/^RXOV: ring=\([0-9][0-9]*\)$$/\1/p' build/rxov-c0.txt`; \
+	 poll=`sed -n 's/^RXOV: polled=\([0-9][0-9]*\)$$/\1/p' build/rxov-c0.txt`; \
+	 test -n "$$sent" -a -n "$$ring" -a -n "$$poll" \
+		|| { echo "verify-rxov: FAIL -- RXOV did not report all three counts"; \
+		     cat build/rxov-c0.txt; exit 1; }; \
+	 test "$$ring" -eq "$$sent" \
+		|| { echo "verify-rxov: FAIL -- the ring received $$ring of $$sent"; \
+		     echo "             characters: an interrupt-driven receive that"; \
+		     echo "             loses characters is not one"; exit 1; }; \
+	 test "$$poll" -lt "$$sent" \
+		|| { echo "verify-rxov: FAIL -- the polled path received $$poll of"; \
+		     echo "             $$sent too, so this run distinguishes nothing."; \
+		     echo "             Either --rx-overrun did not reach the emulator"; \
+		     echo "             or the busy period no longer covers the burst"; \
+		     exit 1; }; \
+	 echo "verify-rxov: ring $$ring/$$sent, polled $$poll/$$sent"
+	@grep -q 'RXOV: ring kept all, polled did not' build/rxov-c0.txt \
+		|| { echo "verify-rxov: FAIL -- RXOV did not reach its own verdict"; \
+		     exit 1; }
+	@echo "verify-rxov: PASS -- with the receiver overrunning, the interrupt"
+	@echo "             ring kept every character of the burst, in order, and"
+	@echo "             the polled driver on the same channel did not"
+
 # ---- verify-xdospoll5: FN 131 (POLL DEVICE) ON DEVICE 0, PROVED (C9) ----
 # run/C2.md left this one open: fn 131 on device 0 takes conbdos.c getch()'s
 # own PW_CON wait (src/bdos/xdos.c xpoll()), but with one console and the
@@ -5015,10 +5546,14 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 	$(MKDISK) $(XDOSPOLLDISK) $(CPMSYS) $(CPMAXDOSPOL) $(CPMBIMG)
 	@# ---- phase 1: ALONE -- CONCY's baseline tick count ----
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(XDOSPOLLDISK)) \
+		--input="$(OSSEL)$(SESS1)XDOSPOL\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(XPOLLALOG))
 	@$(EMUOK)
 	@# ---- phase 2: the poller parked in fn 131, wire silent throughout ----
 	python3 tests/wirecon.py --emu '$(EMU)' --disk $(XDOSPOLLDISK) \
+		--input='$(OSSEL)$(SESS1)XDOSPOL P\r' --max=$(EMUMAX) --stop-on=idle \
+		--send-after='XDOSPOL: asking' --send='USER 0\r' \
+		--send-after='A>' --send='CATT D\r' \
 		--log $(XPOLLPLOG) --wire-log $(XPOLLPWLOG)
 	@# ---- phase 3: the same call, woken by a byte sent only after the
 	@#      wire shows the process was already waiting for it ----
@@ -5045,6 +5580,9 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 	@# bytes go out only AFTER the wire has shown `XDOSPOL: waiting', so
 	@# neither could have been sitting there when fn 131 was called.
 	python3 tests/wirecon.py --emu '$(EMU)' --disk $(XDOSPOLLDISK) \
+		--input='$(OSSEL)$(SESS1)XDOSPOL P\r' --max=$(EMUMAX) --stop-on=idle \
+		--send-after='XDOSPOL: asking' --send='USER 0\r' \
+		--send-after='A>' --send='CATT D\r' \
 		--send-after='XDOSPOL: waiting' --send='K' \
 		--send-after='A>' --send='K' \
 		--log $(XPOLLWLOG) --wire-log $(XPOLLWWLOG)
@@ -5060,7 +5598,15 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 	@grep -q 'XDOSPOL: no console 1' build/xdospoll-poll-c0.txt build/xdospoll-wake-c0.txt \
 		&& { echo "verify-xdospoll5: FAIL -- function 148 refused console 1; the wire did"; \
 		     echo "             not attach (src/bios/bios900.c coninit)."; exit 1; } || true
+	@# THREE since C10, in both runs, for the SESSION 1 session on
+	@# console 1 (typed first since D8).  The claim is that the two
+	@# runs see the SAME number -- fn 131 adds nobody -- and they do.
+	@grep -q '^XDOSPOL: live=3' build/xdospoll-alone.txt \
+		|| { echo "verify-xdospoll5: FAIL -- the ALONE run did not see exactly three live"; \
 		     echo "             processes; it is not the baseline it claims to be."; exit 1; }
+	@grep -q '^XDOSPOL: live=3' build/xdospoll-poll-c0.txt \
+		|| { echo "verify-xdospoll5: FAIL -- the POLL run did not see exactly three live"; \
+		     echo "             processes either -- fn 131 does not add a fourth."; exit 1; }
 	@# THE NEGATIVE: on a silent wire, the poller must never have woken.
 	@grep -q '^XDOSPOL: waiting' build/xdospoll-poll-c1.txt \
 		|| { echo "verify-xdospoll5: FAIL -- XDOSPOL never printed its wait marker on"; \
@@ -5437,9 +5983,11 @@ verify-conc6: all $(CPMACONCS)
 	@# `C' leg below must NOT have it -- CONCY prints its tick count AFTER
 	@# that prompt, and that count is what this target compares.
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCSAIMG)) \
+		--input="$(OSSEL)$(SESS1)CONCS\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCSALOG))
 	@$(EMUOK)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCSBIMG)) \
+		--input="$(OSSEL)$(SESS1)CONCS C\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCSBLOG))
 	@$(EMUOK)
 	@tr -d '\r' < $(CONCSALOG) > build/conc6a.txt
@@ -5458,7 +6006,16 @@ verify-conc6: all $(CPMACONCS)
 		|| { echo "verify-conc6: FAIL -- the SECOND-JOB run's loop did not run at FCW"; \
 		     echo "              D0xx: not segmented System mode with VIE set."; \
 		     grep 'CONCS: sysfcw' build/conc6b.txt; exit 1; }
+	@# ONE MORE IN BOTH RUNS SINCE C10: the session SESSION 1 starts on
+	@# console 1 (typed first since D8) is live for the whole of
+	@# each run, so the two numbers are 2 and 3 rather than 1 and 2.
+	@# The claim is the difference -- the second job -- unchanged.
+	@grep -q 'CONCS: live=2' build/conc6a.txt \
+		|| { echo "verify-conc6: FAIL -- the ALONE run did not see exactly two live"; \
+		     echo "              processes, so it is not the baseline it claims to be."; \
 		     grep 'CONCS: live' build/conc6a.txt; exit 1; }
+	@grep -q 'CONCS: live=3' build/conc6b.txt \
+		|| { echo "verify-conc6: FAIL -- the SECOND-JOB run did not see three live"; \
 		     echo "              processes.  There was nothing to be preempted FOR."; \
 		     grep 'CONCS: live' build/conc6b.txt; exit 1; }
 	@# The child outlived the measured loop.
@@ -5549,6 +6106,7 @@ CONCVLOG = build/verify-conc7.log
 verify-conc7: all $(CPMACONCV)
 	$(MKDISK) $(CONCVIMG) $(CPMSYS) $(CPMACONCV) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCVIMG)) \
+		--input="$(OSSEL)$(SESS1)CONCV\r" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCVLOG))
 	@$(EMUOK)
 	@tr -d '\r' < $(CONCVLOG) > build/conc7.txt
@@ -5556,6 +6114,12 @@ verify-conc7: all $(CPMACONCV)
 		&& { echo "verify-conc7: FAIL -- function 144 refused; a 512 KB machine has no"; \
 		     echo "              free page (src/bios/pgalloc.c).  The emulator is 1 MB."; \
 		     exit 1; } || true
+	@# THREE since C10: the SESSION 1 session on console 1 is live too
+	@# (typed first since D8).  It is blocked on its own console for
+	@# the whole run, so it is out of the rotation (C5) and the slices
+	@# counted below are still the two jobs alternating.
+	@grep -q 'CONCV: live=3' build/conc7.txt \
+		|| { echo "verify-conc7: FAIL -- CONCV did not see three live processes, so"; \
 		     echo "              nothing was ever going to take the machine away from"; \
 		     echo "              it and there are no slices to measure."; \
 		     grep 'CONCV: live' build/conc7.txt; exit 1; }
@@ -5801,6 +6365,32 @@ verify-put: all $(CPMAGP)
 	@test -s $(GPDIR)/PMARKER.TXT \
 		|| { echo "verify-put: FAIL -- the fixture file went missing, so the check above proved nothing about PSTUB.TXT"; exit 1; }
 	@echo "verify-put: PASS -- functions 2, 9 and 111 copied into a file, the module seen in the chain, [ECHO] and [NO ECHO] differing in what the console saw and not in what the file got, the last partial record flushed and the file closed by PUT CONSOLE, six refusals by name, and a missing PUT.RSX leaving no file on the disk to block the retry"
+
+# ---- the chain over a NON-SEGMENTED program (src/bdos/bdosglue.s) ----
+# Every target above drives the chain with programs this tree built, and
+# lout2cpm wraps all of those as 0xEE01 segmented images (Makefile).  So
+# until now nothing asked the question this target asks: does an RSX
+# reach a STOCK Commodore CP/M-8000 binary?  It did not.  The gate tested
+# FCW bit 15 -- the SEGMENTED bit -- and declined every non-segmented
+# caller, which is two containers and not one: 0xEE0B (split I/D), where
+# the refusal is right, and 0xEE03 (non-segmented, combined I/D), where
+# nothing justified it.  bdosglue.s rsxenter now asks the loader instead
+# (`spflag'), and rsxgon/rsxback carry a segmented module across a
+# non-segmented caller's mode.  DEVIATIONS.md #7 is the entry.
+#
+# Four legs, and the reason there are four is that "intercepted" has two
+# directions and the refusal has to survive both:
+#
+#   1  GET FILE NCMDS.TXT feeds SDB.Z8K.  SDB is a stock 0xEE03 binary,
+#      49,536 bytes of it, and every line of its session -- its own
+#      prompt, a deliberate syntax error, its `exit' -- is read out of
+#      the file through functions 1 and 10.  This is the direction that
+#      SUPPLIES a call's answer.
+#   2  DDT.Z8K with nothing resident: the control for leg 3, and the
+#      reason it is needed is that leg 3 asserts a MUTATION of DDT's
+#      output, so the unmutated form has to be on the record.
+#   3  UCASEH.RSX resident, then DDT.Z8K: its banner comes out in upper
+#      case.  DDT is the binary the deviation named, and it is the
 #      awkward one.  Its four segments total 61,188 bytes (0xEF04,
 #      decoded from build/diska/DDT.Z8K), and an 0xEE03 image is given
 #      0x10000 - rsxres() - BPLEN - DEFSTACK: 0xFE00 with nothing
@@ -5811,6 +6401,80 @@ verify-put: all $(CPMAGP)
 #      while the CCP's state page held the top of the TPA and is 0xFDF8
 #      now that it does not; DDT fits under it either way, so what this
 #      leg exercises is unchanged.  DDT also never issues a
+#      console-INPUT call on this port (it prints two lines and stops
+#      without a prompt; a GET.RSX relinked high enough for it to load
+#      under was never asked for a byte), so upper-casing its output is
+#      the whole of what can be shown with DDT, and it is enough: the
+#      call reached the module.
+#   4  PUT FILE DOUT.TXT captures a session that runs DUMP.Z8K (0xEE03)
+#      and SIZEZ8K.Z8K (0xEE0B), then TYPEs the capture back.  DUMP's
+#      output is in the file; SIZEZ8K's is not, because the gate still
+#      sends a split-I/D caller straight to the BDOS.  So the marker
+#      strings are COUNTED: twice for the 0xEE03 program (live, then
+#      read back) and once for the split one.  That is the deviation
+#      being CONFIRMED rather than merely left alone.
+#
+# Legs 2 and 3 cannot end on their own -- DDT never returns to the CCP --
+# so they are bounded by their own budget rather than by $(ENDMARK).  It
+# is small because the whole of what they have to reach is a banner.
+RSXNIMG	= build/rsxntest.bin
+RSXNLOG	= build/verify-rsxn
+RSXNMAX	= 250000000
+RSXNIN1	= $(OSSEL)GET FILE NCMDS.TXT\r
+RSXNIN2	= $(OSSEL)DDT MHELLO.Z8K\r
+RSXNIN3	= $(OSSEL)RSXLDR UCASEH.RSX\rDDT MHELLO.Z8K\r
+RSXNIN4	= $(OSSEL)PUT FILE DOUT.TXT\rDUMP NMARKER.TXT\rSIZEZ8K MHELLO.Z8K\rPUT CONSOLE\rTYPE DOUT.TXT\r$(ENDIN)
+
+.PHONY: verify-rsxn
+verify-rsxn: all $(CPMAGP)
+	$(MKDISK) $(RSXNIMG) $(CPMSYS) $(CPMAGP)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
+		--input="$(RSXNIN1)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(RSXNLOG))-1.log
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
+		--input="$(RSXNIN2)" --max=$(RSXNMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(RSXNLOG))-2.log
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
+		--input="$(RSXNIN3)" --max=$(RSXNMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(RSXNLOG))-3.log
+	@$(EMUOK)
+	$(MKDISK) $(RSXNIMG) $(CPMSYS) $(CPMAGP)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
+		--input="$(RSXNIN4)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(RSXNLOG))-4.log
+	@$(EMUOK)
+#	--- 1: functions 1 and 10 served from a file to a stock 0xEE03 binary
+	@grep -q 'Getting console input from file: NCMDS.TXT' $(RSXNLOG)-1.log \
+		|| { echo "verify-rsxn: FAIL -- GET did not take the file"; exit 1; }
+	@grep -q 'SDB - version' $(RSXNLOG)-1.log \
+		|| { echo "verify-rsxn: FAIL -- SDB.Z8K did not run: the command line was not read out of the file"; exit 1; }
+	@grep -q 'SDB> zzbogus' $(RSXNLOG)-1.log \
+		|| { echo "verify-rsxn: FAIL -- a line of the file did not reach SDB's own prompt: the gate is still declining a non-segmented caller"; exit 1; }
+	@grep -q 'syntax error' $(RSXNLOG)-1.log \
+		|| { echo "verify-rsxn: FAIL -- SDB did not ACT on the line it was given"; exit 1; }
+	@grep -q 'GET-DROVE-A-STOCK-BINARY' $(RSXNLOG)-1.log \
+		|| { echo "verify-rsxn: FAIL -- the exit line did not get SDB out and the next command did not run"; exit 1; }
+#	--- 2/3: the same stock binary's output, unmutated and mutated
+	@grep -q 'Zilog portable debugger' $(RSXNLOG)-2.log \
+		|| { echo "verify-rsxn: FAIL -- DDT did not run with nothing resident: the control leg proves nothing"; exit 1; }
+	@grep -q 'RSXLDR: ATTACHED AT F700 RESIDENT' $(RSXNLOG)-3.log \
+		|| { echo "verify-rsxn: FAIL -- UCASEH.RSX did not attach"; exit 1; }
+	@grep -q 'ZILOG PORTABLE DEBUGGER' $(RSXNLOG)-3.log \
+		|| { echo "verify-rsxn: FAIL -- DDT.Z8K's console output did not go through the chain (or DDT did not load under the module)"; exit 1; }
+	@test "`grep -c 'Zilog portable debugger' $(RSXNLOG)-3.log`" = 0 \
+		|| { echo "verify-rsxn: FAIL -- DDT's banner came out unmutated as well: something is printing round the module"; exit 1; }
+#	--- 4: an 0xEE03 program captured, a split-I/D one still not
+	@test "`grep -c 'GET-DROVE-A-STOC' $(RSXNLOG)-4.log`" = 2 \
+		|| { echo "verify-rsxn: FAIL -- DUMP.Z8K's output was not captured into the file and read back"; exit 1; }
+	@test "`grep -c 'Segmented Program' $(RSXNLOG)-4.log`" = 1 \
+		|| { echo "verify-rsxn: FAIL -- SIZEZ8K.Z8K is split I/D and its output must NOT reach the chain; DEVIATIONS.md #7 says so and this counted it twice"; exit 1; }
+	@echo "verify-rsxn: PASS -- a stock 0xEE03 binary fed from a file through"
+	@echo "             functions 1 and 10, another one's output mutated by a"
+	@echo "             module, DDT.Z8K's banner among it, and a split-I/D"
+	@echo "             caller still going straight to the BDOS"
+
 # ---- verify-ddtseg: no program may write over a supervisor stack ----
 # Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: six
 # stacks from 0xFC00 down to 0x3C00).  Nothing may ever write BELOW the
@@ -5857,6 +6521,292 @@ verify-ddtseg: all $(CPMAGP)
 	@echo "               segment 0x3F is untouched: no program wrote over"
 	@echo "               another process's supervisor stack"
 
+# ================= C10: THE CONSOLE-OWNERSHIP RULE =================
+# A console has ONE owner.  The owner keeps it until it DETACHES, and any
+# other process that asks for it WAITS.  That is MP/M's Attach Console and
+# Detach Console, XDOS 146 and 147 (src/bdos/xdos.c); the rule itself is
+# src/bdos/proc.c pconatt().  With an owner named, the second session
+# starts at the COLD BOOT -- proc.c pcoldses(), called from bdosmisc.c
+# bdosinit() -- which is the thing C5 built, measured and withdrew.
+# SINCE D8 A SERIAL BOOT STARTS NONE (only a video console gets one, on
+# SCC-B), so c10wait, c10brk and c10two type SESSION 1 first.
+#
+# Four targets, and they are four because they assert four different
+# things and only one of them is the happy path:
+#
+#   verify-c10own   the round trip on a console this process already owns.
+#		    One console, no wire, and the only one of the four that
+#		    runs on a bare emulator.
+#   verify-c10wait  146 BLOCKS on a console somebody else owns, and comes
+#		    back when that owner detaches.  Two consoles.
+#   verify-c10brk   ^C ON A HOLDER RELEASES WHAT IT HELD.  The one that
+#		    matters: it is a path that only runs after something
+#		    else has already gone wrong, so nothing else exercises
+#		    it and a bug in it would sit there for ever.
+#   verify-c10two   two sessions, two consoles, and neither one sees the
+#		    other's input.
+#
+# All four use CATT.Z8K (src/cmd/catt.c), which rides on $(CPMAXDOS) next
+# to CON1.Z8K and for the same reason: that image is nobody's alignment.
+C10IMG	= build/c10test.bin
+$(C10IMG): all $(CPMAXDOS)
+	$(MKDISK) $@ $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+
+# ---- verify-c10own: 146 AND 147 ON A CONSOLE THIS PROCESS OWNS ----
+# The transient IS the process the CCP was running in, so the console it
+# was started from is already attached -- the CCP's own prompt-read
+# attached it (conbdos.c getch).  So this is the round trip: attach
+# (succeeds at once), detach, detach AGAIN, attach, read.
+#
+# THE SECOND DETACH IS WHAT MAKES THE FIRST ONE MEAN SOMETHING.  A 147
+# that always answered yes would pass a test that checked only the first
+# one; this one must be REFUSED, because by then the process no longer
+# holds the console.  And the read at the end is there because a rule that
+# gave a console back and could not take it again would be a rule that
+# broke the machine on its way to being right.
+C10OWNLOG = build/verify-c10own.log
+.PHONY: verify-c10own
+verify-c10own: $(C10IMG)
+	@# THE `7' IS TYPE-AHEAD (\i) AND IT HAS TO BE.  The feeder holds
+	@# the byte after a carriage return until the guest prints a fresh
+	@# prompt (emulator src/bus.c, inq_wait_seq), and CATT reads before
+	@# it ever gets back to one -- so a paced `7' would never arrive.
+	@# --input-mark releases it on `CATT: again 0' instead: after the
+	@# console has been detached and retaken, which is the moment the
+	@# read is meant to test.
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(C10IMG)) \
+		--input="CATT\r\i7$(ENDIN)" --input-mark='CATT: again 0' \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } | tee $(abspath $(C10OWNLOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(C10OWNLOG) > build/c10own.txt
+	@grep -q 'CATT: FAIL' build/c10own.txt \
+		&& { echo "verify-c10own: FAIL -- CATT said so itself:"; \
+		     grep -h 'CATT: FAIL' build/c10own.txt; exit 1; } || true
+	@grep -q '^CATT: con 0' build/c10own.txt \
+		|| { echo "verify-c10own: FAIL -- CATT did not run at all"; exit 1; }
+	@grep -q '^CATT: own 0' build/c10own.txt \
+		|| { echo "verify-c10own: FAIL -- function 146 refused a console this"; \
+		     echo "               process was already reading"; exit 1; }
+	@grep -q '^CATT: gave 0' build/c10own.txt \
+		|| { echo "verify-c10own: FAIL -- function 147 refused to give back a"; \
+		     echo "               console this process held"; exit 1; }
+	@grep -q '^CATT: not mine 0' build/c10own.txt \
+		|| { echo "verify-c10own: FAIL -- the SECOND 147 succeeded, so 147 answers"; \
+		     echo "               yes whatever the state is, and the first one"; \
+		     echo "               proved nothing"; exit 1; }
+	@grep -q '^CATT: again 0' build/c10own.txt \
+		|| { echo "verify-c10own: FAIL -- 146 could not retake a console it had"; \
+		     echo "               just detached"; exit 1; }
+	@# Not anchored: function 1 echoes, so the `7' the emulator typed
+	@# sits at the head of the line CATT then prints on.
+	@grep -q 'CATT: read 7' build/c10own.txt \
+		|| { echo "verify-c10own: FAIL -- the console did not read after being"; \
+		     echo "               detached and reattached"; exit 1; }
+	@echo "verify-c10own: PASS -- 146 on a console this process owns, 147 giving"
+	@echo "               it back, a second 147 refused, 146 taking it again, and"
+	@echo "               a character read through the console afterwards"
+
+# ---- verify-c10wait: 146 BLOCKS, AND STOPS BLOCKING ----
+# Console 1's session is started by SESSION 1 (typed first) and sits in getch() on
+# console 1, which means it OWNS console 1.  `CATT W' on console 0 moves
+# itself there (fn 148, which still costs nothing), says so ON CONSOLE 1
+# -- output is not owned, only reading is -- and then asks for the console
+# with 146.
+#
+# It must not get it.  The test then types `CATT D' at console 1, the
+# session detaches, and the hand-off gives the console to the waiter
+# rather than back to the CCP that is already running (src/bdos/proc.c
+# pconhand, and the paragraph above it says why that is not a nicety).
+#
+# WHAT IS ASSERTED IS AN ORDER, IN ONE TRANSCRIPT: `CATT: waiting 1', then
+# `CATT: gave 1', then `CATT: attached 1', all three on console 1.  The
+# middle line is another process's detach.  A 146 that did not block would
+# have printed the third line before the middle one, and the order is what
+# says so -- no instruction count, no timing, and no interleaving between
+# the two files.
+C10WC0	= build/verify-c10wait-c0.log
+C10WC1	= build/verify-c10wait-c1.log
+.PHONY: verify-c10wait
+verify-c10wait: $(C10IMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10IMG) \
+		--input='$(SESS1)CATT W\r$(ENDIN)' --max=$(EMUMAX) --stop-on=idle \
+		--stop-mark='$(ENDMARK)' \
+		--send-after='CATT: waiting 1' --send='USER 0\r' \
+		--send-after='A>' --send='CATT D\r' \
+		--log $(C10WC0) --wire-log $(C10WC1)
+	@tr -d '\r' < $(C10WC0) > build/c10wait-c0.txt
+	@tr -d '\r' < $(C10WC1) > build/c10wait-c1.txt
+	@grep -q 'CATT: FAIL' build/c10wait-c0.txt build/c10wait-c1.txt \
+		&& { echo "verify-c10wait: FAIL -- CATT said so itself:"; \
+		     grep -h 'CATT: FAIL' build/c10wait-c0.txt build/c10wait-c1.txt; \
+		     exit 1; } || true
+	@grep -q 'CATT: waiting 1' build/c10wait-c1.txt \
+		|| { echo "verify-c10wait: FAIL -- CATT never reached console 1, so either"; \
+		     echo "                there is no session to contend with or the wire"; \
+		     echo "                is not connected"; exit 1; }
+	@grep -q 'CATT: gave 1' build/c10wait-c1.txt \
+		|| { echo "verify-c10wait: FAIL -- the session on console 1 never ran"; \
+		     echo "                \`CATT D', so it never detached"; exit 1; }
+	@grep -q 'CATT: attached 1' build/c10wait-c1.txt \
+		|| { echo "verify-c10wait: FAIL -- function 146 never returned: the waiter"; \
+		     echo "                was not woken by the owner's 147"; exit 1; }
+	@w=`grep -n 'CATT: waiting 1' build/c10wait-c1.txt | head -1 | sed -n 's/:.*//p'`; \
+	 d=`grep -n 'CATT: gave 1' build/c10wait-c1.txt | head -1 | sed -n 's/:.*//p'`; \
+	 a=`grep -n 'CATT: attached 1' build/c10wait-c1.txt | head -1 | sed -n 's/:.*//p'`; \
+	 test "$$w" -lt "$$d" && test "$$d" -lt "$$a" \
+		|| { echo "verify-c10wait: FAIL -- console 1 says waiting=$$w detach=$$d"; \
+		     echo "                attached=$$a, so 146 did not block behind the"; \
+		     echo "                owner: it returned without waiting for the 147"; \
+		     exit 1; }
+	@grep -q '^CATT: got 1' build/c10wait-c0.txt \
+		|| { echo "verify-c10wait: FAIL -- CATT never came back to console 0 with"; \
+		     echo "                console 1 in hand"; exit 1; }
+	@grep -q '^CATT: freed 1' build/c10wait-c0.txt \
+		|| { echo "verify-c10wait: FAIL -- CATT could not detach the console it had"; \
+		     echo "                just been given"; exit 1; }
+	@grep -q 'CATT: waiting 1' build/c10wait-c0.txt \
+		&& { echo "verify-c10wait: FAIL -- console 1's output reached console 0"; \
+		     exit 1; } || true
+	@echo "verify-c10wait: PASS -- 146 blocked on the console the console-1 session"
+	@echo "                owned and returned only after that session's 147:"
+	@echo "                waiting, detach and attached, in that order on console 1"
+
+# ---- verify-c10brk: ^C ON A HOLDER RELEASES WHAT IT HELD ----
+# THE TARGET THIS FEATURE IS WORTH.  A program that attaches a console and
+# never detaches holds it for the life of the machine, and the program
+# that does that is not the polite one -- it is the one that crashed, or
+# was ^C'd, or simply forgot.  So the release is in the BDOS, at the one
+# place every way out of a program meets (src/bdos/proc.c procdead ->
+# pconrel), and this is the target that proves it from outside.
+#
+# `CATT H' takes console 1 the way verify-c10wait does, says so, goes back
+# to console 0 and reads there for ever.  It NEVER detaches: nothing in
+# that mode calls 147.  The ^C is aimed with the emulator's --input-mark,
+# so it is released only once `CATT: held 1' has been printed -- that is,
+# only once the program really has the console -- rather than landing on
+# whatever happens to be reading at the time.
+#
+# THE PROOF IS ON CONSOLE 1, AND IT IS SOMEBODY ELSE'S PROGRAM RUNNING.
+# `CON1 X' is typed into console 1 while CATT H is holding it; the bytes
+# sit in the receiver, unread, because the session that would read them is
+# blocked in 146 behind the holder.  If `CON1: transient' ever appears on
+# console 1, that session got its console back -- and the only thing that
+# could have given it back is the ^C, because CATT H did not.
+C10BC0	= build/verify-c10brk-c0.log
+C10BC1	= build/verify-c10brk-c1.log
+.PHONY: verify-c10brk
+verify-c10brk: $(C10IMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10IMG) \
+		--input="`printf '$(SESS1)CATT H\r\\i\003CATT D\r'`" \
+		--input-mark='CATT: held 1' \
+		--max=$(EMUMAX) --stop-on=idle --stop-mark='$(ENDMARK)' \
+		--send-after='CATT: grabbing 1' --send='USER 0\r' \
+		--send-after='A>' --send='CATT D\r' \
+		--send-after='CATT: holds 1' --send='CON1 X\r$(ENDIN)' \
+		--log $(C10BC0) --wire-log $(C10BC1)
+	@tr -d '\r' < $(C10BC0) > build/c10brk-c0.txt
+	@tr -d '\r' < $(C10BC1) > build/c10brk-c1.txt
+	@grep -q 'CATT: FAIL' build/c10brk-c0.txt build/c10brk-c1.txt \
+		&& { echo "verify-c10brk: FAIL -- CATT said so itself:"; \
+		     grep -h 'CATT: FAIL' build/c10brk-c0.txt build/c10brk-c1.txt; \
+		     exit 1; } || true
+	@grep -q 'CATT: gave 1' build/c10brk-c1.txt \
+		|| { echo "verify-c10brk: FAIL -- the session on console 1 never detached,"; \
+		     echo "               so the holder never got the console and there is"; \
+		     echo "               nothing to release"; exit 1; }
+	@grep -q 'CATT: holds 1' build/c10brk-c1.txt \
+		|| { echo "verify-c10brk: FAIL -- CATT H never took console 1"; exit 1; }
+	@grep -q 'CON1: transient' build/c10brk-c1.txt \
+		|| { echo "verify-c10brk: FAIL -- CONSOLE 1 NEVER CAME BACK.  A program that"; \
+		     echo "               held it was ^C'd and the console stayed held: the"; \
+		     echo "               session blocked in 146 for the rest of the run and"; \
+		     echo "               the command typed at it was never read"; exit 1; }
+	@h=`grep -n 'CATT: holds 1' build/c10brk-c1.txt | head -1 | sed -n 's/:.*//p'`; \
+	 t=`grep -n 'CON1: transient' build/c10brk-c1.txt | head -1 | sed -n 's/:.*//p'`; \
+	 test "$$h" -lt "$$t" \
+		|| { echo "verify-c10brk: FAIL -- console 1 ran the transient at line $$t,"; \
+		     echo "               before the holder took the console at line $$h, so"; \
+		     echo "               the console was never actually held"; exit 1; }
+	@grep -q '^CATT: gave 0' build/c10brk-c0.txt \
+		|| { echo "verify-c10brk: FAIL -- console 0 never ran another command after"; \
+		     echo "               the ^C, so the ^C did not reach the holder at all"; \
+		     exit 1; }
+	@grep -q 'CON1: transient' build/c10brk-c0.txt \
+		&& { echo "verify-c10brk: FAIL -- console 1's transient printed on console 0"; \
+		     exit 1; } || true
+	@echo "verify-c10brk: PASS -- a program held console 1 and was ^C'd without ever"
+	@echo "               detaching; the session blocked behind it then read the"
+	@echo "               command that had been waiting in the receiver and ran it,"
+	@echo "               so the abnormal exit is what released the console"
+
+# ---- verify-c10two: TWO SESSIONS, TWO CONSOLES, TWO SETS OF KEYS ----
+# Both sessions exist before CATT runs: console 0's is the cold boot
+# and console 1's is SESSION 1's.  Each runs CATT with no argument, which
+# asks fn 153 which console it is on, takes it and gives it back, and
+# READS ONE CHARACTER.  The two characters typed are different and both
+# consoles are told to run the same program, so if either console could
+# see the other's keys the digit would come out wrong -- and if either
+# session could be pushed onto the other's device, the console number
+# would.
+#
+# Nothing here contends: each session already owns the console it is
+# sitting on, so both 146s succeed at once.  That is the point.  A rule
+# that made two independent sessions wait for each other would be a rule
+# that had broken the machine.
+#
+# THE STOP MARK IS CONSOLE 0's AND ONLY CONSOLE 0's.  The emulator's
+# --stop-mark watches every serial channel, so a `ZZEND' typed at console
+# 1 would end the run the moment that console finished -- with console 0
+# still spelling out its command a byte at a time, and its half of the
+# test never run.  Console 0 is the slower of the two (it waits for the
+# input mark, then pays the feeder's per-byte quiet for six more bytes),
+# so ending on console 0's mark ends the run after both are done.
+C10TC0	= build/verify-c10two-c0.log
+C10TC1	= build/verify-c10two-c1.log
+.PHONY: verify-c10two
+verify-c10two: $(C10IMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10IMG) \
+		--input='$(SESS1)CATT\r\i0$(ENDIN)' --input-mark='CATT: again 0' \
+		--max=$(EMUMAX) --stop-on=idle \
+		--stop-mark='$(ENDMARK)' \
+		--send-after='1A>' --send='USER 0\r' \
+		--send-after='A>' --send='CATT\r5' \
+		--log $(C10TC0) --wire-log $(C10TC1)
+	@tr -d '\r' < $(C10TC0) > build/c10two-c0.txt
+	@tr -d '\r' < $(C10TC1) > build/c10two-c1.txt
+	@grep -q 'CATT: FAIL' build/c10two-c0.txt build/c10two-c1.txt \
+		&& { echo "verify-c10two: FAIL -- CATT said so itself:"; \
+		     grep -h 'CATT: FAIL' build/c10two-c0.txt build/c10two-c1.txt; \
+		     exit 1; } || true
+	@grep -q '^CATT: con 0' build/c10two-c0.txt \
+		|| { echo "verify-c10two: FAIL -- console 0's session does not think it is"; \
+		     echo "               on console 0"; exit 1; }
+	@grep -q '^CATT: con 1' build/c10two-c1.txt \
+		|| { echo "verify-c10two: FAIL -- console 1's session does not think it is"; \
+		     echo "               on console 1, or there is no session there"; exit 1; }
+	@# Not anchored: function 1 echoes, so the digit each console was
+	@# typed sits at the head of the line CATT then prints on.
+	@grep -q 'CATT: read 0' build/c10two-c0.txt \
+		|| { echo "verify-c10two: FAIL -- console 0 did not read the character typed"; \
+		     echo "               at console 0"; exit 1; }
+	@grep -q 'CATT: read 5' build/c10two-c1.txt \
+		|| { echo "verify-c10two: FAIL -- console 1 did not read the character typed"; \
+		     echo "               at console 1"; exit 1; }
+	@grep -q 'CATT: read 5' build/c10two-c0.txt \
+		&& { echo "verify-c10two: FAIL -- console 0 saw the character typed at"; \
+		     echo "               console 1"; exit 1; } || true
+	@grep -q 'CATT: read 0' build/c10two-c1.txt \
+		&& { echo "verify-c10two: FAIL -- console 1 saw the character typed at"; \
+		     echo "               console 0"; exit 1; } || true
+	@grep -q 'CATT: con 1' build/c10two-c0.txt \
+		&& { echo "verify-c10two: FAIL -- console 1's output reached console 0"; \
+		     exit 1; } || true
+	@grep -q 'CATT: con 0' build/c10two-c1.txt \
+		&& { echo "verify-c10two: FAIL -- console 0's output reached console 1"; \
+		     exit 1; } || true
+	@echo "verify-c10two: PASS -- two sessions, each owning the console it sits on,"
+	@echo "               each reading only the character typed at its own device"
 
 # ---- the pool must not contain the framebuffer (verify-pgseg) ----
 #
@@ -6536,6 +7486,7 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 # worth writing down.  The race needs BOTH creators to have picked the same
 # free slot before either resumes, which needs a THIRD process to be the one
 # holding the lock -- a lock holder plus two creators plus a slot to contend
+# for, and the console-1 session (SESSION 1) besides, which is five live
 # processes and could not be had from four descriptors.  Here CONCM is
 # itself the lock holder, so
 # when it releases the lock the dispatcher hands the machine to the parked
@@ -6571,6 +7522,7 @@ CONCRLIVE = 5
 verify-concr: all $(CPMACONCR)
 	$(MKDISK) $(CONCRIMG) $(CPMSYS) $(CPMACONCR) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCRIMG)) \
+		--input="$(OSSEL)$(SESS1)CONCM $(CONCRBALLAST)\r\iC" \
 		--input-mark='CONCO: asking' \
 		--max=$(CONCRMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCRLOG))
@@ -6655,6 +7607,8 @@ verify-concr: all $(CPMACONCR)
 # The size floor is what stops two cut-off assemblies from passing as a
 # match.  SPLITB stays alive until function 145 says the assembler is
 # gone, for the same reason (src/cmd/splitb.c).
+# Both runs type SESSION 1 first: the `live=3' checked below counts the
+# console-1 session, which a serial boot no longer starts by itself (D8).
 SPLITCTL = build/split-ctl.bin
 SPLITINT = build/split-int.bin
 SPLITCLOG = build/verify-split-ctl.log
@@ -6671,11 +7625,13 @@ verify-split: all $(CPMASPLIT)
 	$(MKDISK) $(SPLITINT) $(CPMSYS) $(CPMASPLIT) $(CPMBIMG)
 	@echo "--- 1. the control: one split program, nobody interfering"
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(SPLITCTL)) \
+		--input="$(OSSEL)$(SESS1)SPLITB 1\r" --max=$(SPLITMAX) $(EMUIDLE) 2>/dev/null; \
 		$(EMUSTAT); } \
 		| tee $(abspath $(SPLITCLOG))
 	@$(EMUOK)
 	@echo "--- 2. the same job, with a second split program asked for in the middle"
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(SPLITINT)) \
+		--input="$(OSSEL)$(SESS1)SPLITB 2\r" --max=$(SPLITMAX) $(EMUIDLE) 2>/dev/null; \
 		$(EMUSTAT); } \
 		| tee $(abspath $(SPLITILOG))
 	@$(EMUOK)
@@ -6984,6 +7940,7 @@ verify-appbound: $(APPBDIR)/fromhex $(APPBDIR)/sortfl $(APPBDIR)/killdu \
 # The race needs BOTH creators to have picked the same free slot before
 # either resumes, so the lock holder has to be a THIRD process: a holder,
 # two creators, ballast enough that exactly ONE descriptor is free, and the
+# console-1 session (SESSION 1, typed first) that holds one for as long as the machine
 # is up.  That is five live processes and a spare, which is why this target
 # could not exist at PNPROC 4 and can at 6 (src/bdos/proc.h).
 #
@@ -7040,6 +7997,7 @@ CONCR2LIVE = 5
 verify-concr2: all $(CPMACONCR2)
 	$(MKDISK) $(CONCR2IMG) $(CPMSYS) $(CPMACONCR2) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(CONCR2IMG)) \
+		--input="$(OSSEL)$(SESS1)CONCL $(CONCR2BALLAST)\r\iC" \
 		--input-mark='CONCR Z: releasing the prompt now' \
 		--max=$(CONCR2MAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(CONCR2LOG))

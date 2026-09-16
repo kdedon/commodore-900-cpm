@@ -18,6 +18,8 @@ EXTERN	WORD	proccnt();	/* proc.c: live process count */
 EXTERN	WORD	pconget();	/* proc.c: the running process's console    */
 EXTERN	WORD	pconset();	/*   and setting it				*/
 EXTERN	WORD	pconname();	/* proc.c: set a NAMED process's console    */
+EXTERN	WORD	pconatt();	/* proc.c: 146, claim it -- blocks	    */
+EXTERN	WORD	pcondet();	/* proc.c: 147, give it back		    */
 
 /*  BIOS function 24 is the 100 Hz period tick (bios900.c case 24) and
     function 25 is the 64 KB segment allocator (case 25, the pgalloc.c
@@ -42,6 +44,7 @@ EXTERN	WORD	pconname();	/* proc.c: set a NAMED process's console    */
     file's.  Function 148 accepts exactly the consoles that exist on the
     machine it is running on, which is what a compiled-in number could
     only manage on one machine.  */
+#define	XNCON		PNCON
 
 /* Delay in 100 Hz ticks. Subtract the deadline to tolerate counter wrap.
  * Zero ticks or an unavailable time base return immediately. */
@@ -116,7 +119,9 @@ UWORD	n;
 	while (xflag[n] != FL_SET) {
 		/* Refuse when nobody else can run. This also refuses a wait that could
  * eventually be satisfied by a peer currently blocked on external input. */
+		if (proccnt() < 2 || ! pwait(PW_FLAG, (WORD)n, 0L)) {
 			xfwait[n] = 0;
+			return (XFAIL);
 		}
 	}
 	xflag[n] = FL_CLEAR;
@@ -305,6 +310,10 @@ WORD	cond;
 	while (q->q_cnt == 0) {
 		if (cond)
 			return (XFAIL);		/* 138: never blocks	*/
+		if (proccnt() < 2 || ! pwait(PW_QRD, x.qx_id, 0L))
+			return (XFAIL);		/* nobody else can write:
+						   xflgwt() above says why
+						   this is now two tests */
 		if ( ! q->q_used)
 			return (XFAIL);		/* deleted under us	*/
 	}
@@ -340,6 +349,10 @@ WORD	cond;
 	while (q->q_cnt >= q->q_ndep) {
 		if (cond)
 			return (XFAIL);		/* 140: never blocks	*/
+		if (proccnt() < 2 || ! pwait(PW_QWR, x.qx_id, 0L))
+			return (XFAIL);		/* nobody else can read:
+						   xflgwt() above says why
+						   this is now two tests */
 		if ( ! q->q_used)
 			return (XFAIL);
 	}
@@ -461,5 +474,17 @@ XADDR	infop;
 		return (XFAIL);
 	return (pconname(a.xa_name, n) ? XOK : XFAIL);
 }
+
+
 /* Attach/detach the selected console. Attach blocks behind another owner;
  * detach fails if the caller did not own it. */
+
+GLOBAL WORD xconatt()
+{
+	return (pconatt(pconget()) ? XOK : XFAIL);
+}
+
+GLOBAL WORD xcondet()
+{
+	return (pcondet(pconget()) ? XOK : XFAIL);
+}

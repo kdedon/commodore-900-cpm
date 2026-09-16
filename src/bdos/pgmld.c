@@ -34,6 +34,10 @@ extern int pspother();		/* C900: proc.c -- is a split-I/D program
 				   are shared, so the answer decides whether
 				   a 0xEE0B image may be loaded at all.	*/
 
+extern VOID pdmaset();		/* C900: proc.c -- record THIS process's
+				   default DMA address (base page + 0x80),
+				   for function 13 to restore.		*/
+
 #define SPLIT	0x4000		/* Separate I/D flag for LPB		*/
 #define SEG	0x2000		/* Segmented code flag for TPA		*/
 #define NSEG	16		/* Maximum number of x.out segments	*/
@@ -369,7 +373,10 @@ XADDR xlpbp;
 
 	setbase(setaddr(&mylpb));		/* Set addresses in LPB,*/
 						/* Set up base page	*/
+
 	/* Record basepage.buff as the default DMA restored by function 13. */
+	pdmaset(mylpb.bpaddr + (BPLEN - SECLEN));
+
 	cpy_out((XADDR) &mylpb, xlpbp, sizeof mylpb);
 	return (GOOD);
 }

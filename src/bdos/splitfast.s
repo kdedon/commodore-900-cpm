@@ -341,9 +341,11 @@ tlload:	calr	bank_
 	and	r7, $14
 	add	r7, r7
 	ld	r4, (rr2)
+	ld	rr12(r7), r4
 	add	r3, $2		/ offsets wrap mod 64K like the CPU's
 	add	r7, $2
 	ld	r4, (rr2)
+	ld	rr12(r7), r4
 	jr	setpc
 
 twstore:
@@ -368,9 +370,11 @@ tlstore:
 	ld	r7, r8
 	and	r7, $14
 	add	r7, r7
+	ld	r4, rr12(r7)
 	ld	(rr2), r4
 	add	r3, $2
 	add	r7, $2
+	ld	r4, rr12(r7)
 	ld	(rr2), r4
 	jr	setpc
 
@@ -379,11 +383,19 @@ setpc:	add	r0, r10
 	jp	spret_
 
 / ---- helpers (CALR: frame refs stay off rr14) ----
+/
+/ Frame slots are reached base+index, and the base is written OUTSIDE
+/ the parentheses, exactly as in setpc's `ld rr12(34), r0' above:
+/ `ld r4, rr12(r3)' is base rr12 indexed by r3, 0x71C4 0x0300.  The
+/ mirror image `ld r4, r3(rr12)' assembles without complaint into base
+/ RR3 indexed by r12, 0x7134 0x0C00 -- an address built from whatever
+/ rr2 holds, which in this file is the dispatch scratch.
 
 / word register read: nibble in r3 -> r4; r14/r15 live banked
 getw_:	cp	r3, $14
 	jr	uge, 1f
 	add	r3, r3
+	ld	r4, rr12(r3)
 	ret
 1:	jr	eq, 2f
 	ldctl	r4, NSPOFF
@@ -395,6 +407,7 @@ getw_:	cp	r3, $14
 putw_:	cp	r3, $14
 	jr	uge, 1f
 	add	r3, r3
+	ld	rr12(r3), r4
 	ret
 1:	jr	eq, 2f
 	ldctl	NSPOFF, r4
@@ -409,6 +422,7 @@ getb_:	ld	r2, r3
 	add	r3, r3
 	srl	r2, $3
 	add	r3, r2
+	ldb	rl7, rr12(r3)
 	ret
 
 / byte register write: nibble in r3, value in rl7
@@ -417,6 +431,7 @@ putb_:	ld	r2, r3
 	add	r3, r3
 	srl	r2, $3
 	add	r3, r2
+	ldb	rr12(r3), rl7
 	ret
 
 / effective address for DA (n2 = 0) or X: r4 = w1 [+ Rn2]

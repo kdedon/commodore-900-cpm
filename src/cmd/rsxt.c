@@ -37,11 +37,19 @@ int main()
 	pb.rprsvd = 0;
 	r = __bdos(BDOS_CALLRSX, (long) &pb);
 	if (r == 0xff)
+		conputs("rsxt: fn60 unclaimed\r\n");
 	else {
+		conputs("rsxt: fn60 answered ");
 		putdec((unsigned) r);
+		conputs("\r\n");
 	}
 	pb.rpfunc = 126;			/* the system's chain query */
+	conputs("rsxt: head=");
 	puthex((unsigned) __bdos(BDOS_CALLRSX, (long) &pb));
+	conputs("\r\n");
+	conputs("rsxt: hello from rsxt\r\n");
+	conputs("rsxt: htpa=");
 	puthex((unsigned) (_base->htpa & 0xffffL));
+	conputs("\r\n");
 	return (0);
 }

@@ -138,6 +138,7 @@ char	*argv[];
 {
 	register int	i, k;
 	int		qmsg, qstop;
+	int		live0;
 
 	cputs("XDOSD: start\r\n");
 
@@ -163,6 +164,8 @@ char	*argv[];
 		cputs("\r\n");
 		return (1);
 	}
+	live0 = (int)(__bdos(X_PROCCNT, 0L) & 0xff);
+	countline("XDOSD: live=", live0);
 
 	/* ---- 141: sleep, and let E have the machine ---- */
 
@@ -208,6 +211,13 @@ char	*argv[];
 	    and then terminates -- so wait for it, one tick at a time
 	    and never for ever.  A bound rather than a spin because a
 	    test that cannot finish cannot report.	*/
+	/*  "this is the only process left" was written on a machine where
+	    it was.  Since C10 the cold boot starts a session on every other
+	    console (src/bdos/proc.c pcoldses), so what E's Terminate has to
+	    produce is ONE FEWER than the count printed above, not the
+	    literal 1.  The bound is unchanged.		*/
+	for (i = 0; i < 200
+	     && (int)(__bdos(X_PROCCNT, 0L) & 0xff) >= live0; i++)
 		__bdos(X_DELAY, 1L);
 	countline("XDOSD: after=", (int)__bdos(X_PROCCNT, 0L));
 	cputs("XDOSD: done\r\n");

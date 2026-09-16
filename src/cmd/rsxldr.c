@@ -93,6 +93,7 @@ int temp;
 
 	mkfcb(name, &fcb);
 	if (__bdos(BDOS_OPEN, (long) &fcb) == 255) {
+		conputs("rsxldr: no such RSX file\r\n");
 		return (1);
 	}
 	for (n = 0; n < sizeof buf; n += SECLEN) {
@@ -103,14 +104,17 @@ int temp;
 	__bdos(BDOS_CLOSE, (long) &fcb);
 	setdma(_base->buff);
 	if (n < RSXHDRLEN) {
+		conputs("rsxldr: file is too short to be an RSX\r\n");
 		return (1);
 	}
 	if (wordat(H_MAGIC) != RSXMAGIC) {
+		conputs("rsxldr: not an RSX (bad prefix magic)\r\n");
 		return (1);
 	}
 	org = wordat(H_ORG);
 	len = wordat(H_LEN);
 	if (len > (unsigned) n) {
+		conputs("rsxldr: the file is shorter than the module claims\r\n");
 		return (1);
 	}
 	if (temp)
@@ -122,14 +126,20 @@ int temp;
 	pb.rplen = len;
 	pb.rpsrc = (long) buf;
 	if ((n = __bdos(BDOS_CALLRSX, (long) &pb)) != 0) {
+		conputs("rsxldr: the system refused the attach ");
 		puthex((unsigned) n);
+		conputs(" org="); puthex(org);
+		conputs(" len="); puthex(len);
+		conputs("\r\n");
 		return (1);
 	}
 
 	/*  This message is printed AFTER the attach, so it goes through
 	    the module that was just linked in -- the first proof that
 	    the chain is live.  */
+	conputs("rsxldr: attached at ");
 	puthex(org);
+	conputs(temp ? " temporary\r\n" : " resident\r\n");
 	return (0);
 }
 
@@ -151,13 +161,18 @@ VOID chain()
 	org = (unsigned) __bdos(BDOS_CALLRSX, (long) &pb);
 	while (org != 0) {
 		p = (char *) (((long) &pb & 0xffff0000L) | (long) org);
+		conputs("rsxldr: chain ");
 		puthex(org);
+		conputs(" prev=");
 		puthex((unsigned)(((p[H_PREV] & 0xff) << 8)
 				  | (p[H_PREV + 1] & 0xff)));
+		conputs(" next=");
 		org = (unsigned)(((p[H_NEXT] & 0xff) << 8)
 				 | (p[H_NEXT + 1] & 0xff));
 		puthex(org);
+		conputs(" ec=");
 		puthex((unsigned) p[H_ENDCHAIN] & 0xff);
+		conputs("\r\n");
 	}
 }
 
@@ -169,6 +184,7 @@ char *argv[];
 	int		temp;
 
 	if (argc < 2) {
+		conputs("usage: RSXLDR name.RSX [T] [name.RSX [T]] ...\r\n");
 		return (1);
 	}
 	for (i = 1; i < argc; i++) {

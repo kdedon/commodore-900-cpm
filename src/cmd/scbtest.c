@@ -151,12 +151,22 @@ char *argv[];
 	check("con width (1a)", (unsigned) (scbget(SCB_CONWIDTH) & 0xff), 80);
 	check("bdos flgs (57)", (unsigned) (scbget(SCB_BFLGS) & 0xff), 0x80);
 
+	/* The SCB's own address.  The image is walled off by the MMU, so
+	   no address in this program's space names it and @SCBADD MUST
+	   read zero -- the documented "not available".  It used to
+	   publish the offset inside the BDOS data segment (0766h), which
+	   a program would dereference into its own TPA without faulting.
+	   Zero is the assertion now: a non-zero value here is a pointer
+	   that lies. */
 	v = (unsigned) scbget(SCB_SCBADD);
 	cputs("\r\nscb addr  (3a) -> ");
 	puthex(v);
 	checks++;
+	if (v != 0) {
+		cputs(" BAD, non-zero (unreachable address published)");
 		fails++;
 	} else
+		cputs(" OK (zero: no addressable image, use fn 49)");
 
 	/* ---- mirrors of live BDOS state ---- */
 	/* current disk: fn 25 says which one, the SCB must agree */

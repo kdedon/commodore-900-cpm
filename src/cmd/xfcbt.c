@@ -11,6 +11,7 @@
 static struct fcb	f;
 static char		buf[SECLEN];
 static char		stamps[8];
+static char		freerec[4];
 
 static int		bad;
 
@@ -163,10 +164,19 @@ int *nsfcb;
 }
 
 
+/* function 46: free space as THREE LITTLE-ENDIAN BYTES of 128-byte
+   record count at the DMA address, fourth byte zero -- the CP/M 3 wire
+   form.  Assembled by hand: this machine is big-endian, so reading the
+   buffer back as a `long' would be the very bug this form replaces. */
 static long freesp()
 {
+	freerec[0] = freerec[1] = freerec[2] = freerec[3] = 0;
+	setdma(freerec);
 	__bdos(46, 0L);
 	setdma(buf);
+	return ( ((long) (freerec[0] & 0xff))
+	       | ((long) (freerec[1] & 0xff) <<  8)
+	       | ((long) (freerec[2] & 0xff) << 16) );
 }
 
 

@@ -1,0 +1,5 @@
+SDB
+zzbogus
+exit
+TYPE NMARKER.TXT
+ZZEND

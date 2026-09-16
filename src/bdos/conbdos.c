@@ -13,6 +13,10 @@
 EXTERN WORD	pyield();	/* give the machine away (src/bdos/proc.c) */
 EXTERN WORD	pwait();	/* block on a reason, then give it away	*/
 EXTERN WORD	proccnt();	/* how many processes are live		*/
+EXTERN WORD	pconatt();	/* claim this console, blocking until its
+				   owner detaches (C10, src/bdos/proc.c) */
+EXTERN WORD	pconmine();	/* ...and may I take a character off it
+				   without claiming it?			*/
 
 
 #define   ctrla  0x01
@@ -122,6 +126,7 @@ conbrk()
     if (++brkctr < CONBRK_POLL) return;
     brkctr = 0;
     /* Output polling must not consume another process's owned console input. */
+    if (!pconmine((WORD)concur)) return;
     stop = FALSE;
     if ( bconstat() ) do
     {
@@ -319,6 +324,8 @@ UBYTE getch()		/* Get char from buffer or bios */
     BSETUP
 
     /* Claim the console before consuming buffered input; attaching may block. */
+    pconatt((WORD)concur);
+
     for (;;)
     {
 	if (temp = kbchar[concur])
