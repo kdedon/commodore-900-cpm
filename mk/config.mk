@@ -117,6 +117,10 @@ LOUT2CPM = build/lout2cpm
 
 ULIB	= $(UOBJDIR)/bdossc.o $(UOBJDIR)/biossc.o $(UOBJDIR)/cstart.o \
 	  $(UOBJDIR)/libcpm.o
+# The toolchain's prebuilt C library.  Its C members are compiled with cc2
+# 0010, which relocates frame/auto segment bytes against SS where UVAR's
+# VTPA writes 0x32; crt0.s defines SS = 0x32, so the two agree.
+LIBCZ	= $(TC)/libc-z8001/libc-z8001.a
 # The src/app programs, staged onto drive A beside their source.
 UAPP	= $(UOBJDIR)/SDB.Z8K $(UOBJDIR)/SORTFL.Z8K $(UOBJDIR)/KILLDU.Z8K \
 	  $(UOBJDIR)/TOHEX.Z8K $(UOBJDIR)/FROMHEX.Z8K

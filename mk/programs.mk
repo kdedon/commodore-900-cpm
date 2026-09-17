@@ -31,52 +31,30 @@ $(UOBJDIR)/pip.lout: $(UOBJDIR)/pip.o $(UOBJDIR)/crt0.o $(ULIB) $(PIPLIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/pip.o \
 		$(ULIB) $(PIPLIB)
 
-# STAT shares PIP headers and runtime, plus copyrt.lit and qsort.
+# STAT shares PIP headers and runtime, plus copyrt.lit and the toolchain
+# library's BSD-licensed qsort.
 $(UOBJDIR)/stat.o: src/cmd/stat.c src/cmd/copyrt.lit $(PIPINC)/basepage.h \
 		$(PIPINC)/bdos.h $(PIPINC)/portab.h $(PIPINC)/setjmp.h $(TCSTAMP) | $(UOBJDIR)
 	$(CC0) $(VAR) $< $(UOBJDIR)/stat.z0 -I$(PIPINC) -Isrc/cmd >> $(LOG) 2>&1
 	$(CC1) $(VAR) $(UOBJDIR)/stat.z0 $(UOBJDIR)/stat.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(UOBJDIR)/stat.z1 $@ $(UOBJDIR)/stat.scr 0 >> $(LOG) 2>&1
 
-# Compile the toolchain's BSD-licensed qsort; only STAT links it.
-QSORTSRC = $(C900_TOOLCHAIN)/src/libc/gen/qsort.c
-$(UOBJDIR)/qsort.o: $(QSORTSRC) $(TCSTAMP) | $(UOBJDIR)
-	$(CC0) $(VAR) $< $(UOBJDIR)/qsort.z0 -Isrc/cmd >> $(LOG) 2>&1
-	$(CC1) $(VAR) $(UOBJDIR)/qsort.z0 $(UOBJDIR)/qsort.z1 >> $(LOG) 2>&1
-	$(CC2) $(UVAR) $(UOBJDIR)/qsort.z1 $@ $(UOBJDIR)/qsort.scr 0 >> $(LOG) 2>&1
-
-$(UOBJDIR)/stat.lout: $(UOBJDIR)/stat.o $(UOBJDIR)/crt0.o $(ULIB) $(PIPLIB) \
-		$(UOBJDIR)/qsort.o
+$(UOBJDIR)/stat.lout: $(UOBJDIR)/stat.o $(UOBJDIR)/crt0.o $(ULIB) $(PIPLIB) $(LIBCZ)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/stat.o \
-		$(ULIB) $(PIPLIB) $(UOBJDIR)/qsort.o
+		$(ULIB) $(PIPLIB) $(LIBCZ)
 
 $(UOBJDIR)/STAT.Z8K: $(UOBJDIR)/stat.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # ---- the src/app programs ----
 # Written for DRI's CP/M C library, they link the toolchain's COHERENT
-# stdio, string and malloc sources, compiled here like qsort.c above, over
-# src/cmd/cpmsys.c, which puts open/read/write/lseek/sbrk/_exit on the
-# BDOS and is also their startup (so no cstart.o).  Each program links
-# only the library members it needs.
-TCSRC	= $(C900_TOOLCHAIN)/src
-TCINC	= $(firstword $(wildcard $(TCSRC)/include $(C900_TOOLCHAIN)/usr/include))
+# stdio, string and malloc from its libc-z8001.a over src/cmd/cpmsys.c,
+# which puts open/read/write/lseek/sbrk/_exit on the BDOS and is also their
+# startup (so no cstart.o).  Linked ahead of the archive, cpmsys.o's
+# definitions keep the archive's system-call trap stubs out.
+TCINC	= $(firstword $(wildcard $(C900_TOOLCHAIN)/src/include $(C900_TOOLCHAIN)/usr/include))
 APPOBJ	= $(UOBJDIR)/app
 APPINC	= -I$(APPOBJ) -I$(TCINC) -I$(TCINC)/sys
-
-# stdio core: what printf and fopen reach through finit and exit.
-LIBCIO	= _fp finit exit fclose fflush _fgetb _fgetc _fputb _fputc _fputt \
-	  _fpseek fputs printf _stropen _fgeteof _fopen toupper sdtoa perror \
-	  sys_err strlen ctype malloc
-# scanf: its %f conversion brings atof and the double arithmetic.
-LIBCSCAN = scanf ungetc index atof dadd ddiv dmul dtof itod
-# dtoi is ifix, which the compiler calls from SRT.C.
-LIBC_SDB    = $(LIBCIO) $(LIBCSCAN) fopen fgets fseek calloc strcpy strcat \
-	       strncpy strcmp strncmp tolower dtoi
-LIBC_SORTFL  = $(LIBCIO) calloc strcpy strcmp qsort
-LIBC_KILLDU  = $(LIBCIO) strcmp
-LIBC_TOHEX   = $(LIBCIO) fread
-LIBC_FROMHEX = $(LIBCIO) $(LIBCSCAN) fopen fwrite
 
 APPSDB	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 
@@ -94,32 +72,10 @@ $(APPOBJ)/cpmsys.o: src/cmd/cpmsys.c src/cmd/cpm.h $(TCSTAMP) | $(APPOBJ)
 	$(CC1) $(VAR) $(APPOBJ)/cpmsys.z0 $(APPOBJ)/cpmsys.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(APPOBJ)/cpmsys.z1 $@ $(APPOBJ)/cpmsys.scr 0 >> $(LOG) 2>&1
 
-# Library members, from wherever the toolchain keeps them.  malloc comes
-# from malloc/, as in the toolchain's own libc build: gen/malloc.c is the
-# older allocator that no longer matches <sys/malloc.h>.
-define LIBCC
-$(2) $(APPOBJ)/lc_%.o: $(1)/%.c $(TCSTAMP) | $(APPOBJ)
-	$$(CC0) $$(VAR) $$< $(APPOBJ)/lc_$$*.z0 -I$(TCINC) -I$(TCINC)/sys >> $$(LOG) 2>&1
-	$$(CC1) $$(VAR) $(APPOBJ)/lc_$$*.z0 $(APPOBJ)/lc_$$*.z1 >> $$(LOG) 2>&1
-	$$(CC2) $$(UVAR) $(APPOBJ)/lc_$$*.z1 $$@ $(APPOBJ)/lc_$$*.scr 0 >> $$(LOG) 2>&1
-endef
-$(eval $(call LIBCC,$(TCSRC)/malloc,$(APPOBJ)/lc_malloc.o:))
-$(eval $(call LIBCC,$(TCSRC)/libc/stdio))
-$(eval $(call LIBCC,$(TCSRC)/libc/gen))
-$(eval $(call LIBCC,$(TCSRC)/libc/crt))
-
-# The assembly members address their arguments as SS|n(r15); crt0.s
-# supplies SS.
-$(APPOBJ)/lc_%.o: $(TCSRC)/libc/gen/%.s $(TCSTAMP) | $(APPOBJ)
-	$(AS) -o $@ $< >> $(LOG) 2>&1
-$(APPOBJ)/lc_%.o: $(TCSRC)/libc/crt/%.s $(TCSTAMP) | $(APPOBJ)
-	$(AS) -o $@ $< >> $(LOG) 2>&1
-.PRECIOUS: $(APPOBJ)/lc_%.o
-
 # $(call APPLINK,PROG,OBJECTS)
 define APPLINK
-$(APPOBJ)/$(1).lout: $(2) $(LIBC_$(1):%=$(APPOBJ)/lc_%.o) $(APPOBJ)/cpmsys.o \
-		$(UOBJDIR)/crt0.o $(UOBJDIR)/bdossc.o $(UOBJDIR)/libcpm.o
+$(APPOBJ)/$(1).lout: $(2) $(APPOBJ)/cpmsys.o $(UOBJDIR)/crt0.o \
+		$(UOBJDIR)/bdossc.o $(UOBJDIR)/libcpm.o $(LIBCZ)
 	$$(LD) -e start -R $$(UBASE) -o $$@ $(UOBJDIR)/crt0.o \
 		$$(filter-out %/crt0.o,$$^)
 
