@@ -11,7 +11,7 @@
  * creatb and fopenb, and abort(code).  This file supplies all of them on
  * the BDOS, and the startup (_cstart, entered from crt0.s) that builds
  * argc/argv from the command tail with DRI's `<file', `>file' and
- * `>>file' redirection and runs main.
+ * `>>file' redirection and `*'/`?' filename expansion, and runs main.
  *
  * Files are byte streams over 128-byte records, read and written through
  * one record buffer per descriptor with random-record BDOS calls (33, 34),
@@ -63,12 +63,38 @@ extern	FILE	*_fopen();
 
 /* ---- file names ---- */
 
+/* Copy one part of a name into the n blank-padded bytes at p, up to
+   STOP, a blank or the end; with WILD a `*' ending the part fills the
+   rest of it with `?'.  What follows the part, or 0 if it is too long. */
+static char *part(s, p, n, stop, wild)
+register char *s, *p;
+int n, stop, wild;
+{
+	register int	i;
+
+	for (i = 0; i < n; i++)
+		p[i] = ' ';
+	for (i = 0; *s != 0 && *s != stop && *s != ' '; i++) {
+		if (wild && *s == '*') {
+			while (i < n)
+				p[i++] = '?';
+			s++;
+			return (*s == 0 || *s == stop || *s == ' ' ? s : 0);
+		}
+		if (i == n)
+			return (0);
+		p[i] = *s++;
+	}
+	return (s);
+}
+
 /* Parse "NAME.EXT" or "D:NAME.EXT", in either case, into a fresh FCB.
-   0 on success, -1 for a name CP/M cannot hold (bad drive, wildcard,
-   an empty or overlong part). */
-static int fname(s, f)
+   0 on success, -1 for a name CP/M cannot hold (bad drive, an empty or
+   overlong part, or -- unless WILD -- a wildcard). */
+static int fname(s, f, wild)
 register char *s;
 register struct fcb *f;
+int wild;
 {
 	register char	*p;
 	register int	i, c;
@@ -85,25 +111,14 @@ register struct fcb *f;
 		f->drvcode = c - 'A' + 1;
 		s += 2;
 	}
-	for (i = 0; i < 8; i++)
-		f->fname[i] = ' ';
+	if ((s = part(s, f->fname, 8, '.', wild)) == 0 || f->fname[0] == ' ')
+		return (-1);
 	for (i = 0; i < 3; i++)
 		f->ftype[i] = ' ';
-	for (i = 0; *s != 0 && *s != '.' && *s != ' '; i++) {
-		if (i == 8)
-			return (-1);
-		f->fname[i] = *s++;
-	}
-	if (i == 0)
+	if (*s == '.' && part(s + 1, f->ftype, 3, 0, wild) == 0)
 		return (-1);
-	if (*s == '.')
-		for (i = 0, s++; *s != 0 && *s != ' '; i++) {
-			if (i == 3)
-				return (-1);
-			f->ftype[i] = *s++;
-		}
 	for (p = f->fname; p < f->fname + 11; p++) {
-		if (*p == '*' || *p == '?' || *p < ' ')
+		if (!wild && (*p == '*' || *p == '?') || *p < ' ')
 			return (-1);
 		if (*p >= 'a' && *p <= 'z')
 			*p -= 0x20;
@@ -258,7 +273,7 @@ char *name;
 	if (fd < 0)
 		return (-1);
 	f = &fds[fd];
-	if (fname(name, &f->fcb) < 0) {
+	if (fname(name, &f->fcb, 0) < 0) {
 		errno = ENOENT;
 		return (-1);
 	}
@@ -362,7 +377,7 @@ char *name;
 {
 	struct fcb	fcb;
 
-	if (fname(name, &fcb) < 0
+	if (fname(name, &fcb, 0) < 0
 	 || (__bdos(BDOS_DELETE, (long) &fcb) & 0xff) == 0xff) {
 		errno = ENOENT;
 		return (-1);
@@ -569,10 +584,56 @@ int code;
 
 /* ---- startup ---- */
 
-#define	NARGV	16
+#define	NARGV	64
 
 static char	tail[SECLEN + 1];
 static char	*argv[NARGV + 1];
+static char	names[NARGV * 15];	/* "D:NAME.EXT" of expanded arguments */
+static int	nnames;
+
+/* Add argument W to argv.  A `*' or `?' in it makes it a wildcard, which
+   adds the files it matches instead, in directory order (search first
+   and next, 17 and 18); one that matches nothing, or is no file name,
+   is added as it is.  The new argc. */
+static int addarg(w, argc)
+char *w;
+int argc;
+{
+	struct fcb	fcb;
+	static char	dir[SECLEN];
+	register char	*p, *e;
+	register int	i, r, found;
+
+	for (p = w; *p != 0 && *p != '*' && *p != '?'; p++)
+		;
+	found = 0;
+	if (*p != 0 && fname(w, &fcb, 1) == 0) {
+		setdma(dir);
+		for (r = __bdos(BDOS_SFIRST, (long) &fcb) & 0xff; r != 0xff;
+		     r = __bdos(BDOS_SNEXT, 0L) & 0xff) {
+			found = 1;
+			if (argc >= NARGV)
+				continue;
+			e = dir + (r & 3) * 32;
+			p = argv[argc++] = names + nnames;
+			if (fcb.drvcode != 0) {
+				*p++ = 'A' - 1 + fcb.drvcode;
+				*p++ = ':';
+			}
+			for (i = 1; i < 9 && (e[i] & 0x7f) != ' '; i++)
+				*p++ = e[i] & 0x7f;
+			if ((e[9] & 0x7f) != ' ')
+				*p++ = '.';
+			for (i = 9; i < 12 && (e[i] & 0x7f) != ' '; i++)
+				*p++ = e[i] & 0x7f;
+			*p++ = 0;
+			nnames = p - names;
+		}
+	}
+	if (!found && argc < NARGV)
+		argv[argc++] = w;
+	return (argc);
+}
 
 /* `>>file': NAME as a text file on descriptor fd, made if it is not
    there, positioned at its end -- on the ^Z ending the text if its last
@@ -640,8 +701,8 @@ struct bpage *bp;
 				perror(w);
 				_exit(1);
 			}
-		} else if (argc < NARGV)
-			argv[argc++] = w;
+		} else
+			argc = addarg(w, argc);
 	}
 	argv[argc] = 0;
 	main(argc, argv);
