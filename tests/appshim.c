@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * appshim.c -- the CP/M-8000 calls src/app/'s sources make that a POSIX
  * host does not have, so that those sources can be compiled FOR THE HOST
  * with -fsanitize=address and driven against malformed input.

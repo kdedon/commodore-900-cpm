@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * rsxt2.c - Inspect the resident chain and exercise console interception,
  * open post-processing, and delete refusal.
  */

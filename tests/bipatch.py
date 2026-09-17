@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """bipatch.py -- write a bootinfo HANDOFF into a copy of cpm.sys.
 
 WHAT THIS IS, AND WHAT IT IS NOT.  This is not a second implementation of

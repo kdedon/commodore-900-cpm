@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # lout2cpm wraps a linked l.out as a 0xEE01 segmented CP/M x.out.  Compiled
 # from the toolchain checkout, not copied here.
 $(LOUT2CPM): $(LOUT2CPMSRC) | $(OBJDIR)

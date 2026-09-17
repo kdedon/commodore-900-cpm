@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / glue.s -- C-callable machine helpers for the CP/M-8000 BIOS.
 /
 / Convention (matches crt.s): segmented call pushes a 4-byte return address,

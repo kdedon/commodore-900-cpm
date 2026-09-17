@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * xdospol.c - Exercise a blocked console poll with a competing process.
  * Attach before waiting so the selected console can deliver input to this
  * process.

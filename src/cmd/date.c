@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * date.c - DATE, the CP/M 3 date/time utility, for the C900.
  *
  *	DATE			show the date and time once

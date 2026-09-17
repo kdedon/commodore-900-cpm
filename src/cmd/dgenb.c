@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * dgenb.c -- F1(a): the peer that creates while DGENA holds a cached record.
  *
  * It does nothing until DGENA says its record is cached (flag 1), creates

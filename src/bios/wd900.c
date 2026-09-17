@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * wd900.c -- polled WD/SASI hard-disk sector I/O for the CP/M-8000 BIOS.
  *
  * The controller executes a 16-byte class-0 command block fixed at physical

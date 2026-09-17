@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* 100 Hz tick from Z-CIO #1 counter/timer 3, continuous at PCLK/2.
  * Time constants are 20000 at 4 MHz and 30000 at 6 MHz, selected using
  * ROM rom_ctype. Programming and interrupt dismissal follow COHERENT

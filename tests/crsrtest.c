@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * crsrtest.c -- drive src/crsr.c on the host and check what it did.
  *
  * The emulator has no video card (its own README says so), so the LR

@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # selfhostchk.sh -- the assertions on the self-host chain.
 #

@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # localt.sh -- prove `make cpmlocal' with files this test invents.
 #
 # The target exists so the operator can put programs of their OWN on a boot

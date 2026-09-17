@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * show.c - SHOW, the CP/M 3 drive/space/user reporter, for the C900.
  *
  *	SHOW			free space on every logged-in drive

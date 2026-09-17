@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* 8080/Z80 decoder shared by execution and instruction inspection.
  * Prefix groups retain their complete lengths even when execution is
  * unsupported. Guest instruction fetch wraps at 16 bits. */

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """dirfmt-test.py - agreement + backward-compatibility tests for the CP/M 3
 directory format contract shared by this project's directory packer and
 cpmtools, a third-party reader/writer of the same format.

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * cpmio.c - CP/M-8000 platform layer and driver for E-Kermit 1.8.
  *
  *   KERMIT R          receive

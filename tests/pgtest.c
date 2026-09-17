@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* pgtest.c -- the segment pool's sizing and segment numbers, on the host.
  *
  * The emulator has 1 MB of RAM and no way to be given another size, so

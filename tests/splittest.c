@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * splittest.c -- targeted host tests for the split-I/D SC-trap emulator
  * (src/bdos/splitsc.c).  One test per emulated instruction form: sets up a
  * frame, banks and side table, executes one trap, and checks registers,

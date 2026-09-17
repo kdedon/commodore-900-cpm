@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # bannermutate.sh -- the mutation gate for the system identification.
 #

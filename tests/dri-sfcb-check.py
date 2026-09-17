@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """dri-sfcb-check.py -- check on-disk stamps against DRI's own layout,
 read (not copied) from c900oses/cpm8000/ref/incoming/cpm3src/:
   XFCB.LIT: xfcb$type=10h, xf$create=24, xf$update=28 (4-byte stamps);

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CP/M-86 INT 0xe0 bridge: CL selects the function, DX the parameter;
  * return results in AX and BX. Translate guest pointers and random-record
  * byte order for native BDOS calls. */

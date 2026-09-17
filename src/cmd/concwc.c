@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concwc.c -- CONCWC.Z8K, the claimant.  The CCP runs it after CONCW's
  * warm boot; see src/cmd/concw.c for the shape of the test.
  *

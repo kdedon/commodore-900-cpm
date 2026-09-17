@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # resolver-isolation -- the regression test for the dependency SEARCH.
 #
 # Every other job sets C900_TOOLCHAIN, EMU and KBOOT explicitly, as

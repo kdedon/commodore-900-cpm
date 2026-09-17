@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * pipmain.c - compatibility shims that let src/cmd/pip.c (DRI's PIP,
  * built from source per vendor/SOURCES) link against this port's own
  * runtime (cstart.c, bdossc.s, libcpm.c) instead of DRI's own devpack

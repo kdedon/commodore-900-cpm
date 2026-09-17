@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * derr.c -- F1(b): a refused transfer must not be reported as a success.
  *
  * src/bdos/dskutil.c rdwrt() used to leave its retry loop and `return(0)':

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * bioset.c - Exercise allowed and refused BDOS function 50 calls. SECTRAN
  * is the side-effect-free allowed probe.
  */

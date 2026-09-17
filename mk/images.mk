@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Reserve every fourth directory slot for SFCB timestamps.
 # Zero initial stamps are filled by the target clock.
 LABEL	= C900A

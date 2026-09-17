@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* Function 49 is the SCB access path for transients. Refresh mirrored
  * state before each access and push writable fields back after a set.
  * Other fields are stored in the shared image. */

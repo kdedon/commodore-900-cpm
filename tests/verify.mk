@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Emulator verification harness; paths are relative to the repository root.
 # make verify-<name> runs one check; make verify-all runs the suite.
 # verify-util asserts the development disk contents; verify-setb copies them.

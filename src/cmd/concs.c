@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concs.c - Measure a register-only System-mode loop with and without a
  * competing process. The returned FCW verifies that function 62 entered
  * System mode.

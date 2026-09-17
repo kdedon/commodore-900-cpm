@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * stampt.c - Exercise create/update stamps using deterministic BDOS clock
  * values.
  */

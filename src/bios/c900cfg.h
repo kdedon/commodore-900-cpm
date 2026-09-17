@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* Shared C/assembly memory layout (crt.s is preprocessed).
  * Transients link at TPABASE without relocation records, so TPASEG must
  * remain fixed. pgalloc.c swaps the physical backing page instead.

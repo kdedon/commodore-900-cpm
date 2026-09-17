@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * passt.c - Exercise read, write, and delete passwords on armed and unarmed
  * drives.
  */

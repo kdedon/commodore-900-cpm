@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ucrsx.s -- UCASE.RSX folds BDOS function 2 output and counts intercepted calls.
 / Entry uses the caller stack with r5=function and rr6=parameter; ret
 / returns r7, and sc 2 passes down the chain. Preserve other registers.

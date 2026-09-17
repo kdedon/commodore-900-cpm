@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # mdcheck.sh -- no file on shipped CP/M disk may cite a .md document.
 # Reads packed images (string literals visible only when compiled).
 # Also scans src/dist/ fixtures.

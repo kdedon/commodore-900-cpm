@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """mkblob.py -- turn the linked split-I/D module into an assembler source
 file that CPM.SYS carries in its data segment.
 

@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / biossc.s -- the raw SC #3 BIOS shim for MWC-built transient programs.
 /
 / long __bios(func, p1, p2)  int func;  long p1, p2;

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* Shared CP/M-86 decoder, executor, loader, and BDOS bridge interfaces.
  * Target C uses 16-bit int; guest words use unsigned short. Access guest
  * memory bytewise for little-endian layout on host and Z8001 builds. */

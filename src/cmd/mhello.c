@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * mhello.c - Exercise the segmented transient loader, BDOS string/character
  * output, command arguments, and base page.
  */

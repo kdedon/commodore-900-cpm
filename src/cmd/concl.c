@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concl.c - THE LOCK HOLDER THAT IS NOT ALSO A CREATOR, which is the one
  *	     thing F4's verify-concr could not have and the reason it could
  *	     not tell src/bdos/proc.c's PS_RSVD reservation from its

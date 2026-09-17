@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * zsplit.h -- shared Z8001 nonsegmented-code decoder for the split-I/D
  * loader shim (Option 6, 0xEE0B support).
  *

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * paget.c - Set a five-line console page and print twelve lines to exercise
  * paging.
  */

@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ***************************************************************
 /
 /	putrsx.s -- PUT.RSX, console output copied into a file.

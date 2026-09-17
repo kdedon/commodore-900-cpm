@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CP/M-80 CALL 5 and BIOS-hook bridge. C selects the function, DE is the
  * parameter; results use A/HL and B=H. Translate guest pointers, FCB
  * random-record byte order, and character-control blocks for native BDOS. */

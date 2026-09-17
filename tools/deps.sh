@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # deps.sh -- resolve the things this build consumes from outside this
 # repository, and refuse by name when one is missing.
 #

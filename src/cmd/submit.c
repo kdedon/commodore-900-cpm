@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * submit.c - Expand a CP/M 3 SUBMIT file for the CCP.
  *
  *   SUBMIT

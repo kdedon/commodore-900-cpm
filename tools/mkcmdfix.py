@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """mkcmdfix.py - the synthetic .CMD fixtures `make i86test' loads.
 
     mkcmdfix.py <destdir>

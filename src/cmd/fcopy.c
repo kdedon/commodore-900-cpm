@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * fcopy.c - copy a file record-by-record through the BDOS sequential
  * file calls: open/make/delete/read/write/close plus SETDMA, all via
  * the SC #2 shim.  Usage:  FCOPY SRC.TYP DST.TYP

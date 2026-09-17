@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # build -- the two freestanding links, against the toolchain this repository
 # floats on.
 #

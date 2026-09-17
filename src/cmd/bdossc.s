@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / bdossc.s -- the BDOS system-call shim for MWC-built transient programs.
 /
 / int __bdos(func, param)  int func;  long param;

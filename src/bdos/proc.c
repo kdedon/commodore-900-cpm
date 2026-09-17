@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* Process descriptors, scheduling and TPA page switching.
  *
  * Each process owns a 64 KB TPA image and an 8 KB supervisor stack.

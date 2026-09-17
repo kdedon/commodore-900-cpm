@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * cstart.c - C-level startup for MWC-built transient programs.
  * Called by crt0.s after the BSS clear with the far base-page pointer;
  * records _base, splits the command tail into argc/argv (the CCP has

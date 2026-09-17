@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * wdtest.c -- drive src/bios/wd900.c wdsec() on the host, with a
  * controller that never stops saying "busy, retry" (0x76).
  *

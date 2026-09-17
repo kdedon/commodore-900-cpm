@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # release -- on a v* tag, publish what somebody installs: the bootable disk,
 # the system file, and the two drive images.
 #

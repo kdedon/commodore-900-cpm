@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """dirpoke.py -- put ONE corrupt block number into a CP/M directory entry.
 
     python3 tests/dirpoke.py <cpma-partition-image> <block>

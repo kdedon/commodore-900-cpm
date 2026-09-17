@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * help.c - HELP, the CP/M 3 on-line manual reader, for the C900.
  *
  *	HELP			list the top-level topics

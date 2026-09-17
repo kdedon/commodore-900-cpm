@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # rtcsweep.sh -- measure the band verify-rtc's race leg lives in.
 #
 # WHAT THIS USED TO BE.  RTCRACEIPS was once an AIM: the race leg ran three

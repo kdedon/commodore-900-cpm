@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ****** ccpcrt.s -- runtime startup for the transient CCP ***********
 /
 /  This is ccpif.s after the CCP left the system image, crossed with

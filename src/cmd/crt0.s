@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / crt0.s -- runtime startup for MWC-built CP/M-8000 transient programs.
 /
 / MUST be the first object on the link line (ld -R 0x32000000 -e start):

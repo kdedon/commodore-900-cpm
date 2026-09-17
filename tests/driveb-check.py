@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """driveb-check.py - prove drive B: is a different region of the disk than A:.
 
 Usage: driveb-check.py IMAGE ABASE ABLOCKS BBASE BBLOCKS PACKEDB

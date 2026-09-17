@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * dgena.c -- F1(a): a peer's new directory entry must survive our close.
  *
  * THE DIRECTORY RECORD IS THE THING TWO PROCESSES SHARE.  pdirbuf and

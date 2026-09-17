@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * splitscan.c -- the scan-and-patch half of the split-I/D shim.
  *
  * Runs in the relocated module (segment SPLITMSEG), entered as spscan()

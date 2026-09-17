@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """hashab.py -- the directory-hashing A/B test (PLAN.md sec 9 rows 5 and 8).
 
 Row 5 wants measured evidence that hashing (dskhash.c) and the BCB cache

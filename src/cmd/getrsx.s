@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ***************************************************************
 /
 /	getrsx.s -- GET.RSX, console input served from a file.

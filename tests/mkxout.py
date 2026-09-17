@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # mkxout.py -- build the malformed x.out fixtures verify-xout feeds the
 # program loader (src/bdos/pgmld.c).  Each fixture is derived from a GOOD
 # binary so that everything except the one defect under test is real: the

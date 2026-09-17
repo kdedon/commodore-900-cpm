@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * xfcbt.c - Verify that password XFCBs remain reachable and are preserved
  * without treating their password bytes as allocation maps.
  */

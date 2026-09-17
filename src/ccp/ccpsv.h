@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CCP state preserved across transient reloads.
  *
  * It holds every value that must survive __LOAD: program-launch data,

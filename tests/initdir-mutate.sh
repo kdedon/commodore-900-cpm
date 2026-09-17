@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # initdir-mutate.sh -- mutation gate for verify-initdir.
 #
 # Lives in worktree (not shared scratchpad) to avoid cross-lane mutations.

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* C-side cold entry from crt.s: initialize BIOS and the split module,
  * then reset the stack and enter the transient CCP through ccpentry().
  * M12_HARNESS selects the standalone disk read/write diagnostic instead. */

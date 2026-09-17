@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # stage-pipinc.sh -- host-side compile headers for src/cmd/pip.c.
 #
 # pip.c is Digital Research's PIP.C (Z8000/CP/M-8000 dev-pack source),

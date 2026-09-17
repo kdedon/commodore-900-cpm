@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * trunct.c - Truncate a 300-record file to 100 records, verify its contents
  * and reclaimed blocks, and reject invalid requests.
  */

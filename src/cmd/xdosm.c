@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * xdosm.c - Exercise XDOS queues, flags, console assignment, and page
  * allocation in one process.
  */

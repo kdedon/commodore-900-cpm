@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Separate images isolate test fixtures from the development disk.
 CPMACONC = build/cpma-conc.img
 DISKAC   = build/diska-conc

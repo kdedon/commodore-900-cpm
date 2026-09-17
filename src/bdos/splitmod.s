@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ***************************************************************
 /
 /	splitmod.s -- resident stand-ins for the relocated split-I/D

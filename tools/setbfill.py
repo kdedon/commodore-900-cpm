@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """setbfill.py - build the drive-B: source tree the SET coverage target packs.
 
     setbfill.py <destdir>

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* MSM58321 RTC through Z-CIO #1, following Mark Williams' C900 driver
  * firmware/hd/extracted/src/frankh/src/oki/date.c (07/31/85) and the
  * MSM58321 datasheet. Register ports are 2*r+1.

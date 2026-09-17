@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # bannerchk.sh -- the assertions on the cold-start system identification.
 #

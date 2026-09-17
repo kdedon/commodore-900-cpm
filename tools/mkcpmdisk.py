@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """mkcpmdisk.py - build a CP/M-ONLY bootable hard-disk image for the C900.
 
 Usage: mkcpmdisk.py [--kboot=FILE] [--mutate=KIND] [--cpmb-base=BLK]

@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # concpad.sh -- PIN verify-concerr's A: DIRECTORY LAYOUT.
 #

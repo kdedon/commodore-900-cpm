@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * host/rtcinc/stdio.h -- the DRI type layer, for host builds of the RTC
  * driver (host/rtctest.c).
  *

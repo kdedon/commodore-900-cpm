@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """initdir-check.py -- judge an INITDIR run from the raw partition bytes.
 
 The runtime half of verify-initdir only creates evidence; every question

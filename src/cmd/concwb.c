@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concwb.c -- CONCWB.Z8K, the background half of the warm-boot ownership
  * test.  See src/cmd/concw.c for what the three programs prove.
  *

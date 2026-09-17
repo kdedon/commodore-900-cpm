@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * conco.c - The creator that PARKS INSIDE CREATION.  src/cmd/concm.c is
  *	     the other half and its banner describes the whole
  *	     arrangement.

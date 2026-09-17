@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * dbound.c -- F1(c): a corrupt directory block number must not reach
  * another drive's allocation map.
  *

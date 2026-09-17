@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* BIOS dispatch, ROM console access, and WD disk deblocking.
  * DPH/DPB layouts are shared with BDOS through bdosdef.h. */
 #include "romabi.h"

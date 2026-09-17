@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # appbuild.sh -- build one src/app program ON THE MACHINE, out of the C
 # that is on the same disk, with the machine's own ZCC and LD8K.

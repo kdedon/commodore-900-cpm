@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """dirattr.py -- print the FILE ATTRIBUTE BITS of a CP/M directory.
 
     dirattr.py <cpma.img> [--user N]

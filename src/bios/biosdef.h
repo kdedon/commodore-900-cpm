@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * biosdef.h -- CP/M-8000 BIOS entry and request wrappers (C900).
  *
  * One C entry serves every BIOS function:

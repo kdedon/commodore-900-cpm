@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """Write zero-heavy disk images as sparse files without changing their bytes."""
 
 import os

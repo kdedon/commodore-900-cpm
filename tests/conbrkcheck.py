@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 r"""conbrkcheck.py -- assertions for verify-conbrk (conbrk()'s ^S/^Q/^C
 poll, src/bdos/conbdos.c).
 

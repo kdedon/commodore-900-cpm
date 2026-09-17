@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / pipjmp.s -- setjmp/longjmp for PIP using the MWC Z8001 ABI.
 / The 12-word buffer holds the return PC, r6-r13, and rr14. Save SP
 / after popping the return PC so later calls cannot overwrite the saved

@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # mklocal.sh -- build a LOCAL boot medium: the development drive A: plus
 # extra files the operator supplies from a directory of their own.
 #

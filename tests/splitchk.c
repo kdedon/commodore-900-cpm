@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * splitchk.c -- offline validation harness for the split-I/D loader shim
  * scanner (dev/test instrument only; what actually runs at load time is
  * the on-target scanner, src/bdos/zsplit.c, invoked from pgmld -- this

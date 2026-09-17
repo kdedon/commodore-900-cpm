@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* 8080 interpreter with selected Z80 extensions. Guest memory wraps at
  * 16 bits; words are little-endian. Lazy flags retain 8080 semantics,
  * including inverted subtraction auxiliary carry and parity for NEG.

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* H19/Z19 console escape parser, with ESC '=' as ADM-3A addressing.
  * Serial output translates recognized sequences to ANSI; LR output writes
  * character cells and manages scrolling; HR uses the ROM bitmap driver

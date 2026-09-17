@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """payload-measure.py -- K2: payload measurement for the installer.
 
 Prints three tables (as CSV-ish plain text, one line per measurement) that

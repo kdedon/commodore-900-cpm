@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """farptrcheck.py -- the banked-memory invariant, checked mechanically.
 
     farptrcheck.py [src/bdos/*.c src/bdos/*.h]

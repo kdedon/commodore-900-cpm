@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * dskhash.h -- interface to the directory signature table (dskhash.c).
  *
  * struct dhq is one scan's filter, built by dhstart() from the dirscan

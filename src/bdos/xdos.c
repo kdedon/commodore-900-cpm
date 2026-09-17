@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* MP/M-style memory, polling, flag, queue, delay and console calls.
  * pwait() parks a process with a wait reason; the scheduler makes it ready
  * when that condition holds. Flag and queue operations fail with 0xFF if

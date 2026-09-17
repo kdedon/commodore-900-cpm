@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * libcpm.c - thin C wrappers over the SC #2 BDOS gate (__bdos, bdossc.s).
  * Pointers pass as longs: a far pointer's value IS the XADDR the BDOS
  * wants.

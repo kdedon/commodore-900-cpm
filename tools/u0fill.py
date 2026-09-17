@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """u0fill.py - the three files `make verify-user0' packs onto drive A:.
 
     u0fill.py <destdir>

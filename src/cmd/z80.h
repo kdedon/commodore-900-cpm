@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* Shared CP/M-80 decoder, executor, loader, and BDOS bridge interfaces.
  * Guest memory is one 64 KB host segment. Cast effective addresses to z16
  * for wraparound and access words bytewise in little-endian order. */

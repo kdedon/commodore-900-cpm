@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * rsxldr.c - RSXLDR.Z8K: load a Resident System Extension.
  *
  *	RSXLDR name.RSX [T] [name.RSX [T]] ...

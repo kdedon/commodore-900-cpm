@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """wirecon.py -- run the emulator with a SECOND TERMINAL on SCC channel A.
 
 Every other verify target drives one console: the emulator maps SCC channel

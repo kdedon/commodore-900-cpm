@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * bcb.h -- interface to the BDOS-internal LRU sector cache (bcb.c).
  *
  * A "BCB" is one 512-byte physical-sector buffer in the pool at BUFBASE

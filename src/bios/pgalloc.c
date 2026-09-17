@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* 64 KB segment/page allocator.
  * Slot i pairs logical segment PGSEG(i) with a physical pool page.
  * Capacity comes from the ROM memory report, capped by available segments;

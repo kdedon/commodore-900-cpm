@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * xdma.c - a process's default DMA belongs to that process.
  *
  * Function 13 (reset disk system) puts the DMA address back to the running

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * truncb.c - Exercise truncation across extent and allocation-block
  * boundaries.
  */

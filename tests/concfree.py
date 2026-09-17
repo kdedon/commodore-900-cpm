@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """concfree.py -- does verify-concerr's A: image put the two free directory
 slots CONCTGT.TXT will take in DIFFERENT directory records?
 

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * kbdoracle.c -- COHERENT's own Commodore 900 keyboard driver, compiled on
  * the host as the oracle for src/bios/kbd900.c (see tests/kbdtest.c).
  *

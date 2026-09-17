@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Build CP/M-8000 for the Commodore 900. See README.md for usage.
 .DEFAULT_GOAL := all
 

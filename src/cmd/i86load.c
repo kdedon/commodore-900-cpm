@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CP/M-86 .CMD loader (DRI System Guide 3.4). The 128-byte header has
  * eight nine-byte descriptors followed by group images. Fields are a form
  * byte, then little-endian paragraph words: length, base, minimum, maximum.

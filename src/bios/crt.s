@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / CPM.SYS entry -- runs where kboot's launch stub left us:
 /   text  seg 0x30 -> phys 0x080000, attr 0x03 (read/execute)
 /   data  seg 0x31 -> phys 0x080000+roundup(text,1K), attr 0x02, bss zeroed

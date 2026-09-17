@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # deps-fetch.sh -- `make deps': acquire what DEPS says this repository consumes.
 #
 #   sh <dir>/deps-fetch.sh            place every dependency in DEPS

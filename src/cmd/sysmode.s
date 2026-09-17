@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / sysmode.s -- Run a counted register-only loop in segmented System mode via BDOS 62.
 / LDCTL verifies System mode and supplies the returned FCW. rr14 switches
 / to the supervisor stack, so the loop must not use C frames or push:

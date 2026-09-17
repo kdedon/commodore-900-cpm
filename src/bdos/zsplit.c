@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * zsplit.c -- Z8001 nonsegmented instruction decode + the split-I/D
  * linear text scanner (see zsplit.h for the shim overview).
  *

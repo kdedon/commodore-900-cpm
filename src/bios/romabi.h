@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * romabi.h -- stock C900 boot-ROM entry points the CP/M BIOS reuses.
  * Trimmed from coherent/boot/src/romabi.h (kboot), which documents the
  * full surface; confirmed against ~/git/C900/firmware/bios_disassembly.txt

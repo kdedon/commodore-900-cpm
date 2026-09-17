@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """mkcpmfs.py - CP/M filesystem packer/reader for the C900 drive A: image.
 
 Pack:    mkcpmfs.py [opts] <img> <blocks> <srcdir>  (blocks = 512-byte; 20480 = 10 MB)

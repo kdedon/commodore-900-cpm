@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * conc.c - Run a CPU workload alongside a second process to exercise
  * scheduling.
  */

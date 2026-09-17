@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * biocost.c - Measure per-character cost through BDOS (A), BIOS (S), ROM
  * (R), or video RAM (V). Compare equal-length zero/count runs to subtract
  * load and prompt overhead.

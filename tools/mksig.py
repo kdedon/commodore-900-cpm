@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """mksig.py -- fill a CP/M drive image with a recognizable signature.
 
 usage: mksig.py <output> <blocks>

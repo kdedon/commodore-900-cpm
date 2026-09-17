@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * truncs.c - Exercise truncation of sparse files and verify surviving
  * records.
  */

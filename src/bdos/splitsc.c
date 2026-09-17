@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * splitsc.c -- SC-trap emulator for the split-I/D loader shim.
  *
  * A 0xEE0B program runs natively in the code bank (the TPA segment) with

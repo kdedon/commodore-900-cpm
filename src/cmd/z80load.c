@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CP/M-80 .COM loader and guest environment. Load the image at 0x100,
  * build page zero and the fake BDOS/BIOS tables, and initialize registers.
  * GENCOM-bound images are identified by their 0xc9 header and refused. */

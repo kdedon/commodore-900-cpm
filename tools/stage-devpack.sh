@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # stage-devpack.sh -- stage the full DRI CP/M-8000 dev pack onto drive A:.
 # Copies from z8001mb/cpm8k/packages/base/
 # into the drive-A: staging directory under CP/M 8.3 UPPERCASE names, bytes verbatim, and

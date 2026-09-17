@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # appchk.sh -- the src/app binary on the disk is what the source on the
 # disk compiles to.

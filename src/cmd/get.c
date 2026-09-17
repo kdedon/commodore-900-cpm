@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * get.c - GET.Z8K: console input from a file, on the RSX mechanism.
  *
  *	GET [CONSOLE] [INPUT] [FROM] FILE name [[ECHO]|[NO ECHO]]

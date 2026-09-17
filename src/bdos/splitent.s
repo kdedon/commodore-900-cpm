@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ***************************************************************
 /
 /	splitent.s -- the split-I/D module's fixed interface header.

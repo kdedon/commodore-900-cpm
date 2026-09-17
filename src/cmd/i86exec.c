@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* 8086 interpreter: bytewise guest memory, lazy ALU flags, and decoded
  * instruction dispatch. Unsupported operations return X_UNIMP.
  * Segment writes resolve assigned paragraphs or bounded interior windows;

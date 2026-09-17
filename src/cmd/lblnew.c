@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * lblnew.c - Create a directory label above existing files, verify its
  * stamps, and reject stamping on a drive without SFCBs.
  */

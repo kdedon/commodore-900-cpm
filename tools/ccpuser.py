@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """ccpuser.py - move a packed CP/M file into another user area, in place.
 
 Usage: ccpuser.py IMG NAME.TYP USER[R][S][A] [NAME.TYP USER... ...]

@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CP/M 3 SCB byte offsets (ref/cpm3/resbdos.asm and scb.asm). Use a byte
  * array to avoid struct padding; word values are little-endian. */
 

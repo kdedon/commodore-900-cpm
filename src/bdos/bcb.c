@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 
 /* BDOS physical-sector cache in BUFSEG. Directory writes are write-through;
  * data writes remain dirty until eviction or flush. */

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concm.c - TWO CREATORS, ONE FREE DESCRIPTOR, AND A YIELD IN THE MIDDLE
  *	     OF CREATION.  The lock holder half; src/cmd/conco.c is the
  *	     other creator.

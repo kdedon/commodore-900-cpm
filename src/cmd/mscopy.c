@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * mscopy.c - exercise BDOS function 44 (set multi-sector count).
  *
  *	MSCOPY SRC DST [n]		n = records per call, default 16

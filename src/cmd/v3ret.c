@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * v3ret.c - Exercise CP/M 3 return values, DMA reset, user-0 fallback, and
  * return-code preservation across function 47 chaining.
  */

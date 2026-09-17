@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Verify that release staging is development staging minus exactly the excluded
 # names -- nothing more, nothing less, and byte for byte.
 #

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * i86test.c -- host tests for the CP/M-86 shim's 8086 decoder, executor,
  * .CMD loader and INT 0E0h seam (src/cmd/i86dec.c, i86exec.c, i86load.c,
  * i86bdos.c).

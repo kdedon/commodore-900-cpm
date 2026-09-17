@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * u0t.c - Exercise read-only user-0 SYS-file fallback without exposing
  * ordinary files across user areas.
  */

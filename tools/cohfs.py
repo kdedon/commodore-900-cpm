@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """Write the small COHERENT filesystems read by the ROM and kboot.
 
 Only the on-disk boot interface is implemented: a flat directory, regular

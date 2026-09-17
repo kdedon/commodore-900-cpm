@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 
 /* Directory signatures filter scans by user, name hash, extent and module.
  * A candidate must still pass match() against its actual directory entry. */

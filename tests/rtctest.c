@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * rtctest.c -- host unit tests for the C900 clock: the real src/rtc900.c
  * and the real user/date.c, compiled with the host cc and run against the
  * software MSM58321 in host/rtcchip.c.

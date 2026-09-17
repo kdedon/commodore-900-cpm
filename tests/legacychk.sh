@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # legacychk.sh -- row 11 ("stock CP/M-8000 1.3 binaries keep running").
 #

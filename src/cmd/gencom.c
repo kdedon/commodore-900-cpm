@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * gencom.c - Bind Resident System Extensions to a program.
  *
  *   GENCOM prog.Z8K mod.RSX [mod.RSX ...]  bind or replace modules

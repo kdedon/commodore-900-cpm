@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concw.c -- CONCW.Z8K, the foreground half of the warm-boot ownership
  * test (first-release review P1 #10, src/bios/pgalloc.c pgrelall).
  *

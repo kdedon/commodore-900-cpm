@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """kermitpeer.py -- the OTHER end of the wire for KERMIT.Z8K (task N2).
 
 WHAT THIS IS, SAID PLAINLY SO NOBODY OVERSELLS IT.  This is a Kermit

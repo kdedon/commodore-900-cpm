@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # appbound.sh -- drive the src/app/ tools, compiled FOR THE HOST under
 # -fsanitize=address, against tests/appbound.py's malformed inputs.
 #

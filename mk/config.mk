@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Build CP/M-8000 system and disk images for the Commodore 900.
 
 SHELL = /bin/sh

@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ***************************************************************
 /
 /	splitfast.s -- assembly fast path for the split-I/D SC trap

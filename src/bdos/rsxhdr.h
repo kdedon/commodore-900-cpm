@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* Fixed RSX prefix. Entries and links are 16-bit TPA offsets.
  * org and len describe a fixed-address image; there is no relocation.
  * Layout derives from the CP/M 3 prefix (ref/cpm3/getrsx.asm). */

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * splitb.c - Attempt a SECOND split-I/D program while one is running, and
  *	      leave the first one's WORK behind as the evidence.
  *

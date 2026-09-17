@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / ucrsx3.s -- UCASE3.RSX uses a distinct name and function 60/202 to test calls
 / passing through all three modules of a resident chain.
 

@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 #
 # sdbchk.sh -- Gate A: SDB, compiled on the machine, doing database work.
 #

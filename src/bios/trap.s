@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / C900 trap handlers. Hardware pushes {id, FCW, PCseg, PCoff};
 / stubs save r0-r13 on the system stack before calling C or xvec handlers.
 / Frame offsets: r0-r13 0..27, id 28, FCW 30, PCseg 32, PCoff 34.

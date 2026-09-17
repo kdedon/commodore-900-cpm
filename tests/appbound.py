@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """appbound.py -- build the malformed inputs tests/appbound.sh feeds to the
 src/app/ tools compiled for the host under -fsanitize=address.
 

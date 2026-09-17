@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """signoncount.py - assert the BDOS sign-on appears exactly once per boot.
 
 Usage: signoncount.py SRC HEADER LOG WARMBOOTS

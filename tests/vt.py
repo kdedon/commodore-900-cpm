@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """vt.py -- render a console transcript as a screen, and assert on cells.
 
 The serial console's "screen" is the terminal on the far end, so the only

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """mkrsx.py -- turn a linked RSX module into the flat .RSX file RSXLDR
 loads.
 

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * rot.c - A refusal must not mutate.  Four ways the BDOS reported an
  * error to the program and changed the protected object anyway:
  *

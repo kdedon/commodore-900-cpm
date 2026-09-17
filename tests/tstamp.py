@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """Per-line wall-clock timestamper for emulator console transcripts.
 
 Reads stdin byte-wise (the emulator emits console characters unbuffered)

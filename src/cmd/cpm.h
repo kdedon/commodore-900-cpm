@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * cpm.h - CP/M-8000 interface for MWC-built transient programs.
  *
  * Programs compiled with the project Z8001 pipeline (cc2 variant VTPA,

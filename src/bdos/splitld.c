@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * splitld.c -- load-time half of the split-I/D shim, resident side.
  *
  * Called by pgmld once a 0xEE0B program's segments are in place: code in

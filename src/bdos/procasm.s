@@ -1,3 +1,6 @@
+/ Copyright (c) 2026 Kevin Dedon.
+/ SPDX-License-Identifier: MIT
+
 / procasm.s -- the two halves of a context switch that C cannot write.
 /
 / src/bdos/proc.c does everything else: it moves pages, stvars, the RSX

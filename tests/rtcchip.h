@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * rtcchip.h -- the software MSM58321 + Z-CIO the host RTC tests drive the
  * real driver against.  See host/rtcchip.c.
  */

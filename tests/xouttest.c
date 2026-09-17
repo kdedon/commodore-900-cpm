@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * xouttest.c -- drive src/bdos/pgmld.c's pgmld() on the host, against
  * malformed x.out images, with the compiler's own bounds checking
  * (-fsanitize=address) watching the loader's segment arrays.

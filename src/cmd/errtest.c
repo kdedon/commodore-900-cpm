@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * errtest.c - Exercise silent and display-and-return BDOS error modes, then
  * restore normal file I/O.
  */

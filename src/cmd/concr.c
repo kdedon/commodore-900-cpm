@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * concr.c - ONE OF THE TWO CREATORS THAT MUST BOTH BE PARKED INSIDE
  *	     pcrgen() AT THE SAME TIME, or the ballast that makes the
  *	     descriptor table full enough for that to matter.

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * kbdorat.c -- COHERENT's C900 keyboard table (rec/kbtab.c, unmodified) for
  * the host oracle.  It is a separate object from kbdoracle.c because
  * kbtab.h has no include guard and kb.c and kbtab.c both include it.

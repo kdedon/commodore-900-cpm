@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * snd900.c -- speaker tone generator for the C900 CP/M-8000 BIOS.
  *
  * The speaker is driven from counter/timer 2 of the IEEE/sound Z8036

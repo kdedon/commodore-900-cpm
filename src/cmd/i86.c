@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* CPM86 target launcher: allocate group and staging segments, load a .CMD,
  * build its base page, and execute it through the native BDOS bridge.
  * Usage: CPM86 PROG.CMD [tail...]. Staging is separate because destination

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 """extract-test.py - host tests for tools/mkcpmfs.py --extract against
 directory entries that are hostile or merely awkward.
 

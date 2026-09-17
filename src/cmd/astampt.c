@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * astampt.c - Exercise access/update stamps at three deterministic times;
  * an open without a write must change only the access stamp.
  */

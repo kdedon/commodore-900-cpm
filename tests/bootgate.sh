@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # bootgate.sh LOG -- did the boot chain reach CP/M, and if not, whose fault?
 #
 # The chain is ROM -> kboot -> cpm.sys -> BDOS -> CCP, and a break anywhere in

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * seam.c -- the D3 call-gating seam between the co-linked CCP/BDOS and
  * the BIOS half.
  *

@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * kbdtest.c -- src/bios/kbd900.h on the host, against COHERENT's driver.
  *
  * Neither emulator here has a keyboard (ours models CIO #1 as a register

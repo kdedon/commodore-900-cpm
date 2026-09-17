@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * rtcchip.c -- a software OKI MSM58321 behind a software Z8036 Z-CIO #1,
  * for the host unit tests in host/rtctest.c.
  *

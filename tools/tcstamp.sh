@@ -1,4 +1,7 @@
 #!/bin/sh
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Usage: sh tools/tcstamp.sh TOOLCHAIN
 # Emit the source identity followed by a digest of the five compiler passes.
 # Make preserves the stamp's mtime unless these change, invalidating objects

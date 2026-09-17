@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * z80test.c -- host tests for the CP/M-80 shim's 8080/Z80 decoder,
  * executor, .COM loader and CALL 5 seam (src/cmd/z80dec.c, z80exec.c,
  * z80load.c, z80bdos.c).

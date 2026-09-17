@@ -1,3 +1,7 @@
+/*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
 /* RSX modules intercept SC 2 through a TPA chain. rsxtop fences program
  * loads below resident images; warm boot removes flagged modules.
  * Images have fixed link origins and are attached by GENCOM loading

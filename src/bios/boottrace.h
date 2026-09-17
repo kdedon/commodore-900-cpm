@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * boottrace.h -- opt-in cold-boot progress markers.
  *
  * The cold path from crt.s to the BDOS sign-on banner has no output of

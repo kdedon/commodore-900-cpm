@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * kbd900.h -- the video console's keyboard, read by the BIOS itself.
  *
  * Code, not declarations: a header so that one copy is #included by

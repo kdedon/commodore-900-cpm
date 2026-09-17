@@ -1,4 +1,8 @@
 /*
+ * Copyright (c) 2026 Kevin Dedon.
+ * SPDX-License-Identifier: MIT
+ */
+/*
  * proc.h -- the process descriptor and the shapes the switch moves.
  *
  * A "process" here is one 64 KB TPA image plus the state that does NOT

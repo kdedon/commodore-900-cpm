@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Kevin Dedon.
+# SPDX-License-Identifier: MIT
+
 # Text must fit segment 0x30; data and BSS must end below physical 0x0A0000 (TPA).
 LDSYS = -i -L
 # splitent.o must link first for its interface at offset zero.
