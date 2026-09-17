@@ -10,8 +10,8 @@
 # Run from the repository root.  RUNLOG is the transcript of the cold
 # boot that ran SDB; ARTDIR is the directory that boot's cpma partition
 # was extracted into afterwards.  tests/appchk.sh has already established
-# that the SDB.Z8K which produced this transcript is byte-for-byte the
-# source in src/app/ -- so what is left to establish is that it WORKS.
+# that the SDB.Z8K which produced this transcript is byte-for-byte what
+# `make apps' built -- so what is left to establish is that it WORKS.
 #
 # The session is seven statements: read the help file, create a relation,
 # import three tuples from SDBIN.TXT, print it twice (once whole and once

@@ -3,22 +3,24 @@
 # SPDX-License-Identifier: MIT
 
 #
-# appchk.sh -- the src/app binary on the disk is what the source on the
-# disk compiles to.
+# appchk.sh -- the src/app binary on the disk was built, and built the
+# same as the reference copy.
 #
-#	sh tests/appchk.sh BUILDLOG ARTDIR NAME.Z8K...
+#	sh tests/appchk.sh BUILDLOG ARTDIR REFDIR NAME.Z8K...
 #
 # Run from the repository root.  BUILDLOG is the transcript of a session
 # that erased each NAME.Z8K on drive A: and then rebuilt it there with
 # ZCC and LD8K; ARTDIR is the directory that session's cpma partition was
-# extracted into afterwards.
+# extracted into afterwards.  REFDIR holds the copies to cmp against --
+# build/app, what `make apps' built -- or is `-' for no cmp, which is how
+# `make apps' itself checks the build it has just made.
 #
-# The check is a cmp, and the erase is what gives the cmp its teeth: a
-# compile that fails still leaves whatever .Z8K was there before, so
-# without the erase this would happily compare the checked-in file with
-# itself.  Erased first, a failed build leaves NO file and the cmp cannot
-# be fooled -- which is why "missing" is reported here as a build failure
-# rather than as a missing artifact.
+# The cmp is a reproducibility check, and the erase is what gives it its
+# teeth: a compile that fails still leaves whatever .Z8K was there before,
+# so without the erase this could compare a staged copy with itself.
+# Erased first, a failed build leaves NO file and the cmp cannot be fooled
+# -- which is why "missing" is reported here as a build failure rather
+# than as a missing artifact.
 #
 # It is an assertion rather than a hope only because ZCC and LD8K are
 # byte-reproducible.  They are, and it is worth saying how that was
@@ -35,8 +37,9 @@
 
 log=$1; shift
 art=$1; shift
-if [ -z "$log" ] || [ -z "$art" ] || [ $# -eq 0 ]; then
-	echo "usage: $0 BUILDLOG ARTDIR NAME.Z8K..." >&2
+ref=$1; shift
+if [ -z "$log" ] || [ -z "$art" ] || [ -z "$ref" ] || [ $# -eq 0 ]; then
+	echo "usage: $0 BUILDLOG ARTDIR REFDIR NAME.Z8K..." >&2
 	exit 2
 fi
 
@@ -69,9 +72,9 @@ else
 fi
 
 for n in "$@"; do
-	src=src/app/$n
-	if [ ! -f "$src" ]; then
-		bad source "$src is not in the tree: nothing to compare against"
+	src=$ref/$n
+	if [ "$ref" != - ] && [ ! -f "$src" ]; then
+		bad source "$src is missing: nothing to compare against"
 		continue
 	fi
 	if [ ! -s "$art/$n" ]; then
@@ -87,15 +90,15 @@ for n in "$@"; do
 		bad kind "$art/$n starts $m, not ee03"
 		continue
 	fi
-	if cmp -s "$art/$n" "$src"; then
+	if [ "$ref" = - ]; then
+		echo "  ok  $n -- built on the machine"
+	elif cmp -s "$art/$n" "$src"; then
 		echo "  ok  $n -- rebuilt on the machine, byte-identical to $src"
 	else
 		bad cmp "$n rebuilt on the machine differs from $src"
 		cmp "$art/$n" "$src" 2>&1 | sed 's/^/       /'
-		echo "       The source in src/app/ and the binary beside it have"
-		echo "       come apart.  Whichever one moved, they must be"
-		echo "       committed together: re-run this target, take the"
-		echo "       rebuilt file out of $art/, and commit that."
+		echo "       The same source built twice came out different: ZCC"
+		echo "       and LD8K are not reproducible on this build."
 	fi
 done
 
@@ -103,6 +106,6 @@ if [ $fail -ne 0 ]; then
 	echo "appchk: FAIL -- $fail assertion(s)"
 	exit 1
 fi
-echo "appchk: PASS -- every binary listed was rebuilt from its own source"
-echo "        on the target and came back byte-for-byte the same"
+echo "appchk: PASS -- every binary listed was built from its own source"
+echo "        on the target"
 exit 0

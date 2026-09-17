@@ -1440,23 +1440,23 @@ selfhost: all
 # ---- src/app: the native applications, rebuilt on the machine ----
 # `selfhost' above proves the chain works on a nine-line HELLO.C.  These
 # two targets are that chain doing real work, and they answer a question
-# HELLO.C cannot: the five .Z8K files checked into src/app/ beside their
-# source -- are they still what that source compiles to?
+# HELLO.C cannot: does the on-target build of the five src/app programs
+# reproduce?
 #
 # They cannot be built by `all'.  The compiler is ZCC.Z8K and the linker
-# LD8K.Z8K; both are Z8001 programs that run on the target, so a rebuild
-# needs the emulator, and `all' must not.  So the binaries are checked in,
-# and these targets are what stops "checked in" from meaning "unchecked":
-# each one ERASES the .Z8K on drive A:, rebuilds it there from the .C
-# beside it, pulls the partition back out and cmps the result against the
-# repository's copy.  Erase first, or a failed compile leaves the old file
-# in place and the cmp compares the checked-in binary with itself.
+# LD8K.Z8K; both are Z8001 programs that run on the target, so a build
+# needs the emulator, and `all' must not.  `make apps' (mk/apps.mk) builds
+# them into build/app, and `all' stages whatever is there onto drive A.
+# These targets build them a second time, on the development drive A:
+# each one ERASES the .Z8K there, rebuilds it from the .C beside it, pulls
+# the partition back out and cmps the result against build/app.  Erase
+# first, or a failed compile leaves the staged copy in place and the cmp
+# compares it with itself.
 #
 # The cmp is an assertion and not a hope because ZCC and LD8K are
 # byte-reproducible -- measured, not assumed: two entirely separate
 # sessions produced fourteen byte-identical SDB objects from the same
-# source.  If a cmp here ever fails, the source and the binary have come
-# apart and both belong in the same commit; tests/appchk.sh says so.
+# source.  If a cmp here ever fails, that property is gone.
 #
 # tests/appbuild.sh does the building, ONE COLD BOOT PER COMMAND, and its
 # header says why that is not the extravagance it looks like: a single
@@ -1467,7 +1467,7 @@ A3IMG	= build/a3test.bin
 A3DIR	= build/a3
 A3LOG	= build/verify-a3.log
 .PHONY: verify-a3
-verify-a3: all
+verify-a3: all apps
 	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	sh tests/appbuild.sh $(A3IMG) $(A3LOG).1 SORTFL.Z8K SORTFL
 	sh tests/appbuild.sh $(A3IMG) $(A3LOG).2 KILLDU.Z8K KILLDU
@@ -1478,11 +1478,11 @@ verify-a3: all
 	dd if=$(A3IMG) of=$(A3DIR)/cpma.img bs=512 skip=$(CPMA_START) \
 		count=$(CPMA_BLOCKS) status=none conv=sparse
 	python3 tools/mkcpmfs.py --extract $(A3DIR)/cpma.img $(A3DIR)
-	@sh tests/appchk.sh $(A3LOG) $(A3DIR) \
+	@sh tests/appchk.sh $(A3LOG) $(A3DIR) $(APPDIR) \
 		SORTFL.Z8K KILLDU.Z8K TOHEX.Z8K FROMHEX.Z8K \
 		|| { echo "verify-a3: FAIL"; exit 1; }
 	@echo "verify-a3: PASS -- Robert Heller's four utilities rebuilt on the"
-	@echo "           machine from the source shipped beside them"
+	@echo "           machine, byte-identical to what \`make apps' built"
 
 # ---- Gate A: SDB ----
 # SDB is a 5,250-line relational DBMS with no terminal dependency at all:
@@ -1520,7 +1520,7 @@ SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 # exported separately into SDBSRT.TXT and read back off the partition.
 SDBRUNIN = $(OSSEL)PIP SORT.DAT=SDBIN.TXT\rSDB\rhelp\rcreate emp ( name char 10 dept char 6 sal num 6 ) 20\rimport \"SDBIN.TXT\" into emp\rprint * from emp ;\rprint * from emp where emp.sal > \"1500\" ;\rexport emp into \"SDBOUT.TXT\" ;\rsort emp by sal ;\rexport emp into \"SDBSRT.TXT\" ;\rexit\r$(ENDIN)
 .PHONY: verify-sdb
-verify-sdb: all
+verify-sdb: all apps
 	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	sh tests/appbuild.sh $(SDBIMG) $(SDBLOG).1.log SDB.Z8K $(SDBSRC)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(SDBIMG)) \
@@ -1533,12 +1533,12 @@ verify-sdb: all
 	dd if=$(SDBIMG) of=$(SDBDIR)/cpma.img bs=512 skip=$(CPMA_START) \
 		count=$(CPMA_BLOCKS) status=none conv=sparse
 	python3 tools/mkcpmfs.py --extract $(SDBDIR)/cpma.img $(SDBDIR)
-	@sh tests/appchk.sh $(SDBLOG).1.log $(SDBDIR) SDB.Z8K \
+	@sh tests/appchk.sh $(SDBLOG).1.log $(SDBDIR) $(APPDIR) SDB.Z8K \
 		|| { echo "verify-sdb: FAIL"; exit 1; }
 	@sh tests/sdbchk.sh $(SDBLOG).2.log $(SDBDIR) \
 		|| { echo "verify-sdb: FAIL"; exit 1; }
 	@echo "verify-sdb: PASS -- SDB compiled from its own source on the"
-	@echo "            machine, byte-identical to src/app/SDB.Z8K; and that"
+	@echo "            machine, byte-identical to $(APPDIR)/SDB.Z8K; and that"
 	@echo "            binary created a relation, imported three tuples,"
 	@echo "            selected two of them and exported all three back"
 	@echo "            unchanged.  GATE A."
@@ -6429,7 +6429,7 @@ RSXNIN3	= $(OSSEL)RSXLDR UCASEH.RSX\rDDT MHELLO.Z8K\r
 RSXNIN4	= $(OSSEL)PUT FILE DOUT.TXT\rDUMP NMARKER.TXT\rSIZEZ8K MHELLO.Z8K\rPUT CONSOLE\rTYPE DOUT.TXT\r$(ENDIN)
 
 .PHONY: verify-rsxn
-verify-rsxn: all $(CPMAGP)
+verify-rsxn: all apps $(CPMAGP)
 	$(MKDISK) $(RSXNIMG) $(CPMSYS) $(CPMAGP)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
 		--input="$(RSXNIN1)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \

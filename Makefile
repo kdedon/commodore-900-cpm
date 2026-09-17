@@ -12,11 +12,13 @@ all: unpublish $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG) imagecheck farptrchec
      $(UCONCW) $(UDIRG) $(UDIRB) $(USPLIT) $(UCONCR) $(UCONCR2) \
      $(CPMDISKALL)
 	@$(if $(wildcard $(KBOOT)),:,echo 'note: no kboot at "$(KBOOT)" -- $(CPMDISK) not built. `make deps DEP=kboot`')
+	@ls $(APPBIN) >/dev/null 2>&1 || echo 'note: src/app programs not all built -- drive A carries only those in $(APPDIR). `make apps`'
 
 help:
 	@printf '%s\n' \
 	  'make                 build cpm.sys, drive images and the boot medium' \
 	  'make imagecheck      check the generated images' \
+	  'make apps            compile the src/app programs on the emulator' \
 	  'make farptrcheck     check the banked-memory invariant in src/bdos' \
 	  'make verify-<name>   run one emulator verification target' \
 	  'make cpmlocal        LOCALDIR=<dir> LOCALOUT=<path outside the checkout>:' \
@@ -65,6 +67,7 @@ $(OBJDIR)/bdosmisc.o: $(OBJDIR)/cpmver.h
 
 include mk/system.mk
 include mk/programs.mk
+include mk/apps.mk
 include mk/images.mk
 include tests/images.mk
 include tests/verify.mk

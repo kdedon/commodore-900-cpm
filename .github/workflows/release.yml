@@ -40,6 +40,8 @@ jobs:
         run: make deps DEP=toolchain
       - name: The loader, and the handoff header the BIOS compiles
         run: make deps DEP=kboot
+      - name: The emulator, which compiles the src/app programs
+        run: make deps DEP=emu
       # A tar because the toolchain release carries symlinks and executables.
       - name: Pack the edges
         run: tar -cf cpm-deps.tar deps
@@ -59,12 +61,16 @@ jobs:
       - name: Restore the edges
         run: tar -xpf cpm-deps.tar
 
-      - name: Build the system, the images and the boot disk
+      # apps first, so the `make all' after it puts them on drive A:.
+      - name: Build the system, the src/app programs, the images and the boot disk
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/deps/commodore-900-toolchain
           KBOOT: ${{ github.workspace }}/deps/commodore-900-kboot/kboot
           KBOOTSRC: ${{ github.workspace }}/deps/commodore-900-kboot
-        run: make all
+          EMU: ${{ github.workspace }}/deps/commodore-900-emulator
+        run: |
+          make apps
+          make all
 
       - name: Package
         run: |

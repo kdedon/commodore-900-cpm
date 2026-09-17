@@ -14,8 +14,12 @@ in a SUBMIT file. The five `src/app` applications -- `SDB`, `SORTFL`,
 linked on the target against DRI's `STARTUP.O` and `LIBCPM.A` from
 `vendor/`, not against `src/cmd/crt0.s`, so they set no return code and
 `IF ERROR` reads success after them however they ended. See
-`DEVIATIONS.md` §10 in the design notes. The system does
-not use GENCPM. The system banner identifies it as version 3.1.
+`DEVIATIONS.md` §10 in the design notes. No binaries for them are
+checked in: `make apps` compiles them under the emulator with DRI's
+`ZCC.Z8K` and `LD8K.Z8K` into `build/app`, rebuilding a program only when
+its source changes, and the next `make all` puts them on drive A:. Without
+them `make all` still builds every image, drive A: carrying their source,
+and says so. The system does not use GENCPM. The system banner identifies it as version 3.1.
 
 Passwords are enforced on a drive whose directory label has the
 password-enable bit set, and only there: a medium without that bit behaves

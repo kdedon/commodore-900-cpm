@@ -90,8 +90,8 @@ boot() {
 : > "$abslog"
 
 # Erase the target first.  A compile or link that fails leaves whatever
-# .Z8K was there before, and the caller's cmp would then be comparing the
-# checked-in binary with itself and passing.
+# .Z8K was there before, and the caller's cmp would then be comparing a
+# staged copy with itself and passing.
 boot "ERA $out\r" || exit 1
 
 objs=
