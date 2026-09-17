@@ -17,18 +17,18 @@ z16	z80dma;			/* the guest's DMA address (fn 26)	*/
  * The multi-sector count the native BDOS is currently holding.
  *
  * It is mirrored here because it is HALF of every DMA bound: our BDOS's
- * multio() (src/bdos/bdosrw.c:327) loops the count and adds SECLEN to
+ * multio() (src/bdos/bdosrw.c:330) loops the count and adds SECLEN to
  * the DMA address between records, so the window a transfer touches is
  * count * 128 bytes and not the 128 a single record needs.  A guest
  * reaches the count two ways -- function 44, and function 49 writing
  * the SCB's own copy at SCB_MLTIO, which scbpost() (src/bdos/scb.c:
- * 201-210) copies into GBL.multcnt with function 44's clamp -- so both
+ * 205-214) copies into GBL.multcnt with function 44's clamp -- so both
  * doors update this, and bdosmisc.c:158 resets it to one per program,
  * which is what z80bdosinit() does here.
  */
 static int	z80mult = 1;
 
-#define Z80SCBMLT 0x4a		/* SCB_MLTIO -- src/bdos/scb.h:60	*/
+#define Z80SCBMLT 0x4a		/* SCB_MLTIO -- src/bdos/scb.h:64	*/
 
 /* Collect consecutive function-2 output into native function 111 blocks.
  * Flush before other calls, BIOS hooks, refusals, and execution-loop exit. */
@@ -238,7 +238,7 @@ z32 len;
  * called on every path without a test at the call site.
  *
  * `octl.a' is a host pointer, and on the target that IS the XADDR our
- * BDOS reads out of a character control block (src/cmd/cpm.h:1-9); the
+ * BDOS reads out of a character control block (src/cmd/cpm.h:5-13); the
  * buffer is ours, not the guest's, so there is no range check to make.
  *
  * PUBLIC because the seam is not the only way a run can end: the caller's
@@ -414,7 +414,7 @@ struct z80 *m;
 	z32 n;
 	/* The native character control block for functions 111 and 112.
 	 * `a' is a host pointer, which on the target IS the XADDR our
-	 * BDOS reads out of it (src/cmd/cpm.h:1-9). */
+	 * BDOS reads out of it (src/cmd/cpm.h:5-13). */
 	static struct {
 		char	*a;
 		z16	n;

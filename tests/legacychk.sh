@@ -75,7 +75,7 @@ fi
 # What used to stand here was `grep CP/M-8000 STAT', an assertion about
 # WHICH BINARY was on the disk.  The answer is deliberately no longer
 # "the vendor's", and the cpm8k13 source prints no sign-on at all -- its
-# only version string is the usage text in values() (src/cmd/stat.c:1185)
+# only version string is the usage text in values() (src/cmd/stat.c:1188)
 # -- so that grep could only ever fail.  Deleting it outright would have
 # left the row weaker than before, so it is replaced by a check on the
 # very thing that made replacing the binary worth doing: the Total: line.

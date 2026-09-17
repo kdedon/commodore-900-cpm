@@ -2258,7 +2258,7 @@ verify-setb: all
 	@grep -q 'Drive A: set to Read Only (RO)' $(SETBLOG)-5.log \
 		|| { echo "verify-setb: FAIL -- [RO] on a drive did not report"; exit 1; }
 	@# The refusal is PIP's to REPORT, not the BDOS's.  With fn 12 saying
-	@# 0x2031 PIP's HAS_RETERR is true (src/cmd/pip.c:420), so it opens
+	@# 0x2031 PIP's HAS_RETERR is true (src/cmd/pip.c:423), so it opens
 	@# with _ret_errors(0xff) and the BDOS hands the code back instead of
 	@# printing: cpm3src/BDOS30.ASM:114, `lda error$$mode! inr a! cnz error'
 	@# -- 0ffh+1 is zero, so the console message is skipped and rtn$$phy$$errs
@@ -2547,7 +2547,7 @@ verify-signon: all
 		|| { echo "verify-signon: FAIL -- MHELLO did not run twice"; exit 1; }
 	@# STAT is built here from DRI source now (Makefile $(USTAT)), and the
 	@# cpm8k13 source prints no sign-on -- its only version string is the
-	@# usage text values() writes (src/cmd/stat.c:1185), which `STAT
+	@# usage text values() writes (src/cmd/stat.c:1188), which `STAT
 	@# HELLO.TXT' never reaches.  All this assertion has to establish is
 	@# that STAT ran to completion and so warm-booted, so it looks for the
 	@# report it was asked for: the row naming the file on the command line.
@@ -7390,7 +7390,7 @@ verify-xout: all $(CPMAXOUT) build/xouttest
 # The defect P1 #12 names is a write OUTSIDE the guest region: the seams
 # checked a 128-byte DMA window -- one record -- and then let BDOS
 # function 44's record count through to a native BDOS whose multio()
-# (src/bdos/bdosrw.c:327) writes count * 128 bytes from that address.  A
+# (src/bdos/bdosrw.c:330) writes count * 128 bytes from that address.  A
 # refusal and an acceptance come back through the same registers, so the
 # suites assert it with a canary behind the guest's memory; and the
 # review's own reproduction was an AddressSanitizer run, which is the

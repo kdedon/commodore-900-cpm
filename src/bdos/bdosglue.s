@@ -350,12 +350,12 @@ scret:
 / THAT SECOND TEST USED TO BE FCW BIT 15, and bit 15 is the SEGMENTED
 / bit, not the split bit.  Non-segmented covers two containers, not one:
 / 0xEE0B (split I/D) and 0xEE03 (non-segmented, combined I/D --
-/ x.out.h:21,23).  Only the first has the trapped-data-reference problem;
+/ x.out.h:24,26).  Only the first has the trapped-data-reference problem;
 / an 0xEE03 program's data is in the TPA, in the same segment the module
 / occupies.  So the bit test excluded DDT.Z8K, SDB.Z8K and every other
 / stock combined-I/D binary for a reason that does not apply to them, and
 / what it should have asked is what the LOADER knows: `spflag'
-/ (splitld.c:30, set at pgmld.c:331, per-process and saved across a swap
+/ (splitld.c:34, set at pgmld.c:331, per-process and saved across a swap
 / at proc.c:351,364) is exactly "the loaded program is split I/D".
 /
 / Letting an 0xEE03 caller in costs one thing the bit test hid.  The gate

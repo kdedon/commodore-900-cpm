@@ -150,7 +150,7 @@ verify)
 	# below still carries the allocation, and both numbers are now on
 	# screen at once.  And `CP/M-8000 STAT', the vendor sign-on, is gone:
 	# this source prints no sign-on at all (its only version string is
-	# values()'s usage text, src/cmd/stat.c:1185).  What replaced that
+	# values()'s usage text, src/cmd/stat.c:1188).  What replaced that
 	# assertion is the totals check, which is what the rebuild was for --
 	# DRI accumulates into kblks without initialising it
 	# (src/cmd/stat.c:1687-1698), and over a single file the "-1k blocks"

@@ -55,7 +55,7 @@ WHAT IS NOT ASSERTED, AND WHY.  Not that CTLCLOG's warm boot reports
 RC_CTLC (0xfffe).  That earlier version planned to read it back with a following
 `CONBRK R', and that cannot work: the CCP clears the program return code
 before every command it runs (ccp_seterr(FALSE), src/ccp/ccp.c:1608, and
-the comment at src/ccp/ccpext.c:304-322 says so outright), so no later
+the comment at src/ccp/ccpext.c:308-326 says so outright), so no later
 command can ever see the code an earlier one left.  `IF ERROR' would see
 it, but IF/ELSE/FI are not configured in this CCP (flow_on() is false;
 the session answers `IF?').  What is asserted instead is the behaviour

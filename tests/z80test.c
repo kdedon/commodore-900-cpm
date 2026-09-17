@@ -2600,7 +2600,7 @@ static int stub(int fn, z16 val, char *addr)
 		/* The native character control block the seam builds
 		 * for a batch of function 2s: {address, count}, with
 		 * the address a host pointer because that is what an
-		 * XADDR is on the target (src/cmd/cpm.h:1-9).  Our
+		 * XADDR is on the target (src/cmd/cpm.h:5-13).  Our
 		 * function 111 is prt_blk() -> cookdrun(), which is
 		 * cookdout(ch, FALSE) per character -- the same thing
 		 * function 2 above does -- so the record it leaves in
@@ -3360,13 +3360,13 @@ static void t_random(void)
  * z80bdos.c's setdma() validated Z80DMA -- 128 bytes, ONE record --
  * while BDOS function 44 was an ordinary P_BYTE that handed the guest's
  * record count straight to the native BDOS, whose multio()
- * (src/bdos/bdosrw.c:327) then loops that many times adding SECLEN to
+ * (src/bdos/bdosrw.c:330) then loops that many times adding SECLEN to
  * the DMA address between records.  So a guest that said "two records"
  * and put its DMA at 0xff80 -- an address setdma() accepts, because one
  * record ends exactly at the top of the 64 KB guest region -- had 256
  * bytes written from 0xff80 and the second record landed outside the
  * region altogether.  Function 49 is a second door to the same count
- * (src/bdos/scb.c:201-210 writes GBL.multcnt from the SCB mirror), so
+ * (src/bdos/scb.c:205-214 writes GBL.multcnt from the SCB mirror), so
  * the bound cannot be a one-time test at function 44; it has to be the
  * DMA check itself that knows how many records are coming.
  *

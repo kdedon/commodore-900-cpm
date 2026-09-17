@@ -21,7 +21,7 @@ i16	i86dmaseg;		/* ... and base paragraph (fn 51)	*/
  * The multi-sector count the native BDOS is currently holding.
  *
  * It is mirrored here because it is HALF of every DMA bound: our BDOS's
- * multio() (src/bdos/bdosrw.c:327) loops the count and adds SECLEN to
+ * multio() (src/bdos/bdosrw.c:330) loops the count and adds SECLEN to
  * the DMA address between records, so the window a transfer touches is
  * count * 128 bytes and not the 128 a single record needs.  Function 49
  * is refused here (pmap[] below), so function 44 is the only door a
@@ -47,7 +47,7 @@ static struct {			/* the native CCB for the batch		*/
  * called on every path without a test at the call site.
  *
  * `octl.a' is a host pointer, and on the target that IS the XADDR our
- * BDOS reads out of a character control block (src/cmd/cpm.h:1-9); the
+ * BDOS reads out of a character control block (src/cmd/cpm.h:5-13); the
  * buffer is ours, not the guest's, so there is no segment check to make
  * -- which is also why this is the one thing here that does not go
  * through i86addr().

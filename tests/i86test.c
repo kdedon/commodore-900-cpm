@@ -2885,7 +2885,7 @@ static int stub(int fn, i16 val, char *addr)
 		/* The native character control block the seam builds
 		 * for a batch of function 2s: {address, count}, with
 		 * the address a host pointer because that is what an
-		 * XADDR is on the target (src/cmd/cpm.h:1-9).  Our
+		 * XADDR is on the target (src/cmd/cpm.h:5-13).  Our
 		 * function 111 is prt_blk() -> cookdrun(), which is
 		 * cookdout(ch, FALSE) per character -- the same thing
 		 * function 2 above does -- so the record it leaves in
@@ -3534,7 +3534,7 @@ static void t_gencmd(const char *dir, const char *fixdir)
  * i86bdos.c's setdma() validated I86DMA -- 128 bytes, ONE record --
  * while BDOS function 44 was an ordinary P_BYTE that handed the guest's
  * record count straight to the native BDOS, whose multio()
- * (src/bdos/bdosrw.c:327) loops that many times adding SECLEN to the DMA
+ * (src/bdos/bdosrw.c:330) loops that many times adding SECLEN to the DMA
  * address between records.  So a guest that said "two records" and put
  * its DMA offset at 0xff80 -- accepted, because one record ends exactly
  * at the top of the 64 KB segment -- had 256 bytes written from 0xff80

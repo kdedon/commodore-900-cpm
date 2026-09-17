@@ -280,7 +280,7 @@ extern i16 i86ver;		/* what function 12 tells the guest	*/
  * an address and 0 otherwise, in which case `val' is the byte or word
  * parameter.  The target's main() is one line -- our BDOS takes a LONG
  * whose value is the XADDR, which on this pipeline is what a far
- * pointer already is (src/cmd/cpm.h:1-9) -- and the host tests supply a
+ * pointer already is (src/cmd/cpm.h:5-13) -- and the host tests supply a
  * stub, which is what lets `make i86test' exercise the whole mapping
  * with no toolchain and no emulator (CPM86-STAGE-ONE.md §5.2 rule 3).
  */
