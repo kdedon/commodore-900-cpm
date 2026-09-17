@@ -95,10 +95,15 @@ fetch_git() {
 	git clone --branch "$3" "$2" "$4" || return 1
 }
 
-# The newest published release's tag, from the repository's release list.
+# The newest published release's tag, read off the redirect /releases/latest
+# answers with.  Not the API: that is rate-limited per IP, and CI runners share
+# them.  A repository with no release redirects to /releases, which has no tag
+# in it, so this prints nothing and the caller refuses by name.
 latest_tag() {
-	curl -fsL "https://api.github.com/repos/${1#https://github.com/}/releases/latest" |
-	sed -n 's/^[ \t]*"tag_name"[ \t]*:[ \t]*"\([^"]*\)".*/\1/p' | sed 1q
+	_lt=$(curl -fsLI -o /dev/null -w '%{url_effective}' "$1/releases/latest") || return 1
+	case $_lt in
+	*/releases/tag/*) echo "${_lt##*/releases/tag/}" ;;
+	esac
 }
 
 fetch_release() {
@@ -109,12 +114,20 @@ fetch_release() {
 		return 0
 	fi
 	[ -n "$5" ] || { echo "$1: a release line needs an asset name" >&2; return 1; }
-	case $(uname -s) in
-	Linux)			host=linux-x86_64.tar.gz ;;
-	MINGW*|MSYS*|CYGWIN*)	host=windows-x86_64.zip ;;
-	*)	echo "$1: no release asset is published for $(uname -s);" >&2
-		echo "  build the dependency and name it by variable." >&2
-		return 1 ;;
+	# @HOST@ is resolved only for an asset that USES it, so an unrecognised
+	# `uname -s' refuses only a per-host edge and never a HOST-INDEPENDENT
+	# one, like kboot's, whose assets are the same files on every machine.
+	case "$5" in
+	*@HOST@*)
+		case $(uname -s) in
+		Linux)			host=linux-x86_64.tar.gz ;;
+		MINGW*|MSYS*|CYGWIN*)	host=windows-x86_64.zip ;;
+		*)	echo "$1: the asset name is per-host (@HOST@) and none is" >&2
+			echo "  published for $(uname -s);" >&2
+			echo "  build the dependency and name it by variable." >&2
+			return 1 ;;
+		esac ;;
+	*)	host= ;;
 	esac
 	tmp=$4.tmp.$$
 	rm -rf "$tmp"

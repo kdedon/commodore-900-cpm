@@ -3,14 +3,21 @@
 #
 # Built HERE, from the tag, rather than taken from the build workflow's run: a
 # release asset has to come from the tag it claims to be.  It is the same
-# `make all', against the same pinned toolchain and kboot releases DEPS names.
-# The banner carries the build date, so the tag's own run is the one whose
-# bytes are published.
+# `make all', against the toolchain and kboot releases DEPS names.  The banner
+# carries the build date, so the tag's own run is the one whose bytes are
+# published.
+#
+# The edges are resolved ONCE, in the deps job, and handed to the jobs after
+# it as an artifact: `latest' is read a single time, so everything in the
+# release was built against the same releases.
 #
 # The images are sparse files of tens of megabytes that are mostly zeros, so
 # they are published gzipped.  cpma.img is not published: it is the
 # development drive A:, with the verify suite's guest halves on it.
 # cpma-rel.img is the one without them, and it is what cpmonly.bin carries.
+#
+# A DISPATCH RUN IS NOT A RELEASE.  It has no tag; it builds and uploads the
+# assets for inspection, and publishes nothing.
 name: release
 
 on:
@@ -19,32 +26,35 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write          # to attach assets to the release
+  contents: read
 
 jobs:
-  publish:
+  deps:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: The compiler
         run: make deps DEP=toolchain
       - name: The loader, and the handoff header the BIOS compiles
         run: make deps DEP=kboot
+      # A tar because the toolchain release carries symlinks and executables.
+      - name: Pack the edges
+        run: tar -cf cpm-deps.tar deps
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpm-deps
+          path: cpm-deps.tar
+          retention-days: 7
 
-      # What built the published bytes, in the run log and in the release
-      # notes, so it is answerable once the workspace is gone.
-      - name: What is in it
-        id: notes
-        run: |
-          cat deps/commodore-900-toolchain/.provenance
-          {
-            echo 'notes<<EOF'
-            echo "Built with commodore-900-toolchain v$(sed -n 's/^version=//p' deps/commodore-900-toolchain/.provenance) and commodore-900-kboot v$(cat deps/commodore-900-kboot/VERSION)."
-            echo
-            echo 'cpmonly.bin is the bootable disk: kboot, cpm.sys, and drives A: and B:.'
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
+  build:
+    needs: deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: cpm-deps }
+      - name: Restore the edges
+        run: tar -xpf cpm-deps.tar
 
       - name: Build the system, the images and the boot disk
         env:
@@ -63,8 +73,33 @@ jobs:
           (cd dist && sha256sum * > SHA256SUMS)
           cat dist/SHA256SUMS
 
-      - name: Publish
-        uses: softprops/action-gh-release@v2
+      # What built the published bytes, so it is answerable once the
+      # workspace is gone.
+      - name: Release notes
+        run: |
+          cat deps/commodore-900-toolchain/.provenance
+          {
+            echo "Built with commodore-900-toolchain v$(sed -n 's/^version=//p' deps/commodore-900-toolchain/.provenance) and commodore-900-kboot v$(cat deps/commodore-900-kboot/VERSION)."
+            echo
+            echo 'cpmonly.bin is the bootable disk: kboot, cpm.sys, and drives A: and B:.'
+          } > dist/NOTES.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpm-release
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # to attach assets to the release
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: cpm-release, path: dist }
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/cpmonly.bin.gz
@@ -72,5 +107,5 @@ jobs:
             dist/cpma-rel.img.gz
             dist/cpmb.img.gz
             dist/SHA256SUMS
-          body: ${{ steps.notes.outputs.notes }}
+          body_path: dist/NOTES.md
           fail_on_unmatched_files: true

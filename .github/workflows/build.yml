@@ -20,8 +20,8 @@
 # checked by no automation anywhere.
 #
 # `make all' IS NOT A GATE ON THE NETWORK, and that is the constraint it was
-# written against.  The fetches in this job are the `make deps' steps for the
-# two pinned releases it compiles with, the toolchain and kboot (the BIOS
+# written against.  The only fetches are the deps job's `make deps' steps for
+# the two releases it compiles with, the toolchain and kboot (the BIOS
 # compiles kboot's bootinfo.h, and the boot medium carries its loader);
 # `all' itself fetches nothing.  So this step fails for a compile, staging,
 # packing or exclusion fault and for nothing else.
@@ -37,21 +37,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  link:
+  # ---------------------------------------------------------------------------
+  # The edges, resolved ONCE.  `latest' is read here and nowhere else, and the
+  # unpacked releases travel to every job as one artifact, so each job builds
+  # against the same releases and none asks GitHub again.  A tar because the
+  # toolchain release carries symlinks and executables.
+  # ---------------------------------------------------------------------------
+  deps:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { path: cpm }
 
       # A RELEASE of the toolchain, not a checkout: DEPS names the release,
       # and `make deps' is the one path that resolves it, the same as a
       # developer building this tree gets.
       - name: The toolchain this system is built with
-        working-directory: cpm
         run: make deps DEP=toolchain
       - name: The loader, and the handoff header the BIOS compiles
-        working-directory: cpm
         run: make deps DEP=kboot
+
+      - name: Pack the edges
+        run: tar -cf cpm-deps.tar deps
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpm-deps
+          path: cpm-deps.tar
+          retention-days: 7
+
+  link:
+    needs: deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: cpm }
+      - uses: actions/download-artifact@v4
+        with: { name: cpm-deps, path: cpm }
+      - name: Restore the edges
+        working-directory: cpm
+        run: tar -xpf cpm-deps.tar
 
       # Set, never searched: a job that depended on directory adjacency breaks
       # the first time a runner image moves its checkouts.  The search has its
