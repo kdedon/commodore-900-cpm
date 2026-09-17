@@ -89,6 +89,7 @@ EXTERN UWORD	mk_xfcb();	/* write a password XFCB for a new file	*/
 EXTERN		del_xfcb();	/* erase a name's password XFCBs	*/
 EXTERN		ren_xfcb();	/* carry them across a rename		*/
 EXTERN UWORD	pwmode;		/* the mode of the XFCB that refused	*/
+EXTERN UWORD	setlrbc;	/* fn 30 with f6': set_attr sets S1	*/
 EXTERN		upd_stamp();	/* write a file's update stamp		*/
 EXTERN UBYTE	*scbstampa();	/* address of the SCB @DATE group	*/
 EXTERN		scbccpflg();	/* OR bits into the SCB ccp$flgs (fcn 47) */
@@ -208,6 +209,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	GBL.curfx = (UBYTE)func;	/* named in the fcn 45 message */
 	GBL.curfcb = (struct fcb *)NULL;
 	GBL.errcode = 0;
+	setlrbc = 0;			/* in case fn 30's scan never returned */
 	hi_ext = 0;			/* v3's reselectx (bdos30.asm:2975);
 					   keephi() functions put it back  */
 	xfcb_ro = 0;			/* and :2978, the line after	*/
@@ -298,6 +300,9 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    newpw = UBWORD(temp.fptr->cur_rec) == 0xff;
+			/* openx (:3977-3978): cr = 0FFh asks for the
+			   last record byte count back in cr	*/
 		    clr_iatts(temp.fptr);	/* get$atts (:3928)	*/
 		    if ( ckpass(temp.fptr, 0) )
 			/*  bdos30.asm:4026-4057.  The three modes are not
@@ -358,6 +363,8 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 				rtnval = 255;
 			}
 		    }
+		    if (rtnval != 255 && newpw)
+			temp.fptr->cur_rec = temp.fptr->s1;
 		    break;
 
 	  case 16:  tmp_sel(&temp);		/* close file */
@@ -503,6 +510,8 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    newpw = UBWORD(temp.fptr->fname[5]) & 0x80;
+			/* f6': also set the last record byte count	*/
 		    clr_iatts(temp.fptr);	/* get$atts (:1863)	*/
 		    if ( ckpass(temp.fptr, 0) )
 			/* `indicators' checks the password before it
@@ -514,7 +523,9 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
+		    setlrbc = newpw;
 		    rtnval = dirscan(set_attr, temp.fptr, 2);
+		    setlrbc = 0;
 		    break;
 
 		  /* Copy the DPB into caller memory and return its offset; a transient

@@ -590,9 +590,10 @@ def edit_image(imgpath, opts):
 def read_dir(imgpath):
     """Parse the directory.
 
-    Returns {(user, name11): {entry_k: (recs, blocklist)}}, where blocklist is
-    a list of (slot, block) pairs -- slot 0..7 within the entry's allocation
-    list -- carrying only the allocated slots.
+    Returns {(user, name11): {entry_k: (recs, blocklist, lrbc)}}, where
+    blocklist is a list of (slot, block) pairs -- slot 0..7 within the
+    entry's allocation list -- carrying only the allocated slots, and lrbc
+    is S1, the CP/M 3 last record byte count (0 for a full record).
     """
     with open(imgpath, 'rb') as f:
         img = f.read()
@@ -620,7 +621,8 @@ def read_dir(imgpath):
             b = e[16 + 2 * j] | (e[17 + 2 * j] << 8)   # little-endian
             if b:
                 blocklist.append((j, b))
-        files.setdefault((user, name11), {})[entry_k] = (recs, blocklist)
+        files.setdefault((user, name11), {})[entry_k] = (recs, blocklist,
+                                                         e[13] & 0x7f)
     return img, files
 
 
@@ -676,10 +678,15 @@ def stamp_of(dirbuf, files, key):
 
 
 def file_size(extmap):
-    """Byte size implied by a file's entries (max record seen)."""
-    size = 0
-    for k, (recs, _) in extmap.items():
-        size = max(size, k * ENTRY_DATA + recs * RECLEN)
+    """Byte size implied by a file's entries: the max record seen, less the
+    unused part of that last record when its entry carries a byte count
+    (CP/M 3 function 30 with f6'; cpmtools reads it the same way)."""
+    size, lrbc = 0, 0
+    for k, (recs, _, lr) in extmap.items():
+        if k * ENTRY_DATA + recs * RECLEN > size:
+            size, lrbc = k * ENTRY_DATA + recs * RECLEN, lr
+    if size and lrbc:
+        size -= RECLEN - lrbc
     return size
 
 
@@ -708,7 +715,7 @@ def cmd_list(imgpath):
         user, name11 = key
         extmap = files[key]
         sz = file_size(extmap)
-        nblk = sum(len(bl) for _, bl in extmap.values())
+        nblk = sum(len(bl) for _, bl, _ in extmap.values())
         total += sz
         print("%2d %-12s %8d bytes  %3d blocks  %d entr%-3s %s"
               % (user, decode_name(name11), sz, nblk, len(extmap),
@@ -830,7 +837,7 @@ def cmd_extract(imgpath, destdir):
         extmap = files[(user, name11)]
         sz = file_size(extmap)
         buf = bytearray(sz)             # unallocated (sparse) ranges read as 0
-        for k, (recs, blocklist) in extmap.items():
+        for k, (recs, blocklist, _) in extmap.items():
             for j, b in blocklist:
                 if b > DSM:
                     die("%s: block %d out of range" % (decode_name(name11), b))

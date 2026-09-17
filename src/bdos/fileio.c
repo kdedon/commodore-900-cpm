@@ -573,6 +573,12 @@ REG UWORD dsknum;		/* drive 0..15, anything else = default */
 
 GLOBAL UWORD pwmode = 0;
 
+/*  Nonzero while function 30 runs for an FCB with interface attribute f6'
+    set: set_attr then also stores fcb(cr) in each entry's S1 as the last
+    record byte count, 0 meaning a full record.  */
+
+GLOBAL UWORD setlrbc = 0;
+
 
 /****************************************
 *  function 106 -- set default password	*
@@ -1432,6 +1438,8 @@ REG WORD dirindx;		/* index into directory		*/
     if ( rtn = match(fcbp, dirp, FALSE) )
     {
 	move(&fcbp->fname[0], &dirp->fname[0], 11);
+	if (setlrbc)		/* f6': dir fcb(s1) = fcb(cr) (bdos30.asm:1881-1887) */
+	    dirp->s1 = fcbp->cur_rec;
 	dir_wr(dirindx >> 2);
     }
     return(rtn);

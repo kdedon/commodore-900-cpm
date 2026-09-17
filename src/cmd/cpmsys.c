@@ -19,9 +19,11 @@
  * open, creat and fopen are TEXT -- LF is written as CR LF, CR is dropped
  * on read, ^Z ends the data, and a new record is padded with ^Z -- while
  * openb, creatb and fopenb are BINARY and pass every byte.  A binary file
- * ends at a record boundary: CP/M keeps no byte count.  lseek counts raw
- * bytes in both kinds.  Descriptors 0, 1 and 2 are the console unless
- * redirected.
+ * written here is closed with its CP/M 3 last record byte count (function
+ * 30, f6'), and one opened reads that count back (function 15 with cr
+ * 0FFh), so it ends at its true length; a count of 0 is a full record.
+ * lseek counts raw bytes in both kinds.  Descriptors 0, 1 and 2 are the
+ * console unless redirected.
  */
 
 #include <stdio.h>
@@ -42,9 +44,12 @@ struct fd {
 	char	text;		/* text translation on			*/
 	char	dirty;		/* rec[] differs from the disk		*/
 	char	pad;		/* rec[] was past the end of the file	*/
+	char	wrote;		/* written to since it was opened	*/
+	char	lrbc;		/* last record byte count at the open	*/
 	long	pos;		/* byte offset of the next read/write	*/
 	long	recno;		/* record held in rec[], -1 for none	*/
 	long	nrec;		/* length of the file in records	*/
+	long	size;		/* length in bytes (binary files)	*/
 	struct fcb fcb;
 	char	rec[SECLEN];
 };
@@ -264,20 +269,28 @@ char *name;
 			errno = ENOSPC;
 			return (-1);
 		}
-	} else if ((__bdos(BDOS_OPEN, (long) &f->fcb) & 0xff) == 0xff) {
-		errno = ENOENT;
-		return (-1);
+	} else {
+		f->fcb.cur_rec = 0xff;		/* asks for the byte count */
+		if ((__bdos(BDOS_OPEN, (long) &f->fcb) & 0xff) == 0xff) {
+			errno = ENOENT;
+			return (-1);
+		}
 	}
 	f->nrec = 0L;
+	f->lrbc = 0;
 	if (!make) {
+		f->lrbc = f->fcb.cur_rec & (SECLEN - 1);
 		__bdos(BDOS_FILESIZE, (long) &f->fcb);
 		f->nrec = (f->fcb.ran0 & 0xffL) << 16
 			| (f->fcb.ran1 & 0xffL) << 8 | (f->fcb.ran2 & 0xffL);
 	}
+	f->size = f->nrec << 7;
+	if (!text && f->lrbc != 0 && f->nrec != 0)
+		f->size -= SECLEN - f->lrbc;
 	f->fcb.cur_rec = 0;
 	f->kind = F_FILE;
 	f->text = text;
-	f->dirty = f->pad = 0;
+	f->dirty = f->pad = f->wrote = 0;
 	f->pos = 0L;
 	f->recno = -1L;
 	return (fd);
@@ -326,6 +339,19 @@ int fd;
 			errno = EIO;
 			r = -1;
 		}
+		/* Record the last record byte count of a binary file that
+		   was written, and clear a stale one from a text file.  The
+		   name carries the file's attributes back (function 30 sets
+		   them all) less the archive bit, which the close cleared. */
+		if (r == 0 && f->wrote && (!f->text || f->lrbc != 0)) {
+			f->fcb.cur_rec = f->text ? 0 : (int) f->size & (SECLEN - 1);
+			f->fcb.ftype[2] &= 0x7f;
+			f->fcb.fname[5] |= 0x80;
+			if ((__bdos(BDOS_SETATTR, (long) &f->fcb) & 0xff) == 0xff) {
+				errno = EIO;
+				r = -1;
+			}
+		}
 	}
 	f->kind = 0;
 	return (r);
@@ -359,7 +385,7 @@ int n;
 	for (got = 0; got < n; ) {
 		if ((r = load(f, f->pos >> 7)) < 0)
 			return (-1);
-		if (r == 0)
+		if (r == 0 || !f->text && f->pos >= f->size)
 			break;
 		c = f->rec[(int) f->pos & (SECLEN - 1)];
 		if (f->text && c == CTLZ)
@@ -378,8 +404,9 @@ int c;
 	if (load(f, f->pos >> 7) < 0)
 		return (-1);
 	f->rec[(int) f->pos & (SECLEN - 1)] = c;
-	f->dirty = 1;
-	f->pos++;
+	f->dirty = f->wrote = 1;
+	if (++f->pos > f->size)
+		f->size = f->pos;
 	return (0);
 }
 
@@ -424,7 +451,7 @@ int whence;
 	else if (whence == 2) {
 		if (flush(f) < 0)
 			return (-1L);
-		off += f->nrec << 7;
+		off += f->text ? f->nrec << 7 : f->size;
 	} else if (whence != 0) {
 		errno = EINVAL;
 		return (-1L);

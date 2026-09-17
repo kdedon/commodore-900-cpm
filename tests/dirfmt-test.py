@@ -19,8 +19,8 @@ What cpmtools cannot express, and so is not checked against it:
   - per-file allocated blocks: cpmls reports sizes, not block counts.  The
     listings are compared on user, name and size, and the TOTAL allocation
     cpmls -D reports is compared with the sum of mkcpmfs's per-file blocks.
-  - a byte count: cpmtools honours the CP/M 3 last-record byte count, mkcpmfs
-    reports whole records, so sizes are compared rounded up to 128.
+  - a byte count: both honour the CP/M 3 last-record byte count, but mkcpmfs
+    writes none, so sizes are compared rounded up to 128.
   - "rm clears the SFCB sub-record": cpmrm only marks the FCB 0xE5 and leaves
     the stamps behind, so that is not a property of this writer.
   - reporting an unknown entry type: cpmtools has no view of one; that such
