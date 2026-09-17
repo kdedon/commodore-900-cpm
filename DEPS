@@ -31,4 +31,4 @@
 toolchain  release  https://github.com/kdedon/commodore-900-toolchain  latest  c900-toolchain-@REF@-@HOST@
 kboot      release  https://github.com/kdedon/commodore-900-kboot      v0.2.0  kboot,c900-kboot-headers-@REF@.tar.gz
 userland   git      https://github.com/kdedon/commodore-900-coh-userland  main
-emu        release  https://github.com/kdedon/commodore-900-emulator   v0.2  c900-@REF@-@HOST@
+emu        release  https://github.com/kdedon/commodore-900-emulator   latest  c900-@REF@-@HOST@
