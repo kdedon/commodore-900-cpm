@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 /*--------------------------------------------------------------*\
  |	ccp.c	      CONSOLE COMMAND PROCESSOR          v1.0   |
  |		      =========================			|

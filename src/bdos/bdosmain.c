@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 
 /* BDOS dispatcher. tmp_sel copies caller FCBs into supervisor memory;
  * modified FCBs are copied back before returning. */

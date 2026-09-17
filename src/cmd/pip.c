@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 /****************************************************************************/
 /*                                                                          */
 /*	 P e r i p h e r a l  I n t e r c h a n g e  P r o g r a m	    */

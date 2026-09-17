@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 
 /* BDOS console input, editing, cooked output and flow control.
  * Copyright (c) 1982 Digital Research, Inc. */

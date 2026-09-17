@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 
 /* Drive login, directory operations, passwords, timestamps and allocation. */
 

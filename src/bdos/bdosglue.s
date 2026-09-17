@@ -1,3 +1,5 @@
+/ Portions Copyright (c) 2026 Kevin Dedon.
+
 / ***************************************************************
 / 
 / 	CP/M-Z8K Basic Disk Operating System interface module

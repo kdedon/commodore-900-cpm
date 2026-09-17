@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 #define KERMIT_C
 /*
   Embedded Kermit protocol module

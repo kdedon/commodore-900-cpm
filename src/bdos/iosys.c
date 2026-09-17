@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 
 /* Translate BDOS I/O packets into BIOS calls under the filesystem lock. */
 

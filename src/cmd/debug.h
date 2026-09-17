@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 #ifndef NODEBUG				/* NODEBUG inhibits debugging */
 #ifndef DEBUG				/* and if DEBUG not already defined */
 #ifndef MINSIZE				/* MINSIZE inhibits debugging */

@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 /* System-mode program loading and launch.
  * Function 59 uses the BIOS memory-region table; cpy_out writes the base page;
  * xfer sets NSPSEG/NSPOFF and IRETs into the program.

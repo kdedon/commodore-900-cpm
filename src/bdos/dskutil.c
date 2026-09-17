@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 
 /* Directory record I/O, scanning, checksums and allocation-vector helpers. */
 

@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 /* BDOS function 59 loads from an open FCB and fills the LPB base page,
  * stack and mode flags. pgldaddr returns the actual code entry address.
  * Copyright (c) 1982 Zilog Incorporated */

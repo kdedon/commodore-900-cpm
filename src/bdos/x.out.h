@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 
 struct x_hdr {
 	short	x_magic;	/* magic number */

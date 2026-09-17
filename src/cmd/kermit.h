@@ -1,3 +1,6 @@
+/*
+ * Portions Copyright (c) 2026 Kevin Dedon.
+ */
 #ifndef __KERMIT_H__
 #define __KERMIT_H__
 
