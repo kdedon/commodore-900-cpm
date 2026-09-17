@@ -3,15 +3,15 @@
 # SPDX-License-Identifier: MIT
 
 #
-# sdbchk.sh -- Gate A: SDB, compiled on the machine, doing database work.
+# sdbchk.sh -- Gate A: SDB doing database work.
 #
 #	sh tests/sdbchk.sh RUNLOG ARTDIR
 #
 # Run from the repository root.  RUNLOG is the transcript of the cold
 # boot that ran SDB; ARTDIR is the directory that boot's cpma partition
-# was extracted into afterwards.  tests/appchk.sh has already established
-# that the SDB.Z8K which produced this transcript is byte-for-byte what
-# `make apps' built -- so what is left to establish is that it WORKS.
+# was extracted into afterwards.  verify-sdb runs it on the host-built SDB
+# and again on the one ZCC builds on the machine; what it establishes
+# about either is that it WORKS.
 #
 # The session is seven statements: read the help file, create a relation,
 # import three tuples from SDBIN.TXT, print it twice (once whole and once
@@ -30,7 +30,7 @@
 #   a table still prints and a count still appears, so counting rows is
 #   the only way to tell a working comparison from a broken one.  The
 #   comparison itself is MTH.C's: a `num' attribute in SDB is a digit
-#   STRING, compared digit by digit by code this target just compiled.
+#   STRING, compared digit by digit by SDB's own code.
 #
 #   and the export must come back off the DISK, not off the screen.  SDB
 #   right-justifies a num attribute in its field width, so SDBOUT.TXT is

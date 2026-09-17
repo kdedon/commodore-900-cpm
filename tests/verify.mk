@@ -1437,65 +1437,84 @@ selfhost: all
 		|| { echo "selfhost: FAIL"; exit 1; }
 	@echo "selfhost: PASS -- artifacts in $(SELFDIR)/"
 
-# ---- src/app: the native applications, rebuilt on the machine ----
-# `selfhost' above proves the chain works on a nine-line HELLO.C.  These
-# two targets are that chain doing real work, and they answer a question
-# HELLO.C cannot: does the on-target build of the five src/app programs
-# reproduce?
+# ---- src/app: the native applications ----
+# `all' builds the five src/app programs on the host (mk/programs.mk,
+# over src/cmd/cpmsys.c) and stages them on drive A: beside their source.
+# These two targets run THOSE binaries on the machine and check the
+# answers they give, and then do it all again with the programs rebuilt
+# on the machine by DRI's ZCC.Z8K and LD8K.Z8K from that source -- the
+# question `selfhost' asks of a nine-line HELLO.C, asked of real
+# programs: does the source still build on the target, and does what it
+# builds work?  The two builds are different compilers and libraries, so
+# their bytes are not compared.
 #
-# They cannot be built by `all'.  The compiler is ZCC.Z8K and the linker
-# LD8K.Z8K; both are Z8001 programs that run on the target, so a build
-# needs the emulator, and `all' must not.  `make apps' (mk/apps.mk) builds
-# them into build/app, and `all' stages whatever is there onto drive A.
-# These targets build them a second time, on the development drive A:
-# each one ERASES the .Z8K there, rebuilds it from the .C beside it, pulls
-# the partition back out and cmps the result against build/app.  Erase
-# first, or a failed compile leaves the staged copy in place and the cmp
-# compares it with itself.
-#
-# The cmp is an assertion and not a hope because ZCC and LD8K are
-# byte-reproducible -- measured, not assumed: two entirely separate
-# sessions produced fourteen byte-identical SDB objects from the same
-# source.  If a cmp here ever fails, that property is gone.
-#
+# The on-target build ERASES each .Z8K first, or a failed compile leaves
+# the host-built copy in place and the checks would run that instead.
 # tests/appbuild.sh does the building, ONE COLD BOOT PER COMMAND, and its
 # header says why that is not the extravagance it looks like: a single
 # scripted session gets bytes eaten by ZCC's chained passes, and does it
 # intermittently, which is the worst way for a verification target to be
 # wrong.  The read-back and the assertions stay here.
+#
+# $(call APPRUN,IMAGE,INPUT,LOG,DIR) -- one cold boot of INPUT on IMAGE,
+# then its drive A: extracted into DIR.
+define APPRUN
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(1)) \
+		--input="$(2)" --max=$(APPMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } \
+		| python3 $(abspath tests/tstamp.py) \
+		| tee $(abspath $(3))
+	@$(EMUOK)
+	rm -rf $(4); mkdir -p $(4)
+	dd if=$(1) of=$(4)/cpma.img bs=512 skip=$(CPMA_START) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(4)/cpma.img $(4)
+endef
+# TOHEX writes 113K of hex through `>', which is emulated minutes.
+APPMAX	= 2000000000
+
+# Robert Heller's four utilities: tests/a3chk.py says what each answer
+# must be and works it out independently.
 A3IMG	= build/a3test.bin
 A3DIR	= build/a3
-A3LOG	= build/verify-a3.log
+A3LOG	= build/verify-a3
+A3RUNIN	= $(OSSEL)TOHEX SDB.Z8K >A3.HEX\rFROMHEX A3.HEX A3.BIN\rSORTFL <README.TXT >A3S.TXT\rKILLDU <A3S.TXT >A3K.TXT\r$(ENDIN)
 .PHONY: verify-a3
-verify-a3: all apps
+verify-a3: all
 	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).1 SORTFL.Z8K SORTFL
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).2 KILLDU.Z8K KILLDU
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).3 TOHEX.Z8K TOHEX
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).4 FROMHEX.Z8K FROMHEX
-	cat $(A3LOG).1 $(A3LOG).2 $(A3LOG).3 $(A3LOG).4 > $(A3LOG)
-	rm -rf $(A3DIR); mkdir -p $(A3DIR)
-	dd if=$(A3IMG) of=$(A3DIR)/cpma.img bs=512 skip=$(CPMA_START) \
-		count=$(CPMA_BLOCKS) status=none conv=sparse
-	python3 tools/mkcpmfs.py --extract $(A3DIR)/cpma.img $(A3DIR)
-	@sh tests/appchk.sh $(A3LOG) $(A3DIR) $(APPDIR) \
+	$(call APPRUN,$(A3IMG),$(A3RUNIN),$(A3LOG).1.log,$(A3DIR).1)
+	@python3 tests/a3chk.py $(A3LOG).1.log $(A3DIR).1 \
+		|| { echo "verify-a3: FAIL -- the host-built programs"; exit 1; }
+	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b1 SORTFL.Z8K SORTFL
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b2 KILLDU.Z8K KILLDU
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b3 TOHEX.Z8K TOHEX
+	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b4 FROMHEX.Z8K FROMHEX
+	cat $(A3LOG).b1 $(A3LOG).b2 $(A3LOG).b3 $(A3LOG).b4 > $(A3LOG).2.log
+	$(call APPRUN,$(A3IMG),$(A3RUNIN),$(A3LOG).3.log,$(A3DIR).2)
+	@sh tests/appchk.sh $(A3LOG).2.log $(A3DIR).2 \
 		SORTFL.Z8K KILLDU.Z8K TOHEX.Z8K FROMHEX.Z8K \
 		|| { echo "verify-a3: FAIL"; exit 1; }
-	@echo "verify-a3: PASS -- Robert Heller's four utilities rebuilt on the"
-	@echo "           machine, byte-identical to what \`make apps' built"
+	@python3 tests/a3chk.py $(A3LOG).3.log $(A3DIR).2 \
+		|| { echo "verify-a3: FAIL -- the programs ZCC built"; exit 1; }
+	@echo "verify-a3: PASS -- Robert Heller's four utilities, host-built"
+	@echo "           and then rebuilt on the machine by ZCC, converted a"
+	@echo "           48K binary to hex and back, sorted a file and"
+	@echo "           dropped its duplicate lines"
 
 # ---- Gate A: SDB ----
 # SDB is a 5,250-line relational DBMS with no terminal dependency at all:
 # what it exercises is the BDOS file layer -- creatb, lseek, random-record
 # read and write -- which is why the applications plan put it first.
 #
-# Fourteen compiles and a link, about eight minutes of emulated time.
-# This is the slowest target in the suite and it is slow for an honest
+# One cold boot runs the host-built SDB -- read the help file off the
+# disk, create a relation, import three tuples from a text file, print it
+# whole and then through a WHERE clause, export it back out.  Then the
+# on-target build: fourteen compiles and a link, about eight minutes of
+# emulated time, the slowest part of the suite and slow for an honest
 # reason: it is a 1984 three-pass C compiler compiling a real program on a
-# 6 MHz machine.  Then one more cold boot runs what those fourteen
-# compiles produced -- read the help file off the disk, create a relation,
-# import three tuples from a text file, print it whole and then through a
-# WHERE clause, export it back out.  The export lands in a file, and the
+# 6 MHz machine.  The same session then runs what those fourteen compiles
+# produced.  Each export lands in a file, and the
 # file is pulled off the partition and checked host-side, so the answer is
 # not just something that scrolled past on a transcript.
 SDBIMG	= build/sdbtest.bin
@@ -1506,7 +1525,7 @@ SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 # relation's tuple capacity; `import' reads SDBIN.TXT one attribute value
 # per line; the `where' clause compares a num attribute, which in SDB is a
 # digit STRING compared by MTH.C's own arithmetic, so it is a real test of
-# a file this target just compiled.  The \" are for the shell: SDB wants
+# the program and not only of the library under it.  The \" are for the shell: SDB wants
 # real quotes around a file name, or it scans it as an identifier and
 # appends .dat.
 # SORT.DAT is copied onto the disk BEFORE SDB runs and is nothing to do
@@ -1520,28 +1539,22 @@ SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 # exported separately into SDBSRT.TXT and read back off the partition.
 SDBRUNIN = $(OSSEL)PIP SORT.DAT=SDBIN.TXT\rSDB\rhelp\rcreate emp ( name char 10 dept char 6 sal num 6 ) 20\rimport \"SDBIN.TXT\" into emp\rprint * from emp ;\rprint * from emp where emp.sal > \"1500\" ;\rexport emp into \"SDBOUT.TXT\" ;\rsort emp by sal ;\rexport emp into \"SDBSRT.TXT\" ;\rexit\r$(ENDIN)
 .PHONY: verify-sdb
-verify-sdb: all apps
+verify-sdb: all
 	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
-	sh tests/appbuild.sh $(SDBIMG) $(SDBLOG).1.log SDB.Z8K $(SDBSRC)
-	{ $(EMUCD) && ./c900 --disk=$(abspath $(SDBIMG)) \
-		--input="$(SDBRUNIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
-		$(EMUSTAT); } \
-		| python3 $(abspath tests/tstamp.py) \
-		| tee $(abspath $(SDBLOG)).2.log
-	@$(EMUOK)
-	rm -rf $(SDBDIR); mkdir -p $(SDBDIR)
-	dd if=$(SDBIMG) of=$(SDBDIR)/cpma.img bs=512 skip=$(CPMA_START) \
-		count=$(CPMA_BLOCKS) status=none conv=sparse
-	python3 tools/mkcpmfs.py --extract $(SDBDIR)/cpma.img $(SDBDIR)
-	@sh tests/appchk.sh $(SDBLOG).1.log $(SDBDIR) $(APPDIR) SDB.Z8K \
+	$(call APPRUN,$(SDBIMG),$(SDBRUNIN),$(SDBLOG).1.log,$(SDBDIR).1)
+	@sh tests/sdbchk.sh $(SDBLOG).1.log $(SDBDIR).1 \
+		|| { echo "verify-sdb: FAIL -- the host-built SDB"; exit 1; }
+	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	sh tests/appbuild.sh $(SDBIMG) $(SDBLOG).2.log SDB.Z8K $(SDBSRC)
+	$(call APPRUN,$(SDBIMG),$(SDBRUNIN),$(SDBLOG).3.log,$(SDBDIR).2)
+	@sh tests/appchk.sh $(SDBLOG).2.log $(SDBDIR).2 SDB.Z8K \
 		|| { echo "verify-sdb: FAIL"; exit 1; }
-	@sh tests/sdbchk.sh $(SDBLOG).2.log $(SDBDIR) \
-		|| { echo "verify-sdb: FAIL"; exit 1; }
-	@echo "verify-sdb: PASS -- SDB compiled from its own source on the"
-	@echo "            machine, byte-identical to $(APPDIR)/SDB.Z8K; and that"
-	@echo "            binary created a relation, imported three tuples,"
-	@echo "            selected two of them and exported all three back"
-	@echo "            unchanged.  GATE A."
+	@sh tests/sdbchk.sh $(SDBLOG).3.log $(SDBDIR).2 \
+		|| { echo "verify-sdb: FAIL -- the SDB ZCC built"; exit 1; }
+	@echo "verify-sdb: PASS -- SDB, host-built and then compiled from its"
+	@echo "            own source on the machine, each created a relation,"
+	@echo "            imported three tuples, selected two of them and"
+	@echo "            exported all three back unchanged.  GATE A."
 
 # ---- real-time clock ----
 # DATE against BIOS function 23, over the emulator's OKI MSM58321 model
@@ -6409,11 +6422,13 @@ verify-put: all $(CPMAGP)
 # Four legs, and the reason there are four is that "intercepted" has two
 # directions and the refusal has to survive both:
 #
-#   1  GET FILE NCMDS.TXT feeds SDB.Z8K.  SDB is a stock 0xEE03 binary,
-#      49,536 bytes of it, and every line of its session -- its own
-#      prompt, a deliberate syntax error, its `exit' -- is read out of
-#      the file through functions 1 and 10.  This is the direction that
-#      SUPPLIES a call's answer.
+#   1  GET FILE NCMDS.TXT feeds SDB.Z8K, and every line of its session
+#      -- its own prompt, a deliberate syntax error, its `exit' -- is
+#      read out of the file through function 10.  This is the direction
+#      that SUPPLIES a call's answer.  SDB was a stock 0xEE03 binary when
+#      this leg was written; it is host-built now, so an 0xEE01 one, and
+#      the 0xEE03 caller is covered only in the direction legs 3 and 4
+#      take.
 #   2  DDT.Z8K with nothing resident: the control for leg 3, and the
 #      reason it is needed is that leg 3 asserts a MUTATION of DDT's
 #      output, so the unmutated form has to be on the record.
@@ -6454,7 +6469,7 @@ RSXNIN3	= $(OSSEL)RSXLDR UCASEH.RSX\rDDT MHELLO.Z8K\r
 RSXNIN4	= $(OSSEL)PUT FILE DOUT.TXT\rDUMP NMARKER.TXT\rSIZEZ8K MHELLO.Z8K\rPUT CONSOLE\rTYPE DOUT.TXT\r$(ENDIN)
 
 .PHONY: verify-rsxn
-verify-rsxn: all apps $(CPMAGP)
+verify-rsxn: all $(CPMAGP)
 	$(MKDISK) $(RSXNIMG) $(CPMSYS) $(CPMAGP)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
 		--input="$(RSXNIN1)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
@@ -6473,13 +6488,13 @@ verify-rsxn: all apps $(CPMAGP)
 		--input="$(RSXNIN4)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(RSXNLOG))-4.log
 	@$(EMUOK)
-#	--- 1: functions 1 and 10 served from a file to a stock 0xEE03 binary
+#	--- 1: function 10 served from a file to SDB
 	@grep -q 'Getting console input from file: NCMDS.TXT' $(RSXNLOG)-1.log \
 		|| { echo "verify-rsxn: FAIL -- GET did not take the file"; exit 1; }
 	@grep -q 'SDB - version' $(RSXNLOG)-1.log \
 		|| { echo "verify-rsxn: FAIL -- SDB.Z8K did not run: the command line was not read out of the file"; exit 1; }
 	@grep -q 'SDB> zzbogus' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- a line of the file did not reach SDB's own prompt: the gate is still declining a non-segmented caller"; exit 1; }
+		|| { echo "verify-rsxn: FAIL -- a line of the file did not reach SDB's own prompt"; exit 1; }
 	@grep -q 'syntax error' $(RSXNLOG)-1.log \
 		|| { echo "verify-rsxn: FAIL -- SDB did not ACT on the line it was given"; exit 1; }
 	@grep -q 'GET-DROVE-A-STOCK-BINARY' $(RSXNLOG)-1.log \
@@ -6498,9 +6513,9 @@ verify-rsxn: all apps $(CPMAGP)
 		|| { echo "verify-rsxn: FAIL -- DUMP.Z8K's output was not captured into the file and read back"; exit 1; }
 	@test "`grep -c 'Segmented Program' $(RSXNLOG)-4.log`" = 1 \
 		|| { echo "verify-rsxn: FAIL -- SIZEZ8K.Z8K is split I/D and its output must NOT reach the chain; DEVIATIONS.md #7 says so and this counted it twice"; exit 1; }
-	@echo "verify-rsxn: PASS -- a stock 0xEE03 binary fed from a file through"
-	@echo "             functions 1 and 10, another one's output mutated by a"
-	@echo "             module, DDT.Z8K's banner among it, and a split-I/D"
+	@echo "verify-rsxn: PASS -- SDB fed from a file through function 10, a"
+	@echo "             stock 0xEE03 binary's output mutated by a module,"
+	@echo "             DDT.Z8K's banner among it, and a split-I/D"
 	@echo "             caller still going straight to the BDOS"
 
 # ---- verify-ddtseg: no program may write over a supervisor stack ----

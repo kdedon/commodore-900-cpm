@@ -20,6 +20,13 @@
 
 	.globl	start
 	.globl	_cstart_
+
+/ SS is the stack segment NUMBER, as COHERENT's crts0.s defines it: the
+/ toolchain's assembly library routines address their arguments as
+/ SS|n(r15).  The stack is in the TPA segment, 0x32 (UBASE, UVAR).
+	.globl	SS
+SS = 0x32
+
 	.shri
 
 start:

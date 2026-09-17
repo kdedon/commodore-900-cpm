@@ -53,6 +53,85 @@ $(UOBJDIR)/stat.lout: $(UOBJDIR)/stat.o $(UOBJDIR)/crt0.o $(ULIB) $(PIPLIB) \
 $(UOBJDIR)/STAT.Z8K: $(UOBJDIR)/stat.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# ---- the src/app programs ----
+# Written for DRI's CP/M C library, they link the toolchain's COHERENT
+# stdio, string and malloc sources, compiled here like qsort.c above, over
+# src/cmd/cpmsys.c, which puts open/read/write/lseek/sbrk/_exit on the
+# BDOS and is also their startup (so no cstart.o).  Each program links
+# only the library members it needs.
+TCSRC	= $(C900_TOOLCHAIN)/src
+TCINC	= $(firstword $(wildcard $(TCSRC)/include $(C900_TOOLCHAIN)/usr/include))
+APPOBJ	= $(UOBJDIR)/app
+APPINC	= -I$(APPOBJ) -I$(TCINC) -I$(TCINC)/sys
+
+# stdio core: what printf and fopen reach through finit and exit.
+LIBCIO	= _fp finit exit fclose fflush _fgetb _fgetc _fputb _fputc _fputt \
+	  _fpseek fputs printf _stropen _fgeteof _fopen toupper sdtoa perror \
+	  sys_err strlen ctype malloc
+# scanf: its %f conversion brings atof and the double arithmetic.
+LIBCSCAN = scanf ungetc index atof dadd ddiv dmul dtof itod
+# dtoi is ifix, which the compiler calls from SRT.C.
+LIBC_SDB    = $(LIBCIO) $(LIBCSCAN) fopen fgets fseek calloc strcpy strcat \
+	       strncpy strcmp strncmp tolower dtoi
+LIBC_SORTFL  = $(LIBCIO) calloc strcpy strcmp qsort
+LIBC_KILLDU  = $(LIBCIO) strcmp
+LIBC_TOHEX   = $(LIBCIO) fread
+LIBC_FROMHEX = $(LIBCIO) $(LIBCSCAN) fopen fwrite
+
+APPSDB	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
+
+# SDB's sources include "sdbio.h"; the file is SDBIO.H.
+$(APPOBJ)/sdbio.h: src/app/SDBIO.H | $(APPOBJ)
+	cp $< $@
+
+$(APPOBJ)/%.o: src/app/%.C $(APPOBJ)/sdbio.h $(TCSTAMP) | $(APPOBJ)
+	$(CC0) $(VAR) $< $(APPOBJ)/$*.z0 $(APPINC) >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(APPOBJ)/$*.z0 $(APPOBJ)/$*.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(APPOBJ)/$*.z1 $@ $(APPOBJ)/$*.scr 0 >> $(LOG) 2>&1
+
+$(APPOBJ)/cpmsys.o: src/cmd/cpmsys.c src/cmd/cpm.h $(TCSTAMP) | $(APPOBJ)
+	$(CC0) $(VAR) $< $(APPOBJ)/cpmsys.z0 -Isrc/cmd -I$(TCINC) -I$(TCINC)/sys >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(APPOBJ)/cpmsys.z0 $(APPOBJ)/cpmsys.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(APPOBJ)/cpmsys.z1 $@ $(APPOBJ)/cpmsys.scr 0 >> $(LOG) 2>&1
+
+# Library members, from wherever the toolchain keeps them.  malloc comes
+# from malloc/, as in the toolchain's own libc build: gen/malloc.c is the
+# older allocator that no longer matches <sys/malloc.h>.
+define LIBCC
+$(2) $(APPOBJ)/lc_%.o: $(1)/%.c $(TCSTAMP) | $(APPOBJ)
+	$$(CC0) $$(VAR) $$< $(APPOBJ)/lc_$$*.z0 -I$(TCINC) -I$(TCINC)/sys >> $$(LOG) 2>&1
+	$$(CC1) $$(VAR) $(APPOBJ)/lc_$$*.z0 $(APPOBJ)/lc_$$*.z1 >> $$(LOG) 2>&1
+	$$(CC2) $$(UVAR) $(APPOBJ)/lc_$$*.z1 $$@ $(APPOBJ)/lc_$$*.scr 0 >> $$(LOG) 2>&1
+endef
+$(eval $(call LIBCC,$(TCSRC)/malloc,$(APPOBJ)/lc_malloc.o:))
+$(eval $(call LIBCC,$(TCSRC)/libc/stdio))
+$(eval $(call LIBCC,$(TCSRC)/libc/gen))
+$(eval $(call LIBCC,$(TCSRC)/libc/crt))
+
+# The assembly members address their arguments as SS|n(r15); crt0.s
+# supplies SS.
+$(APPOBJ)/lc_%.o: $(TCSRC)/libc/gen/%.s $(TCSTAMP) | $(APPOBJ)
+	$(AS) -o $@ $< >> $(LOG) 2>&1
+$(APPOBJ)/lc_%.o: $(TCSRC)/libc/crt/%.s $(TCSTAMP) | $(APPOBJ)
+	$(AS) -o $@ $< >> $(LOG) 2>&1
+.PRECIOUS: $(APPOBJ)/lc_%.o
+
+# $(call APPLINK,PROG,OBJECTS)
+define APPLINK
+$(APPOBJ)/$(1).lout: $(2) $(LIBC_$(1):%=$(APPOBJ)/lc_%.o) $(APPOBJ)/cpmsys.o \
+		$(UOBJDIR)/crt0.o $(UOBJDIR)/bdossc.o $(UOBJDIR)/libcpm.o
+	$$(LD) -e start -R $$(UBASE) -o $$@ $(UOBJDIR)/crt0.o \
+		$$(filter-out %/crt0.o,$$^)
+
+$(UOBJDIR)/$(1).Z8K: $(APPOBJ)/$(1).lout $$(LOUT2CPM)
+	$$(LOUT2CPM) $$< $$@
+endef
+$(eval $(call APPLINK,SDB,$(APPSDB:%=$(APPOBJ)/%.o)))
+$(foreach p,SORTFL KILLDU TOHEX FROMHEX,$(eval $(call APPLINK,$(p),$(APPOBJ)/$(p).o)))
+
+$(APPOBJ):
+	mkdir -p $(APPOBJ)
+
 $(UOBJDIR)/%.o: src/cmd/%.s $(TCSTAMP) | $(UOBJDIR)
 	cpp -traditional-cpp -P $< > $(UOBJDIR)/$*.i 2>> $(LOG)
 	$(AS) -g -o $@ $(UOBJDIR)/$*.i >> $(LOG) 2>&1

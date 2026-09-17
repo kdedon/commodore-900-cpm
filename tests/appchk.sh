@@ -3,31 +3,22 @@
 # SPDX-License-Identifier: MIT
 
 #
-# appchk.sh -- the src/app binary on the disk was built, and built the
-# same as the reference copy.
+# appchk.sh -- the src/app binary on the disk was built there, from the
+# source on the disk.
 #
-#	sh tests/appchk.sh BUILDLOG ARTDIR REFDIR NAME.Z8K...
+#	sh tests/appchk.sh BUILDLOG ARTDIR NAME.Z8K...
 #
 # Run from the repository root.  BUILDLOG is the transcript of a session
 # that erased each NAME.Z8K on drive A: and then rebuilt it there with
 # ZCC and LD8K; ARTDIR is the directory that session's cpma partition was
-# extracted into afterwards.  REFDIR holds the copies to cmp against --
-# build/app, what `make apps' built -- or is `-' for no cmp, which is how
-# `make apps' itself checks the build it has just made.
+# extracted into afterwards.
 #
-# The cmp is a reproducibility check, and the erase is what gives it its
-# teeth: a compile that fails still leaves whatever .Z8K was there before,
-# so without the erase this could compare a staged copy with itself.
-# Erased first, a failed build leaves NO file and the cmp cannot be fooled
-# -- which is why "missing" is reported here as a build failure rather
-# than as a missing artifact.
-#
-# It is an assertion rather than a hope only because ZCC and LD8K are
-# byte-reproducible.  They are, and it is worth saying how that was
-# established rather than assumed: the fourteen SDB objects `verify-sdb'
-# builds are byte-identical to the ones an earlier, entirely separate
-# session produced from the same source.  Reproducibility is a property
-# of these two 1984 programs, not something this repository arranges.
+# The erase is what gives this its teeth: a compile that fails still
+# leaves whatever .Z8K was there before -- the host-built copy `all'
+# staged -- and the caller would go on to run that.  Erased first, a
+# failed build leaves NO file, which is why "missing" is reported here as
+# a build failure rather than as a missing artifact.  Whether what was
+# built works is the caller's check.
 #
 # The transcript is also scanned for the DRI tools' own diagnostics --
 # the same patterns tests/selfhostchk.sh uses, and for the same reason.
@@ -37,9 +28,8 @@
 
 log=$1; shift
 art=$1; shift
-ref=$1; shift
-if [ -z "$log" ] || [ -z "$art" ] || [ -z "$ref" ] || [ $# -eq 0 ]; then
-	echo "usage: $0 BUILDLOG ARTDIR REFDIR NAME.Z8K..." >&2
+if [ -z "$log" ] || [ -z "$art" ] || [ $# -eq 0 ]; then
+	echo "usage: $0 BUILDLOG ARTDIR NAME.Z8K..." >&2
 	exit 2
 fi
 
@@ -72,11 +62,6 @@ else
 fi
 
 for n in "$@"; do
-	src=$ref/$n
-	if [ "$ref" != - ] && [ ! -f "$src" ]; then
-		bad source "$src is missing: nothing to compare against"
-		continue
-	fi
 	if [ ! -s "$art/$n" ]; then
 		bad build "$art/$n is missing or empty: the session erased it"
 		echo "     and did not rebuild it, so the compile or the link failed."
@@ -90,16 +75,7 @@ for n in "$@"; do
 		bad kind "$art/$n starts $m, not ee03"
 		continue
 	fi
-	if [ "$ref" = - ]; then
-		echo "  ok  $n -- built on the machine"
-	elif cmp -s "$art/$n" "$src"; then
-		echo "  ok  $n -- rebuilt on the machine, byte-identical to $src"
-	else
-		bad cmp "$n rebuilt on the machine differs from $src"
-		cmp "$art/$n" "$src" 2>&1 | sed 's/^/       /'
-		echo "       The same source built twice came out different: ZCC"
-		echo "       and LD8K are not reproducible on this build."
-	fi
+	echo "  ok  $n -- built on the machine"
 done
 
 if [ $fail -ne 0 ]; then

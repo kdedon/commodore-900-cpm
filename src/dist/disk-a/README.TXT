@@ -19,16 +19,12 @@ page mode on and off.  GET takes console input for a program from a
 file, and PUT captures console output to one; each attaches a resident
 module, GET.RSX or PUT.RSX, which must be on the disk beside it.
 
-Application software, compiled on this machine from C in the CP/M-68K
-users' group collection: SDB, David Betz's relational database (type
-`help' at its SDB> prompt; it reads SDB.HLP), and Robert Heller's SORTFL,
-KILLDU, TOHEX and FROMHEX.  Their source is on the development disk.
-
-Those five were linked on this machine against the C compiler's own
-runtime, which sets no program return code, so a SUBMIT file's IF ERROR
-reads success after them whatever they did -- even when they refuse bad
-input.  Branch on their output instead.  Every other command here does
-set a return code; see the SUBMIT topic in HELP for IF ERROR.
+Application software, from C in the CP/M-68K users' group collection:
+SDB, David Betz's relational database (type `help' at its SDB> prompt;
+it reads SDB.HLP), and Robert Heller's SORTFL, KILLDU, TOHEX and FROMHEX.
+Their source is on the development disk, and ZCC builds it here.  Like
+every command here they set a return code; see the SUBMIT topic in HELP
+for IF ERROR.
 
 SET supports file passwords and READ, WRITE or DELETE protection through
 XFCBs. Enable enforcement with SET [PROTECT=ON] on the drive, and supply

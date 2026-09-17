@@ -117,6 +117,9 @@ LOUT2CPM = build/lout2cpm
 
 ULIB	= $(UOBJDIR)/bdossc.o $(UOBJDIR)/biossc.o $(UOBJDIR)/cstart.o \
 	  $(UOBJDIR)/libcpm.o
+# The src/app programs, staged onto drive A beside their source.
+UAPP	= $(UOBJDIR)/SDB.Z8K $(UOBJDIR)/SORTFL.Z8K $(UOBJDIR)/KILLDU.Z8K \
+	  $(UOBJDIR)/TOHEX.Z8K $(UOBJDIR)/FROMHEX.Z8K
 UPROGS	= $(UOBJDIR)/MHELLO.Z8K $(UOBJDIR)/FCOPY.Z8K $(UOBJDIR)/BEEP.Z8K \
 	  $(UOBJDIR)/CRSRDEMO.Z8K $(UOBJDIR)/CONCOST.Z8K $(UOBJDIR)/BIOCOST.Z8K \
 	  $(UOBJDIR)/CPUTCOST.Z8K $(UCONC) \

@@ -89,9 +89,7 @@ $(CPMAGP): $(CPMAIMG) $(UGP) $(wildcard src/dist/disk-a-gp/*) \
 		tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
 	@rm -rf $(DISKAG)
 	@mkdir -p $(DISKAG)
-	@# $(APPBIN) too: verify-rsxn builds apps after `all' packed drive A.
-	@for f in $(DISKA)/* $(APPBIN); do b=`basename $$f`; \
-		[ -f $$f ] || continue; \
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
 		cmp -s $$f $(DISKAG)/$$b || cp $$f $(DISKAG)/$$b; done
 	@for f in $(UGP) src/dist/disk-a-gp/*; do b=`basename $$f`; \
 		cmp -s $$f $(DISKAG)/$$b || cp $$f $(DISKAG)/$$b; done

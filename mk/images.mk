@@ -5,16 +5,14 @@
 # Zero initial stamps are filled by the target clock.
 LABEL	= C900A
 LABELMODE = create,update
-# Stage src/app source beside the fixtures, and the programs `make apps'
-# built on the machine from it when they exist (mk/apps.mk).
+# Stage the src/app programs beside their source and the fixtures.
 DISKA = build/diska
 $(CPMAIMG): mk/config.mk mk/images.mk src/dist/disk-a src/app $(ZBASE) tools/mkcpmfs.py tools/sparse.py tools/stage-devpack.sh $(wildcard $(ZBASE)/*) \
 		$(wildcard src/dist/disk-a/*) $(wildcard src/app/*) \
-		$(UPROGS) $(URSX) $(UCCP) | $(OBJDIR)
+		$(UAPP) $(UPROGS) $(URSX) $(UCCP) | $(OBJDIR)
 	@rm -rf $(DISKA)
 	@mkdir -p $(DISKA)
-	@for f in src/dist/disk-a/* src/app/* $(APPBIN); do b=`basename $$f`; \
-		[ -f $$f ] || continue; \
+	@for f in src/dist/disk-a/* src/app/* $(UAPP); do b=`basename $$f`; \
 		cmp -s $$f $(DISKA)/$$b || cp $$f $(DISKA)/$$b; done
 	sh tools/stage-devpack.sh $(ZBASE) $(DISKA)
 	@for f in $(UPROGS) $(URSX) $(UCCP); do b=`basename $$f`; \

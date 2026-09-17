@@ -10,16 +10,15 @@ passwords. The CCP loads from `A:CCP.Z8K` on cold and warm boots.
 Every command built from `src/cmd` publishes `main`'s status as the
 function 108 program return code, so the CCP's `IF ERROR` can branch on it
 in a SUBMIT file. The five `src/app` applications -- `SDB`, `SORTFL`,
-`KILLDU`, `TOHEX`, `FROMHEX` -- are the exception: they are compiled and
-linked on the target against DRI's `STARTUP.O` and `LIBCPM.A` from
-`vendor/`, not against `src/cmd/crt0.s`, so they set no return code and
-`IF ERROR` reads success after them however they ended. See
-`DEVIATIONS.md` §10 in the design notes. No binaries for them are
-checked in: `make apps` compiles them under the emulator with DRI's
-`ZCC.Z8K` and `LD8K.Z8K` into `build/app`, rebuilding a program only when
-its source changes, and the next `make all` puts them on drive A:. Without
-them `make all` still builds every image, drive A: carrying their source,
-and says so. The system does not use GENCPM. The system banner identifies it as version 3.1.
+`KILLDU`, `TOHEX`, `FROMHEX` -- were written for DRI's CP/M C library;
+`make all` builds them on the host against the toolchain's COHERENT
+stdio and malloc over `src/cmd/cpmsys.c`, which puts the file layer on
+the BDOS, and stages them on drive A: beside their source. Their status
+reaches function 108 through `exit` (falling off `main` is 0). The source
+still builds on the target with DRI's `ZCC.Z8K` and `LD8K.Z8K`, which
+`make verify-a3` and `make verify-sdb` check; a program built that way
+links DRI's `STARTUP.O` and `LIBCPM.A` and sets no return code (see
+`DEVIATIONS.md` §10 in the design notes). The system does not use GENCPM. The system banner identifies it as version 3.1.
 
 Passwords are enforced on a drive whose directory label has the
 password-enable bit set, and only there: a medium without that bit behaves

@@ -12,6 +12,7 @@ FILE *fopen(), *fopenb();
 char *malloc(), *calloc(), *alloc();
 char *fgets(),*gets();
 char *strchr(), *strrchr();
+#undef NULL
 #define NULL 0L
 #endif
 

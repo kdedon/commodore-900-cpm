@@ -101,16 +101,14 @@
 
   The CCP clears the code before every command it runs, so a program
   that sets none is read as having SUCCEEDED.  Each command this port
-  builds sets it -- its C runtime publishes whatever main returned --
-  and so do the CCP's own failures, an unresolvable command name or a
-  missing .SUB among them.
+  builds sets it -- its C runtime publishes whatever main returned, or
+  the status given to exit -- and so do the CCP's own failures, an
+  unresolvable command name or a missing .SUB among them.
 
-  FIVE PROGRAMS DO NOT SET IT.  SDB, SORTFL, KILLDU, TOHEX and FROMHEX
-  were compiled and linked on this machine against the runtime that came
-  with the C compiler, which carries no return code, so IF ERROR reads
-  success after them however they ended -- including when they refuse
-  malformed input.  Do not branch on those five; test their work
-  instead, with IF EXIST on an output file, or by reading it.
+  A program you compile here with ZCC and link against the runtime that
+  came with the compiler sets none, so IF ERROR reads success after it
+  however it ended.  Test its work instead, with IF EXIST on an output
+  file, or by reading it.
 
   ///1PAGING
 
