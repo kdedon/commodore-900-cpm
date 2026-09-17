@@ -10,8 +10,8 @@
  * sbrk and _exit; the programs also call DRI's binary variants openb,
  * creatb and fopenb, and abort(code).  This file supplies all of them on
  * the BDOS, and the startup (_cstart, entered from crt0.s) that builds
- * argc/argv from the command tail with DRI's `<file' and `>file'
- * redirection and runs main.
+ * argc/argv from the command tail with DRI's `<file', `>file' and
+ * `>>file' redirection and runs main.
  *
  * Files are byte streams over 128-byte records, read and written through
  * one record buffer per descriptor with random-record BDOS calls (33, 34),
@@ -574,14 +574,38 @@ int code;
 static char	tail[SECLEN + 1];
 static char	*argv[NARGV + 1];
 
-/* Split the command tail into argv, taking `<file' and `>file' as
-   redirection of descriptors 0 and 1.  main falling off its end (as
+/* `>>file': NAME as a text file on descriptor fd, made if it is not
+   there, positioned at its end -- on the ^Z ending the text if its last
+   record holds one, so what is written goes on from the text. */
+static int append(fd, name)
+int fd;
+char *name;
+{
+	register struct fd *f;
+	register int	i;
+
+	if (fdopen1(fd, name, 1, 0) < 0)
+		return (fdopen1(fd, name, 1, 1));
+	f = &fds[fd];
+	f->pos = f->nrec << 7;
+	if (f->nrec > 0 && load(f, f->nrec - 1) > 0)
+		for (i = 0; i < SECLEN; i++)
+			if (f->rec[i] == CTLZ) {
+				f->pos -= SECLEN - i;
+				break;
+			}
+	return (fd);
+}
+
+/* Split the command tail into argv, taking `<file', `>file' and `>>file'
+   as redirection of descriptors 0 and 1.  main falling off its end (as
    these programs do) exits 0; exit() gives any other status. */
 int _cstart(bp)
 struct bpage *bp;
 {
 	register char	*p, *w;
 	register int	argc, n, i;
+	int		r;
 
 	_base = bp;
 	for (i = 0; i < 3; i++)
@@ -605,11 +629,15 @@ struct bpage *bp;
 		if (*p != 0)
 			*p++ = 0;
 		if (*w == '<' || *w == '>') {
-			i = *w == '<' ? 0 : 1;
+			i = *w++ == '<' ? 0 : 1;
 			fds[i].kind = 0;
-			if (fdopen1(i, w + 1, 1, i) < 0) {
+			if (i == 1 && *w == '>')
+				r = append(i, ++w);
+			else
+				r = fdopen1(i, w, 1, i);
+			if (r < 0) {
 				fds[i].kind = F_CON;
-				perror(w + 1);
+				perror(w);
 				_exit(1);
 			}
 		} else if (argc < NARGV)
