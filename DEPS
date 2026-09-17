@@ -6,14 +6,14 @@
 # through tools/deps.sh; a named variable wins over anything here.
 #
 # kind git      cloned beside this repository, floating on <ref>
-# kind release  published assets, pinned to <ref>; several are comma-separated
+# kind release  published assets at tag <ref>, or `latest'; several are comma-separated
 #
 #   toolchain  compiler + assembler + linker for the Z8001 -- the one
 #              input `make all' needs.  A RELEASE, not a checkout: `make
-#              all' produces the bytes that ship, so what compiles them has
-#              to be a PIN, not whatever `main' happens to be the day the
-#              build runs.  Bumped by hand, same as kernel3's own edge onto
-#              this same repository.
+#              all' produces the bytes that ship, so a published compiler
+#              makes them, not whatever `main' happens to be the day the
+#              build runs.  `latest' takes the newest release; the build's
+#              toolchain stamp and the release notes record which one.
 #
 #   kboot      the loader, and its include/bootinfo.h.  The BIOS COMPILES that
 #              header -- it is the layout of the block the loader writes, and a
@@ -28,7 +28,7 @@
 #   userland   cmd/cpm.c -- COHERENT's own reader of the CP/M directory
 #              format, built on the host as an independent oracle
 
-toolchain  release  https://github.com/kdedon/commodore-900-toolchain  v0.1.7  c900-toolchain-@REF@-@HOST@
+toolchain  release  https://github.com/kdedon/commodore-900-toolchain  latest  c900-toolchain-@REF@-@HOST@
 kboot      release  https://github.com/kdedon/commodore-900-kboot      v0.2.0  kboot,c900-kboot-headers-@REF@.tar.gz
 userland   git      https://github.com/kdedon/commodore-900-coh-userland  main
 emu        release  https://github.com/kdedon/commodore-900-emulator   v0.2  c900-@REF@-@HOST@

@@ -39,6 +39,8 @@ is_pin() {
 }
 if [ -z "$REF" ]; then
 	PIN=
+elif [ "$REF" = latest ]; then
+	PIN="  [DEPS takes the latest release]"
 elif is_pin; then
 	PIN="  [the release DEPS pins]"
 else

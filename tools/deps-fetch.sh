@@ -17,7 +17,8 @@
 #                 lockfile.  Four repositories are edited in the same
 #                 afternoon; a pin would record what a build should have used,
 #                 and the release stamp already records what it did.
-#   kind release  a third-party BINARY.  <ref> is a TAG, unpacked into
+#   kind release  a third-party BINARY.  <ref> is a TAG, or `latest' for the
+#                 newest published one, unpacked into
 #                 deps/<basename of url>-<ref>/, with deps/<basename of url>
 #                 left pointing at it; both are gitignored.  The unpack is
 #                 named by the tag so that the pin has a path of its own,
@@ -92,6 +93,12 @@ fetch_git() {
 	fi
 	echo "$1: cloning $2 ($3) -> $4"
 	git clone --branch "$3" "$2" "$4" || return 1
+}
+
+# The newest published release's tag, from the repository's release list.
+latest_tag() {
+	curl -fsL "https://api.github.com/repos/${1#https://github.com/}/releases/latest" |
+	sed -n 's/^[ \t]*"tag_name"[ \t]*:[ \t]*"\([^"]*\)".*/\1/p' | sed 1q
 }
 
 fetch_release() {
@@ -170,6 +177,14 @@ while read -r name kind url ref asset <&3; do
 			echo "$name: already resolves to $got"
 			continue
 		fi
+	fi
+	# `latest' names no tag, so the newest published one is asked for first:
+	# the unpack is then named by that tag like any pin, and a newer release
+	# lands beside the old one with deps/<dir> moved onto it.
+	if [ "$kind" = release ] && [ "$ref" = latest ]; then
+		ref=$(latest_tag "$url") || ref=
+		[ -n "$ref" ] || { echo "$name: no published release at $url" >&2; rc=1; continue; }
+		echo "$name: latest release is $ref"
 	fi
 	case "$kind" in
 	git)     fetch_git "$name" "$url" "$ref" "$(cd "$root/.." && pwd)/$dir" || rc=1 ;;

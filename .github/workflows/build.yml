@@ -43,10 +43,9 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: cpm }
 
-      # A RELEASE of the toolchain, not a checkout: DEPS pins the tag, and
-      # `make deps' is the one path that resolves it, the same as a developer
-      # building this tree gets.  A hardcoded checkout of `main' would link
-      # against a compiler this repository never pinned.
+      # A RELEASE of the toolchain, not a checkout: DEPS names the release,
+      # and `make deps' is the one path that resolves it, the same as a
+      # developer building this tree gets.
       - name: The toolchain this system is built with
         working-directory: cpm
         run: make deps DEP=toolchain
