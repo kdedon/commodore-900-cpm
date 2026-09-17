@@ -910,23 +910,17 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@echo "            group its G-Max -- and the .CMD it wrote is"
 	@echo "            byte-identical to the host run's, which loads and runs"
 
-# CP/M 3 directory format (BDOS, mkcpmfs.py, cpm(1)) must stay byte-compatible.
-# cpm(1) stays a Coherent source, not vendored: drifting oracle becomes useless.
-COHERENT_OS := $(if $(COHERENT_OS),$(COHERENT_OS),$(shell sh tools/deps.sh userland))
-# Not $(COHERENT_OS)/<fixed path>: the userland has filed cpm.c under os/cmd/,
-# extended/cmd/ and now base/cmd/, and a checkout of any of those ages is a
-# perfectly good oracle.  deps.sh knows the spellings, so it does the joining;
-# empty here (no checkout found) leaves the recipe below to refuse by name.
-CPMCMD := $(shell sh tools/deps.sh userland-cpm)
+# CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
+# cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.
+# Empty (not on $PATH) leaves each recipe to refuse by name.
+CPMTOOLS := $(if $(CPMTOOLS),$(CPMTOOLS),$(shell sh tools/deps.sh cpmtools))
+CPMTOOLSCHK = sh tools/deps.sh -n cpmtools '$(CPMTOOLS)' || exit 1
+# cpmtools reads ./diskdefs, so it runs from the directory holding ours.
+CPMT = cd tests/cpmtools && $(abspath $(CPMTOOLS))
 .PHONY: dirfmt-check
-# $(wildcard $(CPMCMD)), not $(CPMCMD): an absent source must be reported by
-# the recipe below, which says what it is for, rather than by make as a
-# missing prerequisite with no rule to make it.
-build/cpmhost: $(wildcard $(CPMCMD)) | $(OBJDIR)
-	@sh tools/deps.sh -n userland '$(COHERENT_OS)' || exit 1
-	$(HOSTCC) -std=gnu89 -w -o $@ $(CPMCMD)
-dirfmt-check: build/cpmhost
-	python3 tests/dirfmt-test.py build/dirfmt build/cpmhost
+dirfmt-check:
+	@$(CPMTOOLSCHK)
+	python3 tests/dirfmt-test.py build/dirfmt $(CPMTOOLS)
 
 # --extract against a directory that lies.  The eleven name bytes of a CP/M
 # directory entry are untrusted input and --extract turns them into a host
@@ -949,7 +943,8 @@ STAMPIMG = build/stamptest.bin
 STAMPCPMA = build/cpma-stamped.img
 STAMPVERIFYIN = $(OSSEL)DIR\rSTAT\rSTAT *.*\rTYPE HELLO.C\rPIP STAMP1.TXT=HELLO.C\rTYPE STAMP1.TXT\rDIR *.TXT\rSTAT\r$(ENDIN)
 .PHONY: verify-stamped
-verify-stamped: all build/cpmhost
+verify-stamped: all
+	@$(CPMTOOLSCHK)
 	cp $(CPMAIMG) $(STAMPCPMA)
 	python3 tools/mkcpmfs.py --initdir --label C900A \
 		--label-mode create,update --stamp-date 2026-07-30T12:00 $(STAMPCPMA)
@@ -968,9 +963,14 @@ verify-stamped: all build/cpmhost
 		|| { echo "verify-stamped: FAIL -- directory label damaged"; exit 1; }
 	@grep -q 'STAMP1.TXT' build/stamp-after.txt \
 		|| { echo "verify-stamped: FAIL -- PIP did not create its file"; exit 1; }
-	@build/cpmhost -f build/stamp-cpma.img ls > build/stamp-after-cpm.txt
-	@grep -q '128 SFCB entries' build/stamp-after-cpm.txt \
-		|| { echo "verify-stamped: FAIL -- cpm(1) disagrees on the SFCBs"; exit 1; }
+	@$(CPMT)/fsck.cpm -n -f c900a $(abspath build/stamp-cpma.img) \
+		> $(abspath build/stamp-after-cpm.txt) \
+		|| { cat $(abspath build/stamp-after-cpm.txt); \
+		     echo "verify-stamped: FAIL -- fsck.cpm finds the stamped directory damaged"; exit 1; }
+	@$(CPMT)/cpmls -f c900a $(abspath build/stamp-cpma.img) \
+		> $(abspath build/stamp-after-cpm.txt)
+	@grep -qx 'stamp1.txt' build/stamp-after-cpm.txt \
+		|| { echo "verify-stamped: FAIL -- cpmtools does not see PIP's file"; exit 1; }
 	@echo "verify-stamped: PASS -- stock BDOS ran on a stamped drive, extensions intact"
 
 # ---- drive B: (a second drive letter) ----

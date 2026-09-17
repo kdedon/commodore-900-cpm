@@ -106,7 +106,10 @@ Runtime checks are individual `verify-*` targets:
 
 These checks require the Commodore 900 emulator and a built kboot binary. Set
 `EMU` and `KBOOT`, or place sibling checkouts where `tools/deps.sh` can find
-them. Directory-format checks also use `COHERENT_OS` as an independent reader.
+them. The directory-format checks (`dirfmt-check`, `verify-stamped`) also use
+[cpmtools](http://www.moria.de/~michael/cpmtools/) as an independent reader
+and writer: install it (`apt install cpmtools`) or set `CPMTOOLS` to the
+directory holding `cpmls`.
 
 ## License
 

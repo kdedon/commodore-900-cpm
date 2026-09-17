@@ -1,0 +1,35 @@
+# cpmtools diskdefs for the C900 CP/M-8000 drives, as partition images
+# carved out of the disk (tools/mkcpmfs.py's input), so no boot tracks.
+#
+# The BIOS DPB (src/bios/bios900.c, tools/mkcpmfs.py): 128-byte records,
+# 4 to a 512-byte sector, BLS=4096 (BSH=5 BLM=31 EXM=1), DRM=511 (4
+# directory blocks), skew 0, OFF 0 within the image.  A "track" here is
+# just 8 sectors, one allocation block; only the product matters.
+#   A: CPMA_BLOCKS=20480 512-byte blocks -> 2560 tracks -> DSM 2559
+#   B: CPMB_BLOCKS=16384 512-byte blocks -> 2048 tracks -> DSM 2047
+# os 3: CP/M 3 directory label, XFCBs and SFCB date stamps.
+#
+# cpmtools reads a file literally named `diskdefs' from its working
+# directory, so run it from this directory with -f c900a / -f c900b.
+
+diskdef c900a
+  seclen 512
+  tracks 2560
+  sectrk 8
+  blocksize 4096
+  maxdir 512
+  skew 0
+  boottrk 0
+  os 3
+end
+
+diskdef c900b
+  seclen 512
+  tracks 2048
+  sectrk 8
+  blocksize 4096
+  maxdir 512
+  skew 0
+  boottrk 0
+  os 3
+end

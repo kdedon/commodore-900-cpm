@@ -1,20 +1,44 @@
 #!/usr/bin/env python3
-"""dirfmt-test.py - agreement + backward-compatibility tests for the CP/M
+"""dirfmt-test.py - agreement + backward-compatibility tests for the CP/M 3
 directory format contract shared by this project's directory packer and
-COHERENT's `cpm(1)` reader.
+cpmtools, a third-party reader/writer of the same format.
 
 Two implementations are exercised against the same images:
   mkcpmfs.py            the host packer/reader/initialiser
-  cpm(1)                coherent/os/cmd/cpm.c, built here with the host cc
-                        purely to test its logic (the shipping binary is the
-                        MWC Z8001 build)
+  cpmtools              cpmls, cpmcp, cpmrm and fsck.cpm (Michael Haardt's
+                        suite, Debian package `cpmtools'), driven through the
+                        c900a entry of tests/cpmtools/diskdefs
 
-Run via `make dirfmt-check` from the repository root.  Every image is created fresh in
-the work directory; nothing outside it is touched.
+cpmtools runs with TZ=UTC: it converts CP/M's local-time stamps through the
+host's current UTC offset, and UTC makes that the identity.
 
-Usage: dirfmt-test.py <workdir> <cpm-binary>
+What cpmtools cannot express, and so is not checked against it:
+  - per-file allocated blocks: cpmls reports sizes, not block counts.  The
+    listings are compared on user, name and size, and the TOTAL allocation
+    cpmls -D reports is compared with the sum of mkcpmfs's per-file blocks.
+  - a byte count: cpmtools honours the CP/M 3 last-record byte count, mkcpmfs
+    reports whole records, so sizes are compared rounded up to 128.
+  - "rm clears the SFCB sub-record": cpmrm only marks the FCB 0xE5 and leaves
+    the stamps behind, so that is not a property of this writer.
+  - reporting an unknown entry type: cpmtools has no view of one; that such
+    an entry survives cpmtools writes byte-identical is still checked.
+  - the label's name: cpmtools keeps it in a [label] pseudo-file that no
+    cpmls style prints and cpmcp's user-prefixed names cannot reach.
+    fsck.cpm does check the label entry itself (mode bits, BCD stamps).
+  - XFCBs as such: cpmtools 2.23 with `os 3' lists a type-1xh entry as a file
+    of user 16-31.  Those rows are kept out of the file comparison and are
+    what shows that cpmtools saw the XFCB.  fsck.cpm is not run on images
+    with the planted XFCB and unknown-type entry: it rejects both, by design
+    of those plants (non-printable password bytes, type 30h).
+
+Run via `make dirfmt-check` from the repository root.  Every image is created
+fresh in the work directory; nothing outside it is touched.
+
+Usage: dirfmt-test.py <workdir> <cpmtools-bindir>
 """
 
+import calendar
+import datetime
 import os
 import re
 import shutil
@@ -23,8 +47,11 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MKCPMFS = os.path.join(HERE, '..', 'tools', 'mkcpmfs.py')
+DISKDEFS_DIR = os.path.join(HERE, 'cpmtools')     # cpmtools reads ./diskdefs
+FORMAT = 'c900a'
 
 BLOCKS = 20480
+BLS = 4096
 ENTSIZE = 32
 NENT = 512
 DIRBYTES = NENT * ENTSIZE
@@ -34,7 +61,7 @@ T_SFCB = 0x21
 T_LABEL = 0x20
 
 WORK = None
-CPMBIN = None
+CPMTOOLS = None
 failures = []
 checks = 0
 
@@ -51,8 +78,9 @@ def check(cond, what):
         print("ok    %s" % what)
 
 
-def run(argv, expect_ok=True):
-    p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def run(argv, expect_ok=True, cwd=None, env=None):
+    p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       cwd=cwd, env=env)
     out = p.stdout.decode('utf-8', 'replace')
     if expect_ok and p.returncode != 0:
         failures.append("command failed: %s\n%s" % (' '.join(argv), out))
@@ -64,8 +92,21 @@ def mk(*args):
     return run([sys.executable, MKCPMFS] + list(args))
 
 
-def cpm(img, *args):
-    return run([CPMBIN, '-f', img] + list(args))
+def ct(tool, img, *args, expect_ok=True):
+    """Run a cpmtools program on an image, from the diskdefs directory.
+    Options must precede the image: cpmtools does not permute arguments."""
+    env = dict(os.environ, TZ='UTC')
+    opts = [a for a in args if a.startswith('-')]
+    rest = [a for a in args if not a.startswith('-')]
+    return run([os.path.join(CPMTOOLS, tool), '-f', FORMAT] + opts
+               + [path(img)] + rest,
+               expect_ok=expect_ok, cwd=DISKDEFS_DIR, env=env)
+
+
+def fsck(img):
+    env = dict(os.environ, TZ='UTC')
+    return run([os.path.join(CPMTOOLS, 'fsck.cpm'), '-n', '-f', FORMAT,
+                path(img)], expect_ok=False, cwd=DISKDEFS_DIR, env=env)
 
 
 def path(name):
@@ -91,6 +132,18 @@ def ext_image(d):
                 for i in range(NENT) if is_ext(d[i * ENTSIZE]))
 
 
+def fcb_index(d, name11):
+    return [i for i in range(NENT)
+            if d[i * ENTSIZE] < 0x10
+            and d[i * ENTSIZE + 1:i * ENTSIZE + 12] == name11][0]
+
+
+def sub_record(d, i):
+    """The 10-byte SFCB sub-record describing FCB i."""
+    base = (i | 3) * ENTSIZE + 1 + 10 * (i & 3)
+    return d[base:base + 10]
+
+
 def srcdir(name, files):
     p = path(name)
     shutil.rmtree(p, ignore_errors=True)
@@ -99,6 +152,103 @@ def srcdir(name, files):
         with open(os.path.join(p, fn), 'wb') as f:
             f.write(data)
     return p
+
+
+def hostfile(name, data, mtime=None):
+    with open(path(name), 'wb') as f:
+        f.write(data)
+    if mtime is not None:
+        os.utime(path(name), (mtime, mtime))
+    return path(name)
+
+
+# ---- listings ----------------------------------------------------------------
+#
+# Both sides are reduced to the same three things: file rows (user, NAME,
+# bytes rounded up to a record), stamps {NAME: (create, update)} for files
+# that carry any, and the number of allocation blocks the files occupy.
+
+MKROW = re.compile(r'^\s*(\d+) (\S+)\s+(\d+) bytes\s+(\d+) blocks\s+'
+                   r'\d+ entr\w+\s*(.*)$')
+MKSTAMP = re.compile(r'\d{4}-\d\d-\d\d \d\d:\d\d|-')
+
+
+def mklisting(out):
+    rows, stamps, blocks = [], {}, 0
+    for line in out.splitlines():
+        m = MKROW.match(line)
+        if not m:
+            continue
+        rows.append((int(m.group(1)), m.group(2), int(m.group(3))))
+        blocks += int(m.group(4))
+        s = MKSTAMP.findall(m.group(5))
+        if len(s) == 2:
+            stamps[m.group(2)] = tuple(s)
+    return sorted(rows), stamps, blocks
+
+
+MONTHS = dict((calendar.month_abbr[i], i) for i in range(1, 13))
+CTDATE = re.compile(r'(\d\d)-(\w{3})-(\d{4}) (\d\d):(\d\d)')
+CTUSED = re.compile(r'Files occupying\s+(\d+)K')
+
+
+def ctdate(m):
+    s = '%s-%02d-%s %s:%s' % (m.group(3), MONTHS[m.group(2)], m.group(1),
+                              m.group(4), m.group(5))
+    # day 0, the zero stamp, is 1977-12-31 00:00 to cpmtools
+    return '-' if s == '1977-12-31 00:00' else s
+
+
+def ctlisting(img):
+    """cpmls's view.  The fourth item is the rows of users 16-31: cpmtools
+    2.23 lists a type-1xh XFCB as a file of user 16-31, so those are kept
+    apart from the file rows."""
+    rows, xfcbs = [], []
+    _, out = ct('cpmls', img, '-l')
+    user = 0
+    for line in out.splitlines():
+        m = re.match(r'^(\d+):$', line)
+        if m:
+            user = int(m.group(1))
+            continue
+        f = line.split()
+        if len(f) == 6 and f[1].isdigit():
+            row = (user, f[5].upper(), (int(f[1]) + 127) // 128 * 128)
+            (rows if user < 16 else xfcbs).append(row)
+
+    stamps, blocks = {}, None
+    _, out = ct('cpmls', img, '-D')
+    user = 0
+    for line in out.splitlines():
+        m = re.match(r'^User (\d+):', line)
+        if m:
+            user = int(m.group(1))
+            continue
+        m = CTUSED.search(line)
+        if m:
+            blocks = int(m.group(1)) * 1024 // BLS
+            continue
+        if len(line) < 12 or line[8] != '.' or user >= 16:
+            continue
+        name = line[:8].strip() + ('.' + line[9:12].strip()
+                                   if line[9:12].strip() else '')
+        d = [ctdate(x) for x in CTDATE.finditer(line)]
+        if len(d) == 2 and d != ['-', '-']:
+            stamps[name] = (d[1], d[0])       # -D prints update, create
+    return sorted(rows), stamps, blocks, sorted(xfcbs)
+
+
+def agree(img, what):
+    """mkcpmfs --list and cpmls agree on files, allocation and stamps."""
+    _, mout = mk('--list', path(img))
+    mrows, mstamps, mblocks = mklisting(mout)
+    crows, cstamps, cblocks, xfcbs = ctlisting(img)
+    check(mrows == crows and mrows != [],
+          "%s: mkcpmfs --list and cpmls agree on files" % what)
+    check(mblocks == cblocks,
+          "%s: both tools count the same allocated blocks (%s/%s)"
+          % (what, mblocks, cblocks))
+    return mout, mstamps, cstamps, xfcbs
 
 
 # ---- tests -------------------------------------------------------------------
@@ -119,54 +269,18 @@ def t_unstamped_unchanged():
           "legacy pack writes no extension entries")
 
     # both tools read it, and agree on the file set
-    _, mout = mk('--list', path('legacy.img'))
-    _, cout = cpm(path('legacy.img'), 'ls')
-    check(filelines(mout) == filelines(cout),
-          "legacy image: mkcpmfs --list and cpm ls agree")
+    agree('legacy.img', "legacy image")
 
-    # cpm(1) round-trips it without inventing extensions
-    cpm(path('legacy.img'), 'write', os.path.join(src, 'HELLO.TXT'), 'COPY.TXT')
-    cpm(path('legacy.img'), 'rm', 'SMALL.BIN')
+    # cpmtools round-trips it without inventing extensions
+    ct('cpmcp', 'legacy.img', os.path.join(src, 'HELLO.TXT'), '0:COPY.TXT')
+    ct('cpmrm', 'legacy.img', '0:SMALL.BIN')
     d = getdir('legacy.img')
     check(len(ext_image(d)) == 0,
-          "legacy image stays extension-free through cpm write/rm")
-    _, cout = cpm(path('legacy.img'), 'ls')
-    check('COPY.TXT' in cout and 'SMALL.BIN' not in cout,
-          "legacy image: cpm write/rm took effect")
-    _, mout = mk('--list', path('legacy.img'))
-    check(filelines(mout) == filelines(cout),
-          "legacy image after cpm edits: both tools still agree")
-
-
-FILEROW = re.compile(r'^\s*(\d+) (\S+)\s+(\d+) bytes\s+(\d+) blocks\s+'
-                     r'\d+ entr\w+\s*(.*)$')
-STAMP = re.compile(r'\d{4}-\d\d-\d\d \d\d:\d\d|-')
-
-
-def filerows(out):
-    """The file rows of a listing: (user, name, size, blocks) each."""
-    rows = []
-    for line in out.splitlines():
-        m = FILEROW.match(line)
-        if m:
-            rows.append(m.group(1, 2, 3, 4))
-    return sorted(rows)
-
-
-def filelines(out):
-    return filerows(out)
-
-
-def stamplines(out):
-    """{name: (create, update)} from either tool's file rows."""
-    st = {}
-    for line in out.splitlines():
-        m = FILEROW.match(line)
-        if m:
-            s = STAMP.findall(m.group(5))
-            if len(s) == 2:
-                st[m.group(2)] = tuple(s)
-    return st
+          "legacy image stays extension-free through cpmcp/cpmrm")
+    _, cout = ct('cpmls', 'legacy.img')
+    check('copy.txt' in cout and 'small.bin' not in cout,
+          "legacy image: cpmcp/cpmrm took effect")
+    agree('legacy.img', "legacy image after cpmtools edits")
 
 
 def t_initdir_layout():
@@ -189,9 +303,12 @@ def t_initdir_layout():
     check(lab[12] == 0x31, "label mode = exists|create|update (0x31)")
     check(lab[24:28] == lab[28:32] != b'\0\0\0\0',
           "a new label carries both of its own stamps")
-    check(all(d[i * ENTSIZE] != T_SFCB or True for i in range(NENT)) and
-          len(entries(d, lambda t: t < 0x10)) <= NENT - NENT // 4,
+    check(len(entries(d, lambda t: t < 0x10)) <= NENT - NENT // 4,
           "file entries fit in the 384 non-SFCB slots")
+
+    rc, out = fsck('stamped.img')
+    check(rc == 0 and 'Error' not in out,
+          "fsck.cpm finds the stamped, labelled directory consistent")
 
     # data survives: extraction still matches the sources
     ex = path('ex-stamped')
@@ -202,6 +319,8 @@ def t_initdir_layout():
 
 
 def cmpfile(p, want):
+    if not os.path.exists(p):
+        return False
     with open(p, 'rb') as f:
         got = f.read()
     return got[:len(want)] == want and set(got[len(want):]) <= {0, 0x1a}
@@ -232,8 +351,16 @@ def t_initdir_relocates():
     ok = all(cmpfile(os.path.join(ex, fn), data) for fn, data in files.items())
     check(ok, "--initdir in place: every relocated file still reads back")
 
-    _, out = cpm(path('reloc.img'), 'ls')
-    check(all(fn in out for fn in files), "cpm ls sees the relocated files")
+    _, out = ct('cpmls', 'reloc.img')
+    check(all(fn.lower() in out for fn in files),
+          "cpmls sees the relocated files")
+    cx = path('cx-reloc')
+    shutil.rmtree(cx, ignore_errors=True)
+    os.makedirs(cx)
+    ct('cpmcp', 'reloc.img', '0:*.*', cx)
+    ok = all(cmpfile(os.path.join(cx, fn.lower()), data)
+             for fn, data in files.items())
+    check(ok, "cpmcp reads every relocated file back")
 
     # idempotent
     d1 = getdir('reloc.img')
@@ -241,41 +368,39 @@ def t_initdir_relocates():
     check(getdir('reloc.img') == d1, "--initdir is idempotent")
 
 
-def t_preserve_through_cpm():
-    """cpm write/rm must leave every extension entry byte-identical."""
+def t_preserve_through_cpmtools():
+    """cpmcp/cpmrm must leave every extension entry but SFCBs byte-identical."""
     src = srcdir('src', FILES)
     mk('--initdir', '--label', 'PRESERVE', path('pres.img'), str(BLOCKS), src)
     inject_oddities('pres.img')
     base = ext_image(getdir('pres.img'))
 
-    with open(path('extra.txt'), 'wb') as f:
-        f.write(b'a file written by cpm(1)\n' * 40)
-    cpm(path('pres.img'), 'write', path('extra.txt'), 'EXTRA.TXT')
-    cpm(path('pres.img'), 'rm', 'SMALL.BIN')
-    cpm(path('pres.img'), 'write', os.path.join(src, 'HELLO.TXT'), 'HELLO.TXT')
+    ct('cpmcp', 'pres.img',
+       hostfile('extra.txt', b'a file written by cpmtools\n' * 40),
+       '0:EXTRA.TXT')
+    ct('cpmrm', 'pres.img', '0:SMALL.BIN')
+    # cpmcp will not overwrite, so a rewrite is a remove and a copy
+    ct('cpmrm', 'pres.img', '0:HELLO.TXT')
+    ct('cpmcp', 'pres.img', os.path.join(src, 'HELLO.TXT'), '0:HELLO.TXT')
 
     after = ext_image(getdir('pres.img'))
     check(set(after) == set(base),
-          "cpm write/rm: the same set of extension entries survives")
-    # SFCB contents may change only in the sub-records of slots cpm touched;
-    # the label, the XFCB and the unknown-type entry must be untouched.
+          "cpmcp/cpmrm: the same set of extension entries survives")
+    # SFCB contents may change only in the sub-records of slots cpmtools
+    # touched; the label, the XFCB and the unknown-type entry must be untouched.
     stable = [i for i in base if base[i][0] != T_SFCB]
     check(all(after[i] == base[i] for i in stable),
-          "cpm write/rm: label, XFCB and unknown-type entries are byte-identical")
-    check(after != base, "cpm write did update SFCB stamps (label asks for it)")
+          "cpmcp/cpmrm: label, XFCB and unknown-type entries are byte-identical")
+    check(after != base, "cpmcp did update SFCB stamps")
 
-    _, mout = mk('--list', path('pres.img'))
-    _, cout = cpm(path('pres.img'), 'ls')
-    check(filelines(mout) == filelines(cout),
-          "stamped image: mkcpmfs --list and cpm ls agree on files")
-    check(stamplines(mout) == stamplines(cout) and stamplines(mout) != {},
+    mout, mstamps, cstamps, xfcbs = agree('pres.img', "stamped image")
+    check(mstamps == cstamps and mstamps != {},
           "stamped image: both tools decode the SAME stamps")
-    check('PRESERVE' in mout and 'PRESERVE' in cout,
-          "both tools show the directory label")
-    check('password' in mout and 'password' in cout,
-          "both tools report the XFCB without interpreting it")
-    check('unknown' in mout and 'unknown' in cout,
-          "both tools report the unknown-type entry as preserved")
+    check('PRESERVE' in mout, "mkcpmfs shows the directory label")
+    check('password' in mout and [r[:2] for r in xfcbs] == [(16, 'HELLO.TXT')],
+          "both tools see the one XFCB, for user 0's HELLO.TXT")
+    check('unknown' in mout,
+          "mkcpmfs reports the unknown-type entry as preserved")
 
 
 def inject_oddities(img):
@@ -300,25 +425,24 @@ def inject_oddities(img):
         f.write(d)
 
 
-def t_rm_clears_stamps():
-    """Freeing an FCB clears its stamps, so no stale stamp is inherited."""
+def t_rm_stamped():
+    """Removing a stamped file frees its FCB and keeps its SFCB entry."""
     src = srcdir('src', FILES)
     mk('--initdir', '--label', 'STAMPS', path('rm.img'), str(BLOCKS), src)
-    with open(path('one.txt'), 'wb') as f:
-        f.write(b'one\n')
-    cpm(path('rm.img'), 'write', path('one.txt'), 'ONE.TXT')
+    ct('cpmcp', 'rm.img', hostfile('one.txt', b'one\n'), '0:ONE.TXT')
     d = getdir('rm.img')
-    i = [i for i in range(NENT)
-         if d[i * ENTSIZE] < 0x10 and d[i * ENTSIZE + 1:i * ENTSIZE + 12]
-         == b'ONE     TXT'][0]
-    sub = lambda dd: dd[(i | 3) * ENTSIZE + 1 + 10 * (i & 3):
-                        (i | 3) * ENTSIZE + 11 + 10 * (i & 3)]
-    check(sub(d) != b'\0' * 10, "cpm write stamped the new file")
-    cpm(path('rm.img'), 'rm', 'ONE.TXT')
+    i = fcb_index(d, b'ONE     TXT')
+    check(sub_record(d, i) != b'\0' * 10, "cpmcp stamped the new file")
+    _, mout = mk('--list', path('rm.img'))
+    check('ONE.TXT' in mklisting(mout)[1],
+          "mkcpmfs decodes the stamp cpmcp wrote")
+    ct('cpmrm', 'rm.img', '0:ONE.TXT')
     d = getdir('rm.img')
-    check(d[i * ENTSIZE] == T_FREE, "cpm rm freed the FCB")
-    check(sub(d) == b'\0' * 10, "cpm rm cleared the file's SFCB sub-record")
+    check(d[i * ENTSIZE] == T_FREE, "cpmrm freed the FCB")
     check(d[(i | 3) * ENTSIZE] == T_SFCB, "the SFCB entry itself survives rm")
+    _, mout = mk('--list', path('rm.img'))
+    check('ONE.TXT' not in mout,
+          "mkcpmfs does not list the removed file or its stale stamp")
 
 
 def t_cross_roundtrip():
@@ -327,21 +451,20 @@ def t_cross_roundtrip():
     mk('--initdir', '--label', 'XROUND', path('x.img'), str(BLOCKS), src)
     inject_oddities('x.img')
 
-    # mkcpmfs-written directory -> read and rewritten by cpm(1)
+    # mkcpmfs-written directory -> read and rewritten by cpmtools
     d0 = getdir('x.img')
-    cpm(path('x.img'), 'ls')                       # read-only: no change
-    check(getdir('x.img') == d0, "cpm ls does not modify the directory")
+    ct('cpmls', 'x.img')                           # read-only: no change
+    ct('cpmls', 'x.img', '-D')
+    check(getdir('x.img') == d0, "cpmls does not modify the directory")
     mk('--list', path('x.img'))
     check(getdir('x.img') == d0, "mkcpmfs --list does not modify the directory")
 
-    # cpm(1)-written directory -> re-initialised by mkcpmfs, nothing disturbed
-    with open(path('two.txt'), 'wb') as f:
-        f.write(b'two\n' * 500)
-    cpm(path('x.img'), 'write', path('two.txt'), 'TWO.TXT')
+    # cpmtools-written directory -> re-initialised by mkcpmfs, nothing disturbed
+    ct('cpmcp', 'x.img', hostfile('two.txt', b'two\n' * 500), '0:TWO.TXT')
     d1 = getdir('x.img')
     mk('--initdir', path('x.img'))                 # already stamped: no-op
     check(getdir('x.img') == d1,
-          "mkcpmfs --initdir over a cpm(1)-written stamped directory is a no-op")
+          "mkcpmfs --initdir over a cpmtools-written stamped directory is a no-op")
 
     # relabelling keeps every file entry and every stamp
     mk('--label', 'RENAMED', path('x.img'))
@@ -358,10 +481,17 @@ def t_cross_roundtrip():
     shutil.rmtree(ex, ignore_errors=True)
     mk('--extract', path('x.img'), ex)
     check(cmpfile(os.path.join(ex, 'TWO.TXT'), b'two\n' * 500),
-          "mkcpmfs extracts the file cpm(1) wrote")
-    cpm(path('x.img'), 'read', 'TWO.TXT', path('two.out'))
+          "mkcpmfs extracts the file cpmcp wrote")
+    if os.path.exists(path('two.out')):
+        os.remove(path('two.out'))
+    ct('cpmcp', 'x.img', '0:TWO.TXT', path('two.out'))
     check(cmpfile(path('two.out'), b'two\n' * 500),
-          "cpm read returns the file cpm(1) wrote")
+          "cpmcp reads back the file it wrote")
+    if os.path.exists(path('big.out')):
+        os.remove(path('big.out'))
+    ct('cpmcp', 'x.img', '0:BIG.DAT', path('big.out'))
+    check(cmpfile(path('big.out'), FILES['BIG.DAT']),
+          "cpmcp reads back the two-entry file mkcpmfs packed")
 
 
 def t_stamp_encoding():
@@ -378,10 +508,24 @@ def t_stamp_encoding():
     d = getdir('ep.img')
     e = d[lab * ENTSIZE:(lab + 1) * ENTSIZE]
     days = e[28] | (e[29] << 8)
-    import datetime
     want = (datetime.date(2026, 7, 30) - datetime.date(1977, 12, 31)).days
     check(days == want, "date word = days since 1977-12-31 (%d)" % want)
     check(e[30] == 0x14 and e[31] == 0x35, "hour/minute are packed BCD")
+    rc, out = fsck('ep.img')
+    check(rc == 0 and 'Error' not in out and 'Warning' not in out,
+          "fsck.cpm accepts the label's stamps")
+
+    # the same encoding from the other side: cpmtools stamps a file's update
+    # time from the host mtime (cpmcp -p), and the bytes must be the contract's
+    t = calendar.timegm((2026, 7, 30, 14, 35, 0))
+    ct('cpmcp', 'ep.img', '-p', hostfile('b.txt', b'b\n', mtime=t), '0:B.TXT')
+    d = getdir('ep.img')
+    sub = sub_record(d, fcb_index(d, b'B       TXT'))
+    check(sub[4:8] == bytes([want & 0xff, want >> 8, 0x14, 0x35]),
+          "cpmcp -p writes 2026-07-30 14:35 as the same four bytes")
+    _, mout = mk('--list', path('ep.img'))
+    check(mklisting(mout)[1].get('B.TXT', ('', ''))[1] == '2026-07-30 14:35',
+          "mkcpmfs decodes the update stamp cpmcp wrote")
 
 
 def t_capacity():
@@ -390,6 +534,13 @@ def t_capacity():
     src = srcdir('src384', files)
     rc, out = mk('--initdir', path('cap.img'), str(BLOCKS), src)
     check(rc == 0, "384 files fit in a stamped directory")
+    rows = ctlisting('cap.img')[0]
+    check(len(rows) == 384, "cpmls lists all 384 files")
+    d = getdir('cap.img')
+    rc, out = ct('cpmcp', 'cap.img', hostfile('over.txt', b'x\n'),
+                 '0:OVER.TXT', expect_ok=False)
+    check(rc != 0 and 'directory full' in out and getdir('cap.img') == d,
+          "cpmcp finds no free slot beside 128 SFCBs, and changes nothing")
     files['OVER.TXT'] = b'x\n'
     src = srcdir('src385', files)
     rc, out = run([sys.executable, MKCPMFS, '--initdir', path('cap2.img'),
@@ -399,15 +550,15 @@ def t_capacity():
 
 
 def main():
-    global WORK, CPMBIN
+    global WORK, CPMTOOLS
     if len(sys.argv) != 3:
-        sys.exit("usage: dirfmt-test.py <workdir> <cpm-binary>")
-    WORK, CPMBIN = sys.argv[1], os.path.abspath(sys.argv[2])
+        sys.exit("usage: dirfmt-test.py <workdir> <cpmtools-bindir>")
+    WORK, CPMTOOLS = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(WORK)
 
     for t in (t_unstamped_unchanged, t_initdir_layout, t_initdir_relocates,
-              t_preserve_through_cpm, t_rm_clears_stamps, t_cross_roundtrip,
+              t_preserve_through_cpmtools, t_rm_stamped, t_cross_roundtrip,
               t_stamp_encoding, t_capacity):
         print("\n-- %s: %s" % (t.__name__, t.__doc__.splitlines()[0]))
         t()

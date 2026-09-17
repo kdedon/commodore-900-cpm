@@ -1,13 +1,13 @@
 #!/bin/sh
-# deps.sh -- resolve the four things this build consumes from other
-# repositories, and refuse by name when one is missing.
+# deps.sh -- resolve the things this build consumes from outside this
+# repository, and refuse by name when one is missing.
 #
 #   sh tools/deps.sh <dep>              print the resolved path, or nothing
 #   sh tools/deps.sh -n <dep> [value]   print nothing; refuse and exit 2 if
 #                                       <value> (or, empty, the search) does
 #                                       not resolve
 #
-# The two modes exist because the four edges are wanted at different times.
+# The two modes exist because the edges are wanted at different times.
 # The search runs when the Makefile is read, so a variable can be assigned
 # from it; the REFUSAL belongs in the recipe that wanted the thing, because
 # `all' needs only the toolchain and must not be blocked by a missing
@@ -20,9 +20,8 @@
 #   kboot         KBOOT             the BUILT loader, released or build/kboot
 #   kbootsrc      KBOOTSRC          the release or checkout, for include/bootinfo.h
 #   toolchain     C900_TOOLCHAIN    the toolchain checkout, built
-#   userland      COHERENT_OS       a COHERENT userland checkout
-#   userland-cpm  COHERENT_OS       cpm.c INSIDE that checkout, wherever it
-#                                   sits -- the userland has moved it twice
+#   cpmtools      CPMTOOLS          the directory holding cpmls, cpmcp, cpmrm
+#                                   and fsck.cpm (a system package, not DEPS)
 #
 # Search order for each: the variable wins; then the PINNED release in deps/
 # -- named by the tag DEPS gives, so bumping the pin stops an older unpack
@@ -32,7 +31,8 @@
 # this repository.  Three parents is what reaches the enclosing workspace from
 # a repository staged at <workspace>/repos/<repo>; further out is not a
 # sibling, it is a coincidence -- an unbounded walk finds another job's
-# checkout on a CI runner and reports a false success.
+# checkout on a CI runner and reports a false success.  cpmtools is the
+# exception: the variable, then $PATH, and nothing else.
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -55,18 +55,6 @@ siblings() {
 		_n=$((_n + 1))
 	done
 	echo "$root/repos/$1"
-}
-
-# Where cpm(1)'s source sits inside a COHERENT userland checkout.  The tree has
-# been reorganised more than once -- os/cmd/, then extended/cmd/, now base/cmd/
-# -- and a checkout of any age is a perfectly good oracle, so ALL the spellings
-# are tried rather than the newest one being made a requirement.  Prints the
-# first that exists, nothing if none do; new layouts go at the FRONT.
-cpmsrc() {
-	for _r in base/cmd/cpm.c extended/cmd/cpm.c os/cmd/cpm.c; do
-		if [ -f "$1/$_r" ]; then echo "$1/$_r"; return 0; fi
-	done
-	return 1
 }
 
 # Per dep: VAR names the variable, WANT what is being looked for, LIST the
@@ -167,36 +155,27 @@ toolchain)
   a built checkout of your own (a checkout that is present but not yet
   built resolves to nothing here, on purpose)."
 	;;
-userland | userland-cpm)
-	VAR="COHERENT_OS"
-	WANT="a COHERENT userland checkout"
-	LIST="$(siblings commodore-900-coh-userland)"
-	[ -n "$given" ] || given=${COHERENT_OS:-}
-	# A caller may point COHERENT_OS straight at cpm.c; the checkout is what
-	# is searched and tested, so wind such a value back up to it.
-	fixup() {
-		case "$1" in
-		*/cmd/cpm.c) echo "${1%/*/cmd/cpm.c}" ;;
-		*) echo "$1" ;;
-		esac
+cpmtools)
+	VAR="CPMTOOLS"
+	WANT="cpmtools (cpmls, cpmcp, cpmrm, fsck.cpm)"
+	# No sibling search: this is a system package, so $PATH is the place.
+	LIST='$PATH'
+	p=$(command -v cpmls 2>/dev/null) && LIST=$(dirname "$p")
+	[ -n "$given" ] || given=${CPMTOOLS:-}
+	fixup() { echo "$1"; }
+	ok() {
+		[ -x "$1/cpmls" ] && [ -x "$1/cpmcp" ] &&
+		[ -x "$1/cpmrm" ] && [ -x "$1/fsck.cpm" ]
 	}
-	ok() { cpmsrc "$1" >/dev/null; }
-	# `userland' names the checkout, `userland-cpm' the source inside it: the
-	# Makefile compiles that file and cannot spell the path itself, because
-	# which of the layouts a checkout uses is only known once it is found.
-	if [ "$dep" = userland-cpm ]; then
-		report() { cpmsrc "$1"; }
-	fi
-	HOW="  Two targets cross-check this directory format against COHERENT's own
-  reader of it, cpm(1), so they need that source tree:
-      git clone <...>/commodore-900-coh-userland
-  or point COHERENT_OS= at your checkout.  It is the only thing in this
-  repository that reads the COHERENT tree, and no other target needs it.
-  \`make deps' clones the repository named in DEPS."
+	HOW="  dirfmt-check and verify-stamped check this directory format against
+  cpmtools, an independent reader and writer of CP/M 3 directories:
+      apt install cpmtools
+  or build it from http://www.moria.de/~michael/cpmtools/ and set CPMTOOLS=
+  to the directory holding its cpmls.  No other target needs it."
 	;;
 *)
 	echo "deps.sh: unknown dependency \`$dep'" \
-	     "(emu, kboot, toolchain, userland, userland-cpm)" >&2
+	     "(emu, kboot, kbootsrc, toolchain, cpmtools)" >&2
 	exit 2
 	;;
 esac

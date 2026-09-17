@@ -23,12 +23,13 @@
 #              ships.  One release gives both: the loader and the header
 #              package, unpacked together.
 #
-# Verify only.  `make all' needs neither; `make verify' needs both.
+# Verify only.  `make all' does not need it; `make verify' does.
 #   emu        the c900 emulator binary, to run the guest tests
-#   userland   cmd/cpm.c -- COHERENT's own reader of the CP/M directory
-#              format, built on the host as an independent oracle
+#
+# Not listed: cpmtools, the independent reader/writer of the CP/M 3 directory
+# format that dirfmt-check and verify-stamped use.  It is a system package
+# (`apt install cpmtools'), found on $PATH or through CPMTOOLS.
 
 toolchain  release  https://github.com/kdedon/commodore-900-toolchain  latest  c900-toolchain-@REF@-@HOST@
 kboot      release  https://github.com/kdedon/commodore-900-kboot      v0.2.0  kboot,c900-kboot-headers-@REF@.tar.gz
-userland   git      https://github.com/kdedon/commodore-900-coh-userland  main
 emu        release  https://github.com/kdedon/commodore-900-emulator   latest  c900-@REF@-@HOST@

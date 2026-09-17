@@ -1,6 +1,6 @@
 # resolver-isolation -- the regression test for the dependency SEARCH.
 #
-# Every other job sets C900_TOOLCHAIN, EMU, KBOOT and COHERENT_OS explicitly, as
+# Every other job sets C900_TOOLCHAIN, EMU and KBOOT explicitly, as
 # it must: a job that depended on directory adjacency breaks the first time a
 # runner image moves its checkouts.  That leaves the search lists in
 # tools/deps.sh untested -- and the bug this repository actually had was an
@@ -64,7 +64,7 @@ jobs:
       - name: A wrong value is refused as itself
         working-directory: iso/a/b/c/d/e/f/commodore-900-cpm
         run: |
-          for d in emu kboot toolchain userland; do
+          for d in emu kboot toolchain cpmtools; do
             set +e
             out=$(env -i HOME="$GITHUB_WORKSPACE/iso/home" PATH=/usr/bin:/bin \
                   sh tools/deps.sh -n $d /nonexistent/$d 2>&1)
