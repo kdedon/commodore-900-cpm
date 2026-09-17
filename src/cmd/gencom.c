@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: MIT
+ * Portions Copyright (c) 2026 Kevin Dedon.
  */
 /*
  * gencom.c - Bind Resident System Extensions to a program.

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: MIT
+ * Portions Copyright (c) 2026 Kevin Dedon.
  */
 /*
  * get.c - GET.Z8K: console input from a file, on the RSX mechanism.

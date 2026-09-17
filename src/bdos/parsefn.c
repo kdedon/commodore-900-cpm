@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: MIT
+ * Portions Copyright (c) 2026 Kevin Dedon.
  */
 /* Parse [drive:]name[.type][;password] using CP/M 3 rules. The parameter
  * block contains two 32-bit addresses. Return the delimiter offset,

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: MIT
+ * Portions Copyright (c) 2026 Kevin Dedon.
  */
 /*
  * put.c - PUT.Z8K: console output into a file, on the RSX mechanism.
