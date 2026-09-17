@@ -51,7 +51,7 @@ char *argv[];
 
 		f.ran0 = 0;			/* CP/M-8000 keeps the	*/
 		f.ran1 = (FARREC >> 8) & 0xff;	/* random record big-	*/
-		f.ran2 = FARREC & 0xff;		/* endian (bdosrw.c:325) */
+		f.ran2 = FARREC & 0xff;		/* endian (bdosrw.c:322) */
 		cputs("U0T: rec 258 ");
 		putrec(__bdos(BDOS_READRAN, (long) &f) & 0xff);
 

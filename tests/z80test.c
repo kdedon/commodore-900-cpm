@@ -2620,7 +2620,7 @@ static int stub(int fn, z16 val, char *addr)
 	case 45: case 48:
 		return (0);
 	case 44:				/* set multi-sector count */
-		/* src/bdos/bdosmain.c:485-489, exactly: 0 and >128 are
+		/* src/bdos/bdosmain.c:612-616, exactly: 0 and >128 are
 		 * refused and the count is left alone. */
 		i = val & 0xff;
 		if (i == 0 || i > 128)
@@ -3360,7 +3360,7 @@ static void t_random(void)
  * z80bdos.c's setdma() validated Z80DMA -- 128 bytes, ONE record --
  * while BDOS function 44 was an ordinary P_BYTE that handed the guest's
  * record count straight to the native BDOS, whose multio()
- * (src/bdos/bdosrw.c:330) then loops that many times adding SECLEN to
+ * (src/bdos/bdosrw.c:342) then loops that many times adding SECLEN to
  * the DMA address between records.  So a guest that said "two records"
  * and put its DMA at 0xff80 -- an address setdma() accepts, because one
  * record ends exactly at the top of the 64 KB guest region -- had 256

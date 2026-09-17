@@ -249,7 +249,7 @@ char *argv[];
 
 	/* ---- G8: fn 47, E=0FFh sets bit 40h of ccp$flgs.  It always
 	   ends the calling program (bdos30.asm:4665-4670,
-	   bdosmain.c:47), so the only way to see the bit is from the
+	   bdosmain.c:629-639), so the only way to see the bit is from the
 	   NEXT program -- chain to ourselves with "PHASE2" on the
 	   command line.  Park this phase's bad count in fn 108 first,
 	   since GBL.retcode -- unlike everything local to this

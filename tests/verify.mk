@@ -433,7 +433,7 @@ i86test: build/i86test $(I86CORPUS)/SOURCES $(I86FIX)/MANIFEST
 #     CP/M-86 seam got from function 45.
 #   - The SCB and the character control block are the two places where
 #     a CP/M 3 structure holds an ADDRESS, and ours are 32-bit XADDRs
-#     where the 8080's are two bytes (src/bdos/conbdos.c:281-285,
+#     where the 8080's are two bytes (src/bdos/conbdos.c:423-427,
 #     src/bdos/scb.h).  Both are handled explicitly rather than passed
 #     through, which is a thing a design document can assert and only a
 #     run can force.
@@ -446,7 +446,7 @@ i86test: build/i86test $(I86CORPUS)/SOURCES $(I86FIX)/MANIFEST
 # there, because a CP/M-80 guest is ONE 64 KB space and there is no DMA
 # base to rewrite -- but segment acquisition: the guest wants a whole
 # host segment and a TPA program has no way to map one.  mapseg_ is
-# resident (src/bios/crt.s:251), BDOS function 50's allow-list does not
+# resident (src/bios/crt.s:274), BDOS function 50's allow-list does not
 # reach it (src/bdos/iosys.c bioscl), and the alternative is `soutb'
 # after function 62, which is assembly, which §5.2 rule 2 puts after
 # the gate and not before it.  Giving a TPA program a segment is a
@@ -3549,7 +3549,7 @@ verify-ccp: all
 #	    user area 3 -- so the open, the SYS rule, the read-only rule and
 #	    the next-DIRECTORY-ENTRY read are measured without the CCP in the
 #	    way.  That last record is 258, not the obvious 200: A: folds two
-#	    extents into one entry (EXM 1, BLS 4096, src/bios/bios900.c:145-150),
+#	    extents into one entry (EXM 1, BLS 4096, src/bios/bios900.c:668-676),
 #	    so a record below 256 needs no second directory search and cannot
 #	    tell a persisted flag from a lost one -- the mutation gate caught
 #	    exactly that.
@@ -4847,7 +4847,7 @@ CONCELOG = build/concerr.log
 # only real hole was.
 #
 # error(5) sits ABOVE the LOCK in delete() and truncit(), and above any
-# lock at all in bdosrw.c:243, so a read-only file parks a process INSIDE a
+# lock at all in bdosrw.c:246, so a read-only file parks a process INSIDE a
 # directory scan with the file system wide open to everybody else.  CONCF
 # ERAses a 40 KB read-only file -- two directory entries on this geometry
 # (BLS 4096, EXM 1: 32 KB to an entry) -- and function 19 is
@@ -7005,7 +7005,7 @@ verify-pgseg: all $(CPMACONCW)
 	 echo "              left the live background's $$b alone (CONCWC got:$$c)"
 
 # ---- a wedged disk controller must be reported, not retried for ever ----
-# src/bios/wd900.c:96 in the first-release review.  wdsec() looped `for (;;)'
+# src/bios/wd900.c wdsec() in the first-release review.  wdsec() looped `for (;;)'
 # on the controller's 0x76 "busy, retry" answer and each turn called
 # wdgo900(), which starts a fresh three-second deadline -- so a wedged
 # controller hung inside one BIOS read and the BDOS never got a status to
@@ -7187,7 +7187,7 @@ verify-dirbnd: all $(CPMADIRB)
 # The four legs, and what each of them is allowed to conclude.
 #
 #  (a) The read-only ATTRIBUTE.  error(5) returns whenever function 45
-#      error mode is 0FEh or 0FFh (bdosmisc.c:337), and delete, rename and
+#      error mode is 0FEh or 0FFh (bdosmisc.c error()), and delete, rename and
 #      truncate went on to erase the entry, overwrite the name, and free
 #      blocks.  In the DEFAULT mode error(5) reaches filero(), where `A'
 #      aborts through warmboot() and `C' clears the read-only bit before
@@ -7195,15 +7195,15 @@ verify-dirbnd: all $(CPMADIRB)
 #      and this leg cannot be shown in mode 0 at all.  Arming has nothing
 #      to do with this leg, so BOTH runs demand the same three refusals.
 #  (b) Function 15's user-0 SYS fallback re-scanned with drvcode = 0 and no
-#      second chk$password (bdosmain.c:304), and the XFCB it should have
+#      second chk$password (bdosmain.c:323), and the XFCB it should have
 #      found lives in user 0 -- so from user 3 a read-protected user-0 SYS
 #      file opened with no password.  The positive half matters as much:
 #      with the password (function 106) the same open must still work, and
 #      an unprotected user-0 SYS file must still be shared.
 #  (c) Function 99 asked no password at all, unlike erase and rename.
-#  (d) Function 103 is in neither preflight group (bdosmain.c:146), so on a
+#  (d) Function 103 is in neither preflight group (bdosmain.c:163-169), so on a
 #      drive the program had just marked read-only with function 28 it went
-#      through and wrote an XFCB.  Nothing deeper stops it: dskutil.c:61
+#      through and wrote an XFCB.  Nothing deeper stops it: dskutil.c:110
 #      calls error(4) on a read-only drive and then writes anyway, which
 #      only mode 0 survives because there error(4) never returns.  This
 #      refusal is the dispatcher's, so it does not depend on the label and
@@ -7454,7 +7454,7 @@ verify-xout: all $(CPMAXOUT) build/xouttest
 # The defect P1 #12 names is a write OUTSIDE the guest region: the seams
 # checked a 128-byte DMA window -- one record -- and then let BDOS
 # function 44's record count through to a native BDOS whose multio()
-# (src/bdos/bdosrw.c:330) writes count * 128 bytes from that address.  A
+# (src/bdos/bdosrw.c:342) writes count * 128 bytes from that address.  A
 # refusal and an acceptance come back through the same registers, so the
 # suites assert it with a canary behind the guest's memory; and the
 # review's own reproduction was an AddressSanitizer run, which is the

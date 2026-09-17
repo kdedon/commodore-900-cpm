@@ -298,7 +298,7 @@ short mode;
  * of file.
  *
  * That signature is the engine's, and it is easy to get wrong: the
- * zgetc() macro (kermit.c:35) calls this function only when its own
+ * zgetc() macro (kermit.c:89) calls this function only when its own
  * counter has run out, and USES THE RETURN VALUE AS THE CHARACTER.  A
  * readfile() that refills the buffer and returns X_OK feeds a NUL into
  * the file at every refill -- eight of them in a 1 KB file, which is

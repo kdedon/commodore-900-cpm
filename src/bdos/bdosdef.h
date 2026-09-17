@@ -204,7 +204,7 @@ struct	dph			/* disk parameter header	*/
 
 /*  Lines per page for a caller that wants the system's answer to "how
     long is a page" without inventing one.  24 is the fallback SDIR and
-    SET already apply to a zero @CONPAGE (src/cmd/set.c:990), so there is
+    SET already apply to a zero @CONPAGE (src/cmd/set.c:1244), so there is
     one number and not two.  The BDOS's own pager does NOT use it as a
     fallback: a zero @CONPAGE turns that pager off outright (see
     src/bdos/conbdos.c pagelf), because page$mode has to keep v3's
@@ -310,7 +310,7 @@ struct stvars
 				/* anything that does not is shared.  The  */
 				/* BIOS's own 128-byte `dirbuf' (the one	   */
 				/* every dph's dbufp points at,		   */
-				/* bios900.c:203) is no longer the file	   */
+				/* bios900.c:566) is no longer the file	   */
 				/* system's scratch; log_in() points	   */
 				/* dirbufp here instead (fileio.c).	   */
 };

@@ -128,7 +128,7 @@ char *argv[];
 
 
 /* Build rename's FCB: the old name in bytes 0-15, the new one at 16
-   (src/cmd/gencom.c:571-574 does the same). */
+   (src/cmd/gencom.c:520-523 does the same). */
 static VOID mkren(from, to)
 char *from;
 char *to;

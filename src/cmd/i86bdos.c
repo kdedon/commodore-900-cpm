@@ -21,11 +21,11 @@ i16	i86dmaseg;		/* ... and base paragraph (fn 51)	*/
  * The multi-sector count the native BDOS is currently holding.
  *
  * It is mirrored here because it is HALF of every DMA bound: our BDOS's
- * multio() (src/bdos/bdosrw.c:330) loops the count and adds SECLEN to
+ * multio() (src/bdos/bdosrw.c:342) loops the count and adds SECLEN to
  * the DMA address between records, so the window a transfer touches is
  * count * 128 bytes and not the 128 a single record needs.  Function 49
  * is refused here (pmap[] below), so function 44 is the only door a
- * CP/M-86 guest has to it, and bdosmisc.c:158 resets it to one per
+ * CP/M-86 guest has to it, and bdosmisc.c:171 resets it to one per
  * program -- which is what i86bdosinit() does.
  */
 static int	i86mult = 1;
@@ -259,7 +259,7 @@ struct i86 *m;
 {
 	i86dmaseg = m->sr[S_DS];
 	i86dmaoff = 0x80;
-	i86mult = 1;		/* src/bdos/bdosmisc.c:158		*/
+	i86mult = 1;		/* src/bdos/bdosmisc.c:171		*/
 	i86bdosfn = -1;
 	breason = BR_NONE;
 	onbuf = 0;
@@ -330,7 +330,7 @@ struct i86 *m;
 			i86oflush();
 		obuf[onbuf++] = (char)(dx & 0xff);
 		/* Our function 2 falls out of the switch to the default
-		 * return value (src/bdos/bdosmain.c:288), so a deferred
+		 * return value (src/bdos/bdosmain.c:239), so a deferred
 		 * one answers what an immediate one would have: zero in
 		 * both of CP/M-86's result places. */
 		m->r[R_AX] = 0;
@@ -343,7 +343,7 @@ struct i86 *m;
 
 	if (fn == 0) {
 		/* System reset.  Our function 0 is warmboot() and does
-		 * not return (src/bdos/bdosmain.c:258); the shim is an
+		 * not return (src/bdos/bdosmain.c:234); the shim is an
 		 * ordinary program and must return to ITS caller, so
 		 * this is the one function the seam answers itself. */
 		return (B_EXIT);
@@ -413,7 +413,7 @@ struct i86 *m;
 		r = i86sys(fn, (i16)(dx & 0xff), (char *)0);
 		/* Function 44 is the only door a CP/M-86 guest has to the
 		 * count; the native BDOS answers 0xff for a count it did
-		 * not take (src/bdos/bdosmain.c:603) and leaves its own
+		 * not take (src/bdos/bdosmain.c:613) and leaves its own
 		 * alone, so this follows it. */
 		if (fn == 44 && r == 0)
 			i86mult = (int)(dx & 0xff);
@@ -482,7 +482,7 @@ struct i86 *m;
 	 * byte, AX for a word, BX equal to AX.  Our BDOS already returns
 	 * CP/M 3's word form -- the high byte carries the physical error
 	 * code when function 45 put the program in return mode
-	 * (src/bdos/bdosmain.c:613) -- and CP/M-86 uses AH for exactly
+	 * (src/bdos/bdosmain.c:861-862) -- and CP/M-86 uses AH for exactly
 	 * that, so the word passes straight through.
 	 */
 	m->r[R_AX] = (i16)r;

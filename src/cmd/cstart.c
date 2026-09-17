@@ -35,7 +35,7 @@ static char	*argv[NARGV + 1];
 /*  Set the program return code (fn 108) to a program's exit status.
  *
  *  0xFFFF is the parameter that READS the code back (BDOS_RETCODE with
- *  RC_GET, src/bdos/bdosmain.c:735), so it is the one value fn 108 cannot
+ *  RC_GET, src/bdos/bdosmain.c:745), so it is the one value fn 108 cannot
  *  be asked to store.  A main() returning -1 means "failed", so report it
  *  as 1 rather than silently performing a read and leaving the old code in
  *  place -- the one case where this cannot pass the status through

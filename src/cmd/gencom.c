@@ -220,7 +220,7 @@ int i;
 		rec[H_WARMFLG] = (char) 0xff;
 
 	setword(rec, H_NEXT, 0);	/* v3 writes 6 -- the 8080 BDOS   */
-	setword(rec, H_PREV, 0);	/*   vector; 0 is ours (rsx.c:194)*/
+	setword(rec, H_PREV, 0);	/*   vector; 0 is ours (rsx.c:152)*/
 	rec[H_ENDCHAIN] = 0;		/* v3: `iobuff(24) = 0'		  */
 
 	mnbank[i] = (unsigned)(rec[H_NBANK] & 0xff);

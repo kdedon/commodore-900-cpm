@@ -17,13 +17,13 @@ z16	z80dma;			/* the guest's DMA address (fn 26)	*/
  * The multi-sector count the native BDOS is currently holding.
  *
  * It is mirrored here because it is HALF of every DMA bound: our BDOS's
- * multio() (src/bdos/bdosrw.c:330) loops the count and adds SECLEN to
+ * multio() (src/bdos/bdosrw.c:342) loops the count and adds SECLEN to
  * the DMA address between records, so the window a transfer touches is
  * count * 128 bytes and not the 128 a single record needs.  A guest
  * reaches the count two ways -- function 44, and function 49 writing
  * the SCB's own copy at SCB_MLTIO, which scbpost() (src/bdos/scb.c:
  * 205-214) copies into GBL.multcnt with function 44's clamp -- so both
- * doors update this, and bdosmisc.c:158 resets it to one per program,
+ * doors update this, and bdosmisc.c:171 resets it to one per program,
  * which is what z80bdosinit() does here.
  */
 static int	z80mult = 1;
@@ -316,7 +316,7 @@ int z80bdosinit(m)
 struct z80 *m;
 {
 	z80dma = PZ_DMA;
-	z80mult = 1;		/* src/bdos/bdosmisc.c:158		*/
+	z80mult = 1;		/* src/bdos/bdosmisc.c:171		*/
 	onbuf = 0;
 	z80bdosfn = -1;
 	z80biosfn = -1;
@@ -450,7 +450,7 @@ struct z80 *m;
 			z80oflush();
 		obuf[onbuf++] = (char)(de & 0xff);
 		/* Our function 2 falls out of the switch to the default
-		 * return value (src/bdos/bdosmain.c:288), so a deferred
+		 * return value (src/bdos/bdosmain.c:239), so a deferred
 		 * one answers what an immediate one would have: zero in
 		 * all three of CP/M-80's result places. */
 		m->rp[P_HL] = 0;
@@ -464,7 +464,7 @@ struct z80 *m;
 
 	if (fn == 0) {
 		/* System reset.  Our function 0 is warmboot() and does
-		 * not return (src/bdos/bdosmain.c:258); the shim is an
+		 * not return (src/bdos/bdosmain.c:234); the shim is an
 		 * ordinary TPA program and must return to ITS caller,
 		 * so this is the one function the seam answers itself. */
 		return (B_EXIT);
@@ -497,7 +497,7 @@ struct z80 *m;
 		 * a CP/M 3 program turns a command tail into an FCB --
 		 * but its parameter block is {name, FCB} and both are
 		 * XADDRs here where the 8080's are two bytes
-		 * (src/bdos/parsefn.c:46-50), so it is the CCB problem
+		 * (src/bdos/parsefn.c struct pfcb), so it is the CCB problem
 		 * again with two pointers instead of one.  Rebuilding it
 		 * is a stage-two widening: nothing in the corpus reached
 		 * it, and a guess would return an FCB address the guest
@@ -530,7 +530,7 @@ struct z80 *m;
 		r = z80sys(fn, (z16)(de & 0xff), (char *)0);
 		/* Function 44 is the first of the two doors to the count
 		 * this seam has to watch; the native BDOS answers 0xff
-		 * for a count it did not take (src/bdos/bdosmain.c:603)
+		 * for a count it did not take (src/bdos/bdosmain.c:613)
 		 * and leaves its own alone, so this follows it. */
 		if (fn == 44 && r == 0)
 			z80mult = (int)(de & 0xff);
@@ -657,7 +657,7 @@ struct z80 *m;
 	 * byte, HL for a word, and B = H with A = L.  Our BDOS already
 	 * returns CP/M 3's word form -- the high byte carries the
 	 * physical error code when function 45 put the program in
-	 * return mode (src/bdos/bdosmain.c:613) -- which is what the H
+	 * return mode (src/bdos/bdosmain.c:861-862) -- which is what the H
 	 * half of this convention is for, so the word passes straight
 	 * through.
 	 */

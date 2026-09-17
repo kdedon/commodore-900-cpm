@@ -80,7 +80,7 @@ fi
 # left the row weaker than before, so it is replaced by a check on the
 # very thing that made replacing the binary worth doing: the Total: line.
 # DRI declares display()'s kblks and tall as automatics, never
-# initialises them, and accumulates into both (src/cmd/stat.c:1687-1698),
+# initialises them, and accumulates into both (src/cmd/stat.c display()),
 # so the totals were whatever the stack held plus the real sum.  With one
 # file matched, the "-1k blocks" figure IS that file's own k column by
 # construction -- kblks is the sum of exactly those per-file values -- so

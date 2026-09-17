@@ -53,7 +53,7 @@ CP/M 3 directory extensions (type bytes 10h XFCB, 20h label, 21h SFCB) are
 carried per the format both this packer and the BDOS agree on.  They are
 invisible to the 2.2-era BDOS, which allocates no blocks from them
 (fileio.c:71) and claims only entries whose type byte is exactly 0xE5
-(fileio.c:401), so a stamped image still runs on the unmodified system.
+(fileio.c:1259), so a stamped image still runs on the unmodified system.
 Every code path here preserves entries whose type byte is neither a user
 number (0x00-0x0F) nor 0xE5, including types this file does not understand.
 

@@ -145,7 +145,7 @@ verify)
 	# is DRI's cpm8k13 STAT.C built here.  Two assertions moved with it.
 	# The Bytes column now reads 1k, not the vendor's 2k, because this
 	# source prints the file's own rounded-up record content,
-	# (rcnt + 7) / 8 (src/cmd/stat.c:1746) -- 2 records is 1k -- where the
+	# (rcnt + 7) / 8 (src/cmd/stat.c:1779) -- 2 records is 1k -- where the
 	# vendor binary printed the allocated block instead; the Total: line
 	# below still carries the allocation, and both numbers are now on
 	# screen at once.  And `CP/M-8000 STAT', the vendor sign-on, is gone:
@@ -153,7 +153,7 @@ verify)
 	# values()'s usage text, src/cmd/stat.c:1188).  What replaced that
 	# assertion is the totals check, which is what the rebuild was for --
 	# DRI accumulates into kblks without initialising it
-	# (src/cmd/stat.c:1687-1698), and over a single file the "-1k blocks"
+	# (src/cmd/stat.c display()), and over a single file the "-1k blocks"
 	# figure is that file's own k column by construction.
 	grep -qE '^ +2 +1k +1 Dir RW +A:COPY2 +\.TXT$' "$work" ||
 		bad stat "no STAT row reading 2 records / 1k / 1 FCB for A:COPY2.TXT"

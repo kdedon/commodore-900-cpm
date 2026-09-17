@@ -32,7 +32,7 @@
  *            returns -- pip.c's error() path calls _exit(0) directly
  *            instead of returning -- WITH THE STATUS PUBLISHED FIRST.
  *            STAT and PIP both mean `_exit(1)' as "this command failed"
- *            (stat.c 407, 676, 706, 1573, 1653, 1892; pip.c:2061), and
+ *            (stat.c 410, 679, 709, 1576, 1656, 1895; pip.c:2097), and
  *            until _setrc() was called here that word went nowhere and
  *            CCP's `IF ERROR' tested whatever the previous command left.
  */

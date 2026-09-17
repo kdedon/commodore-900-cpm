@@ -262,7 +262,7 @@ e1x:
 /
 / The LF of a CR LF pair is not a character.  A console line ends at the
 / CR, and every reader in the tree stops there -- function 10 above, and
-/ INITDIR's askchar() (src/cmd/initdir.c:108), which reads function 1
+/ INITDIR's askchar() (src/cmd/initdir.c:70), which reads function 1
 / until a CR.  Leave the LF in the stream and it becomes the ANSWER to
 / the next question the file was supposed to answer.  So the pair is
 / folded here, once, where every one of the four intercepted functions

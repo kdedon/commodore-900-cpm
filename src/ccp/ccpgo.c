@@ -29,7 +29,7 @@
 *									*
 *	This is also why the request carries the FCBs and not the	*
 *	command: the system does not parse command lines, the CCP	*
-*	does, and function 47 (chain to program, `bdosmain.c:404')	*
+*	does, and function 47 (chain to program, `bdosmain.c:629')	*
 *	already exists for the other direction -- a PROGRAM handing a	*
 *	command line back to the CCP.					*
 *									*

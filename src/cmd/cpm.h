@@ -132,7 +132,7 @@ struct biospb {
  * only as the SC #3 counterpart of BDOS function 2.
  */
 #define	BIOS_CONOUT	4	/* console output(char) -- SC #3 only	*/
-#define	BIOS_ROMCHAR	100	/* ROM putchar direct (romabi.h:64)	*/
+#define	BIOS_ROMCHAR	100	/* ROM putchar direct (romabi.h putchar) */
 #define	BIOS_VSETCHAR	101	/* vsetcell direct video store		*/
 
 /* error modes for function 45 */

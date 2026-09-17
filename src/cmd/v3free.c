@@ -13,7 +13,7 @@
 #define BDOS_GETDPB	31
 #define DRIVE_B		1L
 
-/* struct dpb (src/bdos/bdosdef.h:254) as it lands in our buffer.  The
+/* struct dpb (src/bdos/bdosdef.h:168) as it lands in our buffer.  The
    words are the BDOS's own, so they are big-endian here. */
 #define DPB_BSH		2
 #define DPB_BLM		3

@@ -2983,7 +2983,7 @@ static int stub(int fn, i16 val, char *addr)
 	case 21:				/* write sequential	*/
 		return (smultio(fn, addr));
 	case 44:				/* set multi-sector count */
-		/* src/bdos/bdosmain.c:602-606 exactly: 0 and >128 are
+		/* src/bdos/bdosmain.c:612-616 exactly: 0 and >128 are
 		 * refused and the count is left alone. */
 		i = val & 0xff;
 		if (i == 0 || i > 128)
@@ -3534,7 +3534,7 @@ static void t_gencmd(const char *dir, const char *fixdir)
  * i86bdos.c's setdma() validated I86DMA -- 128 bytes, ONE record --
  * while BDOS function 44 was an ordinary P_BYTE that handed the guest's
  * record count straight to the native BDOS, whose multio()
- * (src/bdos/bdosrw.c:330) loops that many times adding SECLEN to the DMA
+ * (src/bdos/bdosrw.c:342) loops that many times adding SECLEN to the DMA
  * address between records.  So a guest that said "two records" and put
  * its DMA offset at 0xff80 -- accepted, because one record ends exactly
  * at the top of the 64 KB segment -- had 256 bytes written from 0xff80

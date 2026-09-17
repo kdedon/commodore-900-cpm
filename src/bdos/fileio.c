@@ -36,7 +36,7 @@ EXTERN UBYTE	*scbstampa();	/* scb.c: address of the SCB @DATE group */
     implicit declaration covers a call but not an address.  set_label()
     calls the two password helpers, which live below it because they are
     what get_label() and everything after it are about, and BOOLEAN is
-    `char' (stdio.h:19) -- an implicit int return would be the wrong
+    `char' (stdio.h:22) -- an implicit int return would be the wrong
     width.	*/
 EXTERN BOOLEAN	rename();	/* the rename dirscan callback	*/
 EXTERN BOOLEAN	matchit();	/* and the search one, which wr_xfcb()

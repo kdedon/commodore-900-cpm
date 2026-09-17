@@ -137,7 +137,7 @@ struct pdesc {
 	XADDR	pd_dma0;	/* basepage.buff address restored by function 13 */
 	struct pframe pd_f;	/* where it was, and what it was doing	*/
 	struct stvars pd_gbl;	/* the BDOS's per-process state.  DRI factored
-				   it out and said so (bdosdef.h:205-241,
+				   it out and said so (bdosdef.h struct stvars,
 				   "so that each process can have a separate
 				   dirbuf"); at a gate-boundary switch it is
 				   correct to move it by copy, because no

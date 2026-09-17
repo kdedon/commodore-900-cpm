@@ -69,7 +69,7 @@ UWORD rsxres()
 /****************************************************
 **
 ** rsxfence() -- republish the fence: tpa_ht/tpa_hp,
-**		and through them @MXTPA (scb.c:191).
+**		and through them @MXTPA (scb.c:162).
 **		This is `fixchain2' + `setmaxb'
 **		(loader3.asm:302-314).
 **

@@ -338,7 +338,7 @@ scret:
 /
 / Two callers are passed straight to the BDOS:
 /   - a System-mode caller: that is the resident CCP, which reaches the
-/     BDOS by C call anyway (src/seam.c:17) and only arrives here
+/     BDOS by C call anyway (src/bios/seam.c:20) and only arrives here
 /     through the fn-50/62 services above;
 /   - a SPLIT-I/D caller.  Its data references are trapped and rewritten
 /     (Option 6), which an RSX's would not be: the module arrives after
@@ -355,8 +355,8 @@ scret:
 / occupies.  So the bit test excluded DDT.Z8K, SDB.Z8K and every other
 / stock combined-I/D binary for a reason that does not apply to them, and
 / what it should have asked is what the LOADER knows: `spflag'
-/ (splitld.c:34, set at pgmld.c:331, per-process and saved across a swap
-/ at proc.c:351,364) is exactly "the loaded program is split I/D".
+/ (splitld.c:34, set at pgmld.c:375, per-process and saved across a swap
+/ at proc.c:189,202) is exactly "the loaded program is split I/D".
 /
 / Letting an 0xEE03 caller in costs one thing the bit test hid.  The gate
 / hands the module control by IRET with the CALLER'S FCW, so the module
