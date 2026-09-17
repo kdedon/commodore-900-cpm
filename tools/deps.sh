@@ -17,8 +17,8 @@
 #
 #   dep           variable          what it names
 #   emu           EMU, C900_EMU     the emulator CHECKOUT (bin/c900 inside it)
-#   kboot         KBOOT             the BUILT loader, build/kboot
-#   kbootsrc      KBOOTSRC          the CHECKOUT, for include/bootinfo.h
+#   kboot         KBOOT             the BUILT loader, released or build/kboot
+#   kbootsrc      KBOOTSRC          the release or checkout, for include/bootinfo.h
 #   toolchain     C900_TOOLCHAIN    the toolchain checkout, built
 #   userland      COHERENT_OS       a COHERENT userland checkout
 #   userland-cpm  COHERENT_OS       cpm.c INSIDE that checkout, wherever it
@@ -109,7 +109,9 @@ emu)
 kboot)
 	VAR="KBOOT"
 	WANT="a built kboot loader"
-	LIST=
+	# The pinned release carries the loader at its top level.
+	LIST="$root/deps/commodore-900-kboot-$(pinned kboot)/kboot
+	      $root/deps/commodore-900-kboot/kboot"
 	for d in $(siblings commodore-900-kboot); do
 		LIST="$LIST $d/build/kboot"
 	done
@@ -117,15 +119,17 @@ kboot)
 	# A directory names the checkout, a file the loader itself.
 	fixup() { if [ -d "$1" ]; then echo "$1/build/kboot"; else echo "$1"; fi; }
 	ok() { [ -f "$1" ]; }
-	HOW="  kboot is a built artifact of another repository, not part of this one:
-      git clone <...>/commodore-900-kboot
-      make -C commodore-900-kboot
-  or point KBOOT= at an already-built copy.  \`make deps' clones it."
+	HOW="  kboot is a built artifact of another repository.  DEPS pins a RELEASE:
+      make deps DEP=kboot
+  unpacks it to deps/commodore-900-kboot -- or point KBOOT= at a loader
+  you built yourself."
 	;;
 kbootsrc)
 	VAR="KBOOTSRC"
 	WANT="a kboot checkout, for the handoff ABI header"
-	LIST=
+	# The pinned release's header package has the checkout's include/ layout.
+	LIST="$root/deps/commodore-900-kboot-$(pinned kboot)
+	      $root/deps/commodore-900-kboot"
 	for d in $(siblings commodore-900-kboot); do
 		LIST="$LIST $d"
 	done
@@ -134,9 +138,8 @@ kbootsrc)
 	ok() { [ -f "$1/include/bootinfo.h" ]; }
 	HOW="  The BIOS compiles kboot's include/bootinfo.h, which is the layout of
   the block the loader writes; a copy of it here would drift against the
-  loader that fills it in.  Clone the checkout:
-      git clone <...>/commodore-900-kboot
-  or point KBOOTSRC= at one.  \`make deps DEP=kboot' clones it."
+  loader that fills it in.  \`make deps DEP=kboot' unpacks the pinned
+  release's header -- or point KBOOTSRC= at a kboot checkout."
 	;;
 toolchain)
 	VAR="C900_TOOLCHAIN"

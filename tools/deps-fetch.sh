@@ -26,7 +26,9 @@
 #                 because we cannot fix it and nothing about a binary is
 #                 recoverable from our own history: "which one ran this" has
 #                 to be a number chosen in advance.  <asset> is the release
-#                 asset's file name, with @REF@ standing for the tag and
+#                 asset's file name -- several, comma-separated, unpack into
+#                 one directory, and a non-archive is placed as is -- with
+#                 @REF@ standing for the tag and
 #                 @HOST@ for the platform suffix INCLUDING the archive
 #                 extension -- the two axes are not independent, since a
 #                 Windows asset is a .zip and a Linux one a .tar.gz.  We build
@@ -107,37 +109,46 @@ fetch_release() {
 		echo "  build the dependency and name it by variable." >&2
 		return 1 ;;
 	esac
-	asset=$(echo "$5" | sed "s/@REF@/$3/g; s/@HOST@/$host/g")
-	from=$2/releases/download/$3/$asset
 	tmp=$4.tmp.$$
 	rm -rf "$tmp"
-	mkdir -p "$tmp"
-	echo "$1: downloading $from"
-	if ! curl -fL --retry 2 -o "$tmp/$asset" "$from"; then
-		rm -rf "$tmp"
-		echo "$1: no release asset at $from" >&2
-		echo "  The tag in DEPS is the pin: it is deliberate and bumped by hand," >&2
-		echo "  so a missing one means that release has not been published yet." >&2
-		echo "  Until it is, build the dependency yourself and name it by variable;" >&2
-		echo "  the resolver's refusal says which variable." >&2
-		return 1
-	fi
-	case "$asset" in
-	*.tar.gz|*.tgz) tar xzf "$tmp/$asset" -C "$tmp" ;;
-	*.zip)          unzip -q "$tmp/$asset" -d "$tmp" ;;
-	*) echo "$1: don't know how to unpack $asset" >&2; rm -rf "$tmp"; return 1 ;;
-	esac
-	rm -f "$tmp/$asset"
-	# The asset carries one top directory (bin/, rom/, disk/ inside it); it is
-	# stripped so deps/<name>/bin/c900 is the path the resolvers search for.
-	inner=
-	for d in "$tmp"/*; do
-		[ -d "$d" ] || { inner=; break; }
-		[ -z "$inner" ] || { inner=; break; }
-		inner=$d
+	mkdir -p "$tmp/.dl"
+	# <asset> may name several, comma-separated, all unpacked into one
+	# directory: kboot publishes its loader and its header apart.
+	for a in $(echo "$5" | tr , ' '); do
+		asset=$(echo "$a" | sed "s/@REF@/$3/g; s/@HOST@/$host/g")
+		from=$2/releases/download/$3/$asset
+		echo "$1: downloading $from"
+		if ! curl -fL --retry 2 -o "$tmp/.dl/$asset" "$from"; then
+			rm -rf "$tmp"
+			echo "$1: no release asset at $from" >&2
+			echo "  The tag in DEPS is the pin: it is deliberate and bumped by hand," >&2
+			echo "  so a missing one means that release has not been published yet." >&2
+			echo "  Until it is, build the dependency yourself and name it by variable;" >&2
+			echo "  the resolver's refusal says which variable." >&2
+			return 1
+		fi
+		rm -rf "$tmp/.x"
+		mkdir "$tmp/.x"
+		case "$asset" in
+		*.tar.gz|*.tgz) tar xzf "$tmp/.dl/$asset" -C "$tmp/.x" ;;
+		*.zip)          unzip -q "$tmp/.dl/$asset" -d "$tmp/.x" ;;
+		# Anything else is the file itself, placed under its own name.
+		*) mv "$tmp/.dl/$asset" "$tmp/$asset"; continue ;;
+		esac
+		# An archive carries one top directory (bin/, rom/, disk/ inside it);
+		# it is stripped so deps/<name>/bin/c900 is the path the resolvers
+		# search for.
+		inner=
+		for d in "$tmp/.x"/*; do
+			[ -d "$d" ] || { inner=; break; }
+			[ -z "$inner" ] || { inner=; break; }
+			inner=$d
+		done
+		cp -a "${inner:-$tmp/.x}/." "$tmp/"
 	done
+	rm -rf "$tmp/.dl" "$tmp/.x"
 	mkdir -p "$(dirname "$4")"
-	if [ -n "$inner" ]; then mv "$inner" "$4"; rm -rf "$tmp"; else mv "$tmp" "$4"; fi
+	mv "$tmp" "$4"
 	echo "$1: unpacked $3 -> $4"
 	point_at "$4" "$6"
 }

@@ -6,7 +6,7 @@
 # through tools/deps.sh; a named variable wins over anything here.
 #
 # kind git      cloned beside this repository, floating on <ref>
-# kind release  a published archive, pinned to <ref>
+# kind release  published assets, pinned to <ref>; several are comma-separated
 #
 #   toolchain  compiler + assembler + linker for the Z8001 -- the one
 #              input `make all' needs.  A RELEASE, not a checkout: `make
@@ -18,8 +18,10 @@
 #   kboot      the loader, and its include/bootinfo.h.  The BIOS COMPILES that
 #              header -- it is the layout of the block the loader writes, and a
 #              copy of it here would drift against the loader that fills it in
-#              -- so `make all' needs the checkout, the same way kernel3 does.
-#              The built loader is what the bootable CP/M medium is made with.
+#              -- so `make all' needs it.  A RELEASE, for the same reason as the
+#              toolchain: the loader is written onto the bootable medium, so it
+#              ships.  One release gives both: the loader and the header
+#              package, unpacked together.
 #
 # Verify only.  `make all' needs neither; `make verify' needs both.
 #   emu        the c900 emulator binary, to run the guest tests
@@ -27,6 +29,6 @@
 #              format, built on the host as an independent oracle
 
 toolchain  release  https://github.com/kdedon/commodore-900-toolchain  v0.1.7  c900-toolchain-@REF@-@HOST@
-kboot      git      https://github.com/kdedon/commodore-900-kboot      main
+kboot      release  https://github.com/kdedon/commodore-900-kboot      v0.2.0  kboot,c900-kboot-headers-@REF@.tar.gz
 userland   git      https://github.com/kdedon/commodore-900-coh-userland  main
 emu        release  https://github.com/kdedon/commodore-900-emulator   v0.2  c900-@REF@-@HOST@

@@ -35,13 +35,15 @@ reproducible byte-for-byte across days.
 ## Build
 
     make deps DEP=toolchain
+    make deps DEP=kboot
     make
     make clean
     make help
 
 The build requires a host C compiler, Python 3, `cpp`, and the Commodore 900 Z8001
-toolchain. Set `C900_TOOLCHAIN` to use a local checkout; otherwise the resolver
-searches `deps/` and adjacent checkout directories.
+toolchain and kboot, both pinned as releases in `DEPS`. Set `C900_TOOLCHAIN`,
+`KBOOT` or `KBOOTSRC` to use a local checkout; otherwise the resolver searches
+`deps/` and adjacent checkout directories.
 
 Outputs:
 
@@ -53,8 +55,11 @@ Outputs:
 | `build/cpmb.img` | 8 MB drive B |
 | `build/cpmonly.bin` | bootable release disk, built when kboot is available |
 
-The filesystem images are sparse files. Set `KBOOT` to a built loader to
-produce `cpmonly.bin`; without it, `make` produces the standalone images.
+The filesystem images are sparse files. Without a kboot loader, `make`
+produces the standalone images but not `cpmonly.bin`.
+
+A `v*` tag publishes `cpmonly.bin`, `cpm.sys`, `cpma-rel.img` and `cpmb.img`
+as release assets (`.github/workflows/release.yml`).
 
 Build rules live in `mk/config.mk` (settings and program lists),
 `mk/system.mk` (resident system), `mk/programs.mk` (transient programs),

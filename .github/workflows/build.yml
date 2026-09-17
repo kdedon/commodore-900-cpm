@@ -20,13 +20,11 @@
 # checked by no automation anywhere.
 #
 # `make all' IS NOT A GATE ON THE NETWORK, and that is the constraint it was
-# written against.  The only fetch in this job is the `make deps
-# DEP=toolchain' step that was always here; `all' itself fetches nothing.
-# Its one optional input is kboot, and $(CPMDISKALL) is
-# $(if $(wildcard $(KBOOT)),$(CPMDISK)) (mk/config.mk) -- absent kboot, the
-# boot medium is silently not built and the Makefile prints a note.  So this
-# step fails for a compile, staging, packing or exclusion fault and for
-# nothing else.
+# written against.  The fetches in this job are the `make deps' steps for the
+# two pinned releases it compiles with, the toolchain and kboot (the BIOS
+# compiles kboot's bootinfo.h, and the boot medium carries its loader);
+# `all' itself fetches nothing.  So this step fails for a compile, staging,
+# packing or exclusion fault and for nothing else.
 #
 # Nothing here boots -- `make verify' and `make selfhost' are the runtime
 # gates, they need the emulator, and they are a separate question from
@@ -52,6 +50,9 @@ jobs:
       - name: The toolchain this system is built with
         working-directory: cpm
         run: make deps DEP=toolchain
+      - name: The loader, and the handoff header the BIOS compiles
+        working-directory: cpm
+        run: make deps DEP=kboot
 
       # Set, never searched: a job that depended on directory adjacency breaks
       # the first time a runner image moves its checkouts.  The search has its
@@ -60,6 +61,8 @@ jobs:
         working-directory: cpm
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
+          KBOOT: ${{ github.workspace }}/cpm/deps/commodore-900-kboot/kboot
+          KBOOTSRC: ${{ github.workspace }}/cpm/deps/commodore-900-kboot
         run: make build/cpm.sys build/split.mod
 
       # Everything else a release is made of: the transient programs, the
@@ -70,6 +73,8 @@ jobs:
         working-directory: cpm
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
+          KBOOT: ${{ github.workspace }}/cpm/deps/commodore-900-kboot/kboot
+          KBOOTSRC: ${{ github.workspace }}/cpm/deps/commodore-900-kboot
         run: make all
 
       # relcheck's own answer, on a build that got that far.  Printed, not
