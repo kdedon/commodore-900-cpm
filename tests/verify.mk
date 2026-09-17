@@ -2447,6 +2447,31 @@ verify-trunc: all
 		|| { echo "verify-trunc: FAIL -- the truncated file is not 100 records on disk"; exit 1; }
 	@echo "verify-trunc: PASS -- fn 99 shortened the file and returned its blocks"
 
+# ---- random read of an unwritten extent, then a random write there ----
+# RANEXT writes 300 records (two directory entries), random-reads record
+# 600 (error 4), then random-writes record 600 with the same FCB.  Error 4
+# must restore the FCB's extent and module (bdos30.asm badseek), or the
+# write lands in the blocks the FCB still maps and no entry is made.  The
+# partition is pulled out afterwards so the host reads the file size too.
+RANEXTIMG = build/ranext.bin
+RANEXTLOG = build/verify-ranext.log
+.PHONY: verify-ranext
+verify-ranext: all
+	$(MKDISK) $(RANEXTIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(RANEXTIMG)) \
+		--input="$(OSSEL)RANEXT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(RANEXTLOG))
+	@$(EMUOK)
+	@grep -q 'RANEXT: PASS' $(RANEXTLOG) \
+		|| { echo "verify-ranext: FAIL -- see the BAD lines above"; exit 1; }
+	dd if=$(RANEXTIMG) of=build/ranext-cpma.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	rm -rf build/ranext-fs
+	python3 tools/mkcpmfs.py --extract build/ranext-cpma.img build/ranext-fs
+	@test "`wc -c < build/ranext-fs/RANEXT.TXT`" = 76928 \
+		|| { echo "verify-ranext: FAIL -- the file is not 601 records on disk"; exit 1; }
+	@echo "verify-ranext: PASS -- a random write after error 4 made its own extent"
+
 # ---- the six refusals: check$wild and file$exists ----
 # CP/M 3 refuses an ambiguous FCB on the four functions that name ONE
 # file -- open (ref/cpm3/bdos30.asm:3924), make (:4241), rename, both

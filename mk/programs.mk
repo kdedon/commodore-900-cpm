@@ -262,6 +262,9 @@ $(UOBJDIR)/SCBTEST.Z8K: $(UOBJDIR)/scbtest.lout $(LOUT2CPM)
 $(UOBJDIR)/V3FREE.Z8K: $(UOBJDIR)/v3free.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/RANEXT.Z8K: $(UOBJDIR)/ranext.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/STAMPT.Z8K: $(UOBJDIR)/stampt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

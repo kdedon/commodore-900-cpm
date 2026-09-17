@@ -111,6 +111,8 @@ WORD  ran;			/* random I/O flag */
 {
     REG UBYTE mod;		/* module number		*/
     REG UBYTE ext;		/* extent number		*/
+    UBYTE old_mod;		/* s2 and extent to restore	*/
+    UBYTE old_ext;		/* if the new one is not there	*/
     BSETUP
 
     if (ran)
@@ -142,13 +144,23 @@ WORD  ran;			/* random I/O flag */
     /* Close the old extent and open a new one	*/
     if ( close_fi(fcbp) >= 255 ) return(3);
 			/* can't close old extent */
+    old_mod = fcbp->s2;
+    old_ext = fcbp->extent;
     fcbp->s2 = mod;
     fcbp->extent = ext;
     if ( dirscan(openfile, fcbp, 0) >= 255 )  /* open new extent */
     {
-	if (reading) return(4);		/* reading unwritten extent */
-	if ( dirscan(create, fcbp, 8) >= 255 )
-	    return(5);			/* can't create new extent */
+	if (reading) mod = 4;		/* reading unwritten extent */
+	else if ( dirscan(create, fcbp, 8) >= 255 )
+	    mod = 5;			/* can't create new extent */
+	else return(0);
+	/* C900: put back the extent and module the disk map still
+	   belongs to, as v3's badseek does -- left on the new extent,
+	   a following random write matched it as "same extent" and
+	   wrote into the old extent's blocks with no entry of its own */
+	fcbp->s2 = old_mod;
+	fcbp->extent = old_ext;
+	return(mod);
     }
     return(0);
 }
