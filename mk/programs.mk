@@ -85,6 +85,13 @@ endef
 $(eval $(call APPLINK,SDB,$(APPSDB:%=$(APPOBJ)/%.o)))
 $(foreach p,SORTFL KILLDU TOHEX FROMHEX,$(eval $(call APPLINK,$(p),$(APPOBJ)/$(p).o)))
 
+# CPMSYST exercises cpmsys.c itself, linked as the programs above are.
+$(APPOBJ)/cpmsyst.o: src/cmd/cpmsyst.c $(TCSTAMP) | $(APPOBJ)
+	$(CC0) $(VAR) $< $(APPOBJ)/cpmsyst.z0 -I$(TCINC) -I$(TCINC)/sys >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(APPOBJ)/cpmsyst.z0 $(APPOBJ)/cpmsyst.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(APPOBJ)/cpmsyst.z1 $@ $(APPOBJ)/cpmsyst.scr 0 >> $(LOG) 2>&1
+$(eval $(call APPLINK,CPMSYST,$(APPOBJ)/cpmsyst.o))
+
 $(APPOBJ):
 	mkdir -p $(APPOBJ)
 

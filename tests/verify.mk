@@ -1478,12 +1478,16 @@ APPMAX	= 2000000000
 A3IMG	= build/a3test.bin
 A3DIR	= build/a3
 A3LOG	= build/verify-a3
-A3RUNIN	= $(OSSEL)TOHEX SDB.Z8K >A3.HEX\rFROMHEX A3.HEX A3.BIN\rSORTFL <README.TXT >A3S.TXT\rKILLDU <A3S.TXT >A3K.TXT\r$(ENDIN)
+A3CMDS	= TOHEX SDB.Z8K >A3.HEX\rFROMHEX A3.HEX A3.BIN\rSORTFL <README.TXT >A3S.TXT\rKILLDU <A3S.TXT >A3K.TXT\r
+A3RUNIN	= $(OSSEL)$(A3CMDS)$(ENDIN)
+# The host-built run goes on to what only src/cmd/cpmsys.c promises:
+# wildcard arguments, `>>' and exact binary lengths (tests/a3chk.py --cpmsys).
+A3SYSIN	= $(OSSEL)$(A3CMDS)CPMSYST ARGS A3?.TXT A3.* NOSUCH?.* PLAIN A:SDB.Z?K >B3W.TXT\rSORTFL <README.TXT >B3A.TXT\rKILLDU <A3S.TXT >>B3A.TXT\rKILLDU <A3S.TXT >>B3N.TXT\rCPMSYST ODD 1001 B3O.BIN\rTOHEX B3O.BIN >B3O.HEX\rFROMHEX B3O.HEX B3P.BIN\r$(ENDIN)
 .PHONY: verify-a3
 verify-a3: all
 	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
-	$(call APPRUN,$(A3IMG),$(A3RUNIN),$(A3LOG).1.log,$(A3DIR).1)
-	@python3 tests/a3chk.py $(A3LOG).1.log $(A3DIR).1 \
+	$(call APPRUN,$(A3IMG),$(A3SYSIN),$(A3LOG).1.log,$(A3DIR).1)
+	@python3 tests/a3chk.py --cpmsys $(A3LOG).1.log $(A3DIR).1 \
 		|| { echo "verify-a3: FAIL -- the host-built programs"; exit 1; }
 	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b1 SORTFL.Z8K SORTFL
