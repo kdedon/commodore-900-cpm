@@ -1538,17 +1538,41 @@ SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 # checks on what it produced -- are unaffected; what the sort produced is
 # exported separately into SDBSRT.TXT and read back off the partition.
 SDBRUNIN = $(OSSEL)PIP SORT.DAT=SDBIN.TXT\rSDB\rhelp\rcreate emp ( name char 10 dept char 6 sal num 6 ) 20\rimport \"SDBIN.TXT\" into emp\rprint * from emp ;\rprint * from emp where emp.sal > \"1500\" ;\rexport emp into \"SDBOUT.TXT\" ;\rsort emp by sal ;\rexport emp into \"SDBSRT.TXT\" ;\rexit\r$(ENDIN)
+# SDB as ZCC and LD8K build it on the machine, from the source on drive A:
+# a stock 0xEE03 binary, where `all' builds an 0xEE01 one.  verify-sdb
+# runs it and verify-rsxn feeds it from a file.  It is rebuilt when its
+# source or the system's objects change; not on cpm.sys itself, which
+# `all' deletes and relinks every time.
+SDBZCCDIR = $(SDBDIR).zcc
+SDBZCC	= $(SDBZCCDIR)/SDB.Z8K
+$(SDBZCC): $(SDBSRC:%=src/app/%.C) src/app/SDB.H src/app/SDBIO.H $(OBJ) \
+		tests/appbuild.sh tests/appchk.sh | $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	$(MKDISK) $(SDBZCCDIR).bin $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	sh tests/appbuild.sh $(SDBZCCDIR).bin $(SDBLOG).zcc.log SDB.Z8K $(SDBSRC)
+	rm -rf $(SDBZCCDIR).d; mkdir -p $(SDBZCCDIR).d
+	dd if=$(SDBZCCDIR).bin of=$(SDBZCCDIR).d/cpma.img bs=512 \
+		skip=$(CPMA_START) count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(SDBZCCDIR).d/cpma.img $(SDBZCCDIR).d
+	@sh tests/appchk.sh $(SDBLOG).zcc.log $(SDBZCCDIR).d SDB.Z8K
+	mkdir -p $(SDBZCCDIR); cp $(SDBZCCDIR).d/SDB.Z8K $@
+
+# $(call SDBZCCA,IMG,DIR,TREE) -- pack the drive A: image IMG in DIR from
+# the staged TREE, with its SDB.Z8K replaced by $(SDBZCC).
+define SDBZCCA
+	rm -rf $(2); cp -r $(3) $(2); cp $(SDBZCC) $(2)/SDB.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(1) $(CPMA_BLOCKS) $(2)
+endef
+
 .PHONY: verify-sdb
-verify-sdb: all
+verify-sdb: all $(SDBZCC)
 	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	$(call APPRUN,$(SDBIMG),$(SDBRUNIN),$(SDBLOG).1.log,$(SDBDIR).1)
 	@sh tests/sdbchk.sh $(SDBLOG).1.log $(SDBDIR).1 \
 		|| { echo "verify-sdb: FAIL -- the host-built SDB"; exit 1; }
-	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
-	sh tests/appbuild.sh $(SDBIMG) $(SDBLOG).2.log SDB.Z8K $(SDBSRC)
+	$(call SDBZCCA,$(SDBDIR).cpma.img,$(SDBDIR).diska,$(DISKA))
+	$(MKDISK) $(SDBIMG) $(CPMSYS) $(SDBDIR).cpma.img $(CPMBIMG)
 	$(call APPRUN,$(SDBIMG),$(SDBRUNIN),$(SDBLOG).3.log,$(SDBDIR).2)
-	@sh tests/appchk.sh $(SDBLOG).2.log $(SDBDIR).2 SDB.Z8K \
-		|| { echo "verify-sdb: FAIL"; exit 1; }
 	@sh tests/sdbchk.sh $(SDBLOG).3.log $(SDBDIR).2 \
 		|| { echo "verify-sdb: FAIL -- the SDB ZCC built"; exit 1; }
 	@echo "verify-sdb: PASS -- SDB, host-built and then compiled from its"
@@ -6422,13 +6446,12 @@ verify-put: all $(CPMAGP)
 # Four legs, and the reason there are four is that "intercepted" has two
 # directions and the refusal has to survive both:
 #
-#   1  GET FILE NCMDS.TXT feeds SDB.Z8K, and every line of its session
-#      -- its own prompt, a deliberate syntax error, its `exit' -- is
-#      read out of the file through function 10.  This is the direction
-#      that SUPPLIES a call's answer.  SDB was a stock 0xEE03 binary when
-#      this leg was written; it is host-built now, so an 0xEE01 one, and
-#      the 0xEE03 caller is covered only in the direction legs 3 and 4
-#      take.
+#   1  GET FILE NCMDS.TXT feeds SDB.Z8K.  SDB is a stock 0xEE03 binary
+#      -- the one ZCC and LD8K build on the machine, $(SDBZCC), put on
+#      drive A: in place of the 0xEE01 one `all' builds -- and every
+#      line of its session -- its own prompt, a deliberate syntax error,
+#      its `exit' -- is read out of the file through functions 1 and 10.
+#      This is the direction that SUPPLIES a call's answer.
 #   2  DDT.Z8K with nothing resident: the control for leg 3, and the
 #      reason it is needed is that leg 3 asserts a MUTATION of DDT's
 #      output, so the unmutated form has to be on the record.
@@ -6469,8 +6492,9 @@ RSXNIN3	= $(OSSEL)RSXLDR UCASEH.RSX\rDDT MHELLO.Z8K\r
 RSXNIN4	= $(OSSEL)PUT FILE DOUT.TXT\rDUMP NMARKER.TXT\rSIZEZ8K MHELLO.Z8K\rPUT CONSOLE\rTYPE DOUT.TXT\r$(ENDIN)
 
 .PHONY: verify-rsxn
-verify-rsxn: all $(CPMAGP)
-	$(MKDISK) $(RSXNIMG) $(CPMSYS) $(CPMAGP)
+verify-rsxn: all $(CPMAGP) $(SDBZCC)
+	$(call SDBZCCA,build/cpma-rsxn.img,build/diska-rsxn,$(DISKAG))
+	$(MKDISK) $(RSXNIMG) $(CPMSYS) build/cpma-rsxn.img
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
 		--input="$(RSXNIN1)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(RSXNLOG))-1.log
@@ -6488,13 +6512,13 @@ verify-rsxn: all $(CPMAGP)
 		--input="$(RSXNIN4)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(RSXNLOG))-4.log
 	@$(EMUOK)
-#	--- 1: function 10 served from a file to SDB
+#	--- 1: functions 1 and 10 served from a file to a stock 0xEE03 binary
 	@grep -q 'Getting console input from file: NCMDS.TXT' $(RSXNLOG)-1.log \
 		|| { echo "verify-rsxn: FAIL -- GET did not take the file"; exit 1; }
 	@grep -q 'SDB - version' $(RSXNLOG)-1.log \
 		|| { echo "verify-rsxn: FAIL -- SDB.Z8K did not run: the command line was not read out of the file"; exit 1; }
 	@grep -q 'SDB> zzbogus' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- a line of the file did not reach SDB's own prompt"; exit 1; }
+		|| { echo "verify-rsxn: FAIL -- a line of the file did not reach SDB's own prompt: the gate is still declining a non-segmented caller"; exit 1; }
 	@grep -q 'syntax error' $(RSXNLOG)-1.log \
 		|| { echo "verify-rsxn: FAIL -- SDB did not ACT on the line it was given"; exit 1; }
 	@grep -q 'GET-DROVE-A-STOCK-BINARY' $(RSXNLOG)-1.log \
@@ -6513,9 +6537,9 @@ verify-rsxn: all $(CPMAGP)
 		|| { echo "verify-rsxn: FAIL -- DUMP.Z8K's output was not captured into the file and read back"; exit 1; }
 	@test "`grep -c 'Segmented Program' $(RSXNLOG)-4.log`" = 1 \
 		|| { echo "verify-rsxn: FAIL -- SIZEZ8K.Z8K is split I/D and its output must NOT reach the chain; DEVIATIONS.md #7 says so and this counted it twice"; exit 1; }
-	@echo "verify-rsxn: PASS -- SDB fed from a file through function 10, a"
-	@echo "             stock 0xEE03 binary's output mutated by a module,"
-	@echo "             DDT.Z8K's banner among it, and a split-I/D"
+	@echo "verify-rsxn: PASS -- a stock 0xEE03 binary fed from a file through"
+	@echo "             functions 1 and 10, another one's output mutated by a"
+	@echo "             module, DDT.Z8K's banner among it, and a split-I/D"
 	@echo "             caller still going straight to the BDOS"
 
 # ---- verify-ddtseg: no program may write over a supervisor stack ----
