@@ -11,7 +11,11 @@ a `verify-*`, `splitcheck`, `splittest`, `i86test` or `dirfmt-check` target;
 `make verify-all` runs every `verify-*` target and prints a PASS/FAIL line
 per target. `VERIFYJOBS` of them run at a time (four by default, one for the
 old one-after-another suite); `verifyrun.sh` is the runner and its header
-says what makes running several at once safe. It skips `verify-zcc`, which rebuilds the
+says what makes running several at once safe. The two mutation gates,
+`verify-banner-mutants` and `verify-initdir-mutants`, break `src/` on purpose
+and rebuild from the wreckage, so the runner first copies the working tree
+into `build/mut/<target>/` and runs each of them there — they are then
+ordinary parallel jobs like everything else. It skips `verify-zcc`, which rebuilds the
 `src/app` programs on the machine with DRI's `ZCC` and takes twenty
 minutes on its own; run that one by name before a release.
 

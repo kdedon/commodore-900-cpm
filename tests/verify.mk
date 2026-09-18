@@ -1360,7 +1360,13 @@ verify-initdir: all
 # verify-initdir claims to check (cache invalidation, SFCB zeroing, the fn-50
 # allow list, entry relocation) and MUST make it fail; a mutant that passes
 # means the assertion for it is decorative.  The sources are restored from
-# Restore checked by git, not by diffing a maintained copy.
+# the pristine copies save took, and the restore is then CHECKED against
+# those same bytes -- the ones that were actually there when the run
+# started, local edits and all.
+#
+# The suite runs this in a tree of its own, a plain copy of the working
+# tree made by tests/verifyrun.sh: the mutations are to src/ and the
+# rebuild is of build/, so neither can be shared with anybody.
 #
 # The save, the mutations and the restore are ONE recipe line on purpose.
 # make runs a recipe line containing $(MAKE) even under -n (so that -n
@@ -1386,7 +1392,7 @@ verify-initdir-mutants: all
 		sh tests/initdir-mutate.sh restore >/dev/null || { rc=1; break; }; \
 	done; \
 	sh tests/initdir-mutate.sh restore >/dev/null 2>&1 || true; \
-	git diff --quiet -- src/cmd/initdir.c src/bdos/iosys.c \
+	sh tests/initdir-mutate.sh check >/dev/null \
 		|| { echo "verify-initdir-mutants: FAIL -- sources not restored"; rc=1; }; \
 	rm -rf build/pristine; \
 	test $$rc = 0 || exit 1; \
@@ -2703,6 +2709,10 @@ verify-banner: all
 # dropped line, a reordered banner.  Each mutant is a full rebuild and a
 # full cold boot, which is slow and is the point: it proves the assertion
 # reaches the running system, not a host-side string.
+#
+# The suite runs this in a tree of its own, a plain copy of the working
+# tree made by tests/verifyrun.sh: it edits src/bdos/bdosmisc.c and
+# rebuilds, so neither src/ nor build/ can be shared with anybody.
 verify-banner-mutants:
 	EMU='$(EMU)' KBOOT='$(KBOOT)' CPMSYS='$(CPMSYS)' \
 	CPMAIMG='$(CPMAIMG)' CPMBIMG='$(CPMBIMG)' EMUMAX='$(EMUMAX)' CPMVER='$(CPMVER)' \

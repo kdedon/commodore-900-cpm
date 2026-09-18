@@ -10,6 +10,7 @@
 #   sh tests/initdir-mutate.sh save          take the pristine copies (once)
 #   sh tests/initdir-mutate.sh M1..M4        apply one mutation
 #   sh tests/initdir-mutate.sh restore       put the sources back
+#   sh tests/initdir-mutate.sh check         the sources are what save took
 
 set -e
 cd "`dirname $0`/.."
@@ -66,11 +67,24 @@ M3)
 restore)
 	test -d $P || { echo "mut: no $P -- run save first"; exit 1; }
 	for f in $F; do cp $P/`basename $f` $f; done
-	# Do not trust a diff against $P: the authority is the repository.
-	git diff --stat -- $F
 	grep -n 'mutant' $F && { echo "mut: A MUTANT IS STILL IN THE TREE"; exit 1; }
 	echo "mut: restored"
 	;;
+
+# The authority on "restored" is the bytes save actually took, compared
+# byte for byte.  It used to be `git diff', which was the wrong oracle
+# twice over: it asks the repository rather than the copy this script
+# made, so it reports a failure for every local edit that was already
+# there before the run, and it wants a checkout -- which the gate no
+# longer has, now that it runs in a plain copy of the tree.
+check)
+	test -d $P || { echo "mut: no $P -- run save first"; exit 1; }
+	for f in $F; do
+		cmp -s $f $P/`basename $f` ||
+			{ echo "mut: $f is not what save took"; exit 1; }
+	done
+	echo "mut: sources are as saved"
+	;;
 *)
-	echo "usage: $0 save|M1|M2|M3|M4|restore"; exit 2;;
+	echo "usage: $0 save|M1|M2|M3|M4|restore|check"; exit 2;;
 esac
