@@ -168,10 +168,10 @@ display()'s kblks is summing into an uninitialised automatic again"
 	# segments it will debug in.
 	#
 	# `debugee start' is map_adr(0, caller data) -- the PHYSICAL address
-	# of offset 0 of the space the debugee is loaded into -- so on the
-	# Zilog development board, whose TPA is physical 0, it read
-	# 00000000, which is what this line asked for and what no C900 can
-	# print.  Here that address is the TPA base, c900cfg.h TPABASE.
+	# of offset 0 of the space the debugee is loaded into -- so on a
+	# machine whose TPA is physical 0 it read 00000000, which is what
+	# this line asked for and what no C900 can print.  Here that
+	# address is the TPA base, c900cfg.h TPABASE.
 	# Getting it at all is the assertion: until map_adr's system space
 	# codes were fixed (src/bios/bios900.c) DDT copied its own text in
 	# place of the memory region table, ran into a TRAP and took the
@@ -199,12 +199,13 @@ display()'s kblks is summing into an uninitialised automatic again"
 	# It still cannot DEBUG.  Having loaded the debugee, DDT patches an
 	# SC #0 over the first word of its entry point and transfers to it,
 	# which is a breakpoint and is exactly right -- but it never tells
-	# this system where its handler is (neither BIOS function 22 nor
-	# BDOS function 61 is ever called), because on the Zilog board it
-	# was written for the debugger owns the Program Status Area and
-	# plants the vector itself.  Here the SC #0 reaches the kernel's
-	# fault path with nothing recorded, and the program is killed.
-	# That is a second, separate defect and it is not this one.
+	# this system where its handler is: neither BIOS function 22 nor
+	# BDOS function 61 is ever called, so the trap reaches the kernel's
+	# fault path with nothing recorded and the program is killed.
+	# This binary is Zilog's portable debugger as shipped with
+	# CP/M-8000, byte-identical to the Olivetti M20 v1.1 disk copy, so
+	# it worked somewhere: the vector path it uses is one CP/M-8000
+	# provided and this port does not.  A second, separate defect.
 	;;
 reverify)
 	# ---- this is a COLD boot, so the system signs on before the session.

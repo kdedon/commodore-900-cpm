@@ -887,14 +887,19 @@ extern int	procdead();
  * a breakpoint -- and transfers to it.
  *
  * And that is where it stops, for a reason this table cannot mend: DDT
- * never records a handler for that trap.  It calls neither BIOS function
- * 22 nor BDOS function 61; on the Zilog development board it was written
- * for, the debugger owns the Program Status Area and writes the vector
- * into it directly, and a non-segmented program on a board whose TPA is
- * physical zero is writing the real PSA when it does.  Here those stores
- * land in the program's own segment and the SC #0 arrives at the
- * kernel's fault path with xvec[32] empty, which kills the program.
- * Fixing THAT is a question about who owns this machine's trap vectors,
+ * never records a handler for that trap.  Instrumenting BIOS function 22
+ * and BDOS function 61 shows it calls NEITHER across a whole session, so
+ * the SC #0 reaches the kernel's fault path with xvec[32] empty and the
+ * program is killed.
+ *
+ * That is not a quirk of some development board.  DDT.Z8K is Zilog's
+ * portable debugger (its banner: Version 841128.14, Zilog Inc.) shipped
+ * as part of CP/M-8000, and the copy staged here is BYTE-IDENTICAL to
+ * the one on the Olivetti M20 CP/M-8000 v1.1 distribution disk.  It is
+ * an official application that shipped and worked.  So the path it uses
+ * to plant a trap vector is one CP/M-8000 PROVIDED and this port does
+ * not -- the M20 system is the reference for what that path was.
+ * Fixing it is a question about who owns this machine's trap vectors,
  * not about which segment the debugger lives in.
  */
 struct mrt {
