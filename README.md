@@ -2,37 +2,16 @@
 
 CP/M-8000 for the Zilog Z8001-based Commodore 900: the machine BIOS, the
 BDOS, the CCP and the utilities. The BDOS implements the CP/M 3 function
-set -- function 12 answers `0x2031`, and functions 44, 45, 49, 60, 98-105
-107-112 and 152 are there, with SFCB date stamps, directory labels, chained
-RSX modules, extended error returns, multi-sector I/O and XFCB file
-passwords. The CCP loads from `A:CCP.Z8K` on cold and warm boots.
+set -- function 12 answers `0x2031` -- with SFCB date stamps, directory
+labels, chained RSX modules, extended error returns, multi-sector I/O and
+XFCB file passwords, including the drive-wide password-enable bit that
+`SET [PROTECT=ON]` turns on. The CCP loads from `A:CCP.Z8K` on cold and
+warm boots, and the banner identifies the system as version 3.1. GENCPM
+is not used.
 
-Every command built from `src/cmd` publishes `main`'s status as the
-function 108 program return code, so the CCP's `IF ERROR` can branch on it
-in a SUBMIT file. The five `src/app` applications -- `SDB`, `SORTFL`,
-`KILLDU`, `TOHEX`, `FROMHEX` -- were written for DRI's CP/M C library;
-`make all` builds them on the host against the toolchain's COHERENT
-stdio and malloc over `src/cmd/cpmsys.c`, which puts the file layer on
-the BDOS, and stages them on drive A: beside their source. Their status
-reaches function 108 through `exit` (falling off `main` is 0). The source
-still builds on the target with DRI's `ZCC.Z8K` and `LD8K.Z8K`, which
-`make verify-zcc` checks; a program built that way
-links DRI's `STARTUP.O` and `LIBCPM.A` and sets no return code (see
-`DEVIATIONS.md` §10 in the design notes). The system does not use GENCPM. The system banner identifies it as version 3.1.
-
-Passwords are enforced on a drive whose directory label has the
-password-enable bit set, and only there: a medium without that bit behaves
-exactly as it did before they existed. `SET [PROTECT=ON]` sets the bit and
-`SET [PASSWORD=]` gives the label its own password. The *file* forms of
-`[PASSWORD=]` and `[PROTECT=READ|WRITE|DELETE]` are BDOS function 103, and
-`SET [DEFAULT=]` is function 106; both are implemented, and together they
-are the round trip -- lock a file, and supply its password once so that
-every program on the disk can open it, since no CCP prompts for one.
-
-The system banner carries the date the system was BUILT: `CPMDATE` and
-`COPYYEAR` in the Makefile come from `date` on the build host. This is
-deliberate -- a build date that is a build date -- so the same source
-rebuilt on another day produces a different banner, and `cpm.sys` is not
+The banner also carries the date of the build: `CPMDATE` and `COPYYEAR`
+come from `date` on the build host, so the same source rebuilt on another
+day gives a different banner and `cpm.sys` is deliberately not
 reproducible byte-for-byte across days.
 
 ## Build
@@ -40,79 +19,54 @@ reproducible byte-for-byte across days.
     make deps DEP=toolchain
     make deps DEP=kboot
     make
-    make clean
     make help
 
-The build requires a host C compiler, Python 3, `cpp`, and the Commodore 900 Z8001
-toolchain and kboot, both pinned as releases in `DEPS`. Set `C900_TOOLCHAIN`,
-`KBOOT` or `KBOOTSRC` to use a local checkout; otherwise the resolver searches
-`deps/` and adjacent checkout directories.
+`make help` lists the remaining targets. The build needs a host C
+compiler, Python 3, `cpp`, and the Z8001 toolchain and kboot named in
+`DEPS` -- the toolchain taken at its latest release, kboot pinned at a
+tag, both fetched by `make deps`. Set `C900_TOOLCHAIN`, `KBOOT` or
+`KBOOTSRC` to use a local copy instead; otherwise the resolver searches
+`deps/` and adjacent checkouts.
 
-Outputs:
+`make` builds everything on the host, the five `src/app` programs
+(`SDB`, `SORTFL`, `KILLDU`, `TOHEX`, `FROMHEX`) included, and stages it
+on the drive images:
 
 | File | Description |
 |---|---|
 | `build/cpm.sys` | bootable system image |
 | `build/cpma.img` | 10 MB development drive A |
-| `build/cpma-rel.img` | release drive A without test programs |
+| `build/cpma-rel.img` | release drive A without the test programs |
 | `build/cpmb.img` | 8 MB drive B |
 | `build/cpmonly.bin` | bootable release disk, built when kboot is available |
 
-The filesystem images are sparse files. Without a kboot loader, `make`
-produces the standalone images but not `cpmonly.bin`.
+The filesystem images are sparse files. A `v*` tag publishes
+`cpmonly.bin.gz`, `cpm.sys`, `cpma-rel.img.gz`, `cpmb.img.gz` and
+`SHA256SUMS` as release assets (`.github/workflows/release.yml`).
 
-A `v*` tag publishes `cpmonly.bin`, `cpm.sys`, `cpma-rel.img` and `cpmb.img`
-as release assets (`.github/workflows/release.yml`).
+Build rules live in `mk/config.mk`, `mk/system.mk`, `mk/programs.mk` and
+`mk/images.mk`; test media and runtime checks in `tests/images.mk` and
+`tests/verify.mk`.
 
-Build rules live in `mk/config.mk` (settings and program lists),
-`mk/system.mk` (resident system), `mk/programs.mk` (transient programs),
-and `mk/images.mk` (release packaging). Test disk recipes are in
-`tests/images.mk`, and runtime checks are in `tests/verify.mk`.
-
-## A local medium with your own programs
-
-The release disk carries only what this project may redistribute. To try
-programs of your own -- for instance against the CP/M-80 and CP/M-86
-compatibility shims on the development drive -- build a private medium:
-
-    make cpmlocal LOCALDIR=<a directory of extra files> LOCALOUT=<a path outside the checkout>
-
-The result is a bootable disk image: the development drive A, plus every
-regular file in `LOCALDIR`, staged under the same 8.3 naming rules as the
-rest of the disk (names are upper-cased; a name that does not fit is
-reported rather than silently changed). Drive B and the system image are the
-ones `make` just built.
-
-The target is opt-in. Nothing in `make all` depends on it, it adds no check
-to the ordinary build, and it names none of your files: the directory is the
-whole interface.
-
-**The licence boundary.** Files you supply are yours, not this project's,
-and may not be redistributable. They are never copied into this repository,
-never committed, and never vendored -- and neither is a medium built from
-them. `make cpmlocal` therefore refuses an `LOCALOUT` that resolves inside
-this checkout or inside the directory holding the sibling checkouts, and
-writes nothing when it refuses. An ignored `build/` directory is not an
-exception: an ignore rule is the only thing between such a file and a
-commit. Give `LOCALOUT` a path somewhere else entirely. If the guarded
-parent directory is wrong for your layout, set `LOCALGUARD` to the directory
-that must stay clean.
+`make cpmlocal` builds a private boot medium carrying the development
+drive plus files of your own -- to try programs against the CP/M-80 and
+CP/M-86 shims, say. It refuses a `LOCALOUT` inside this checkout or
+beside it: what you supply is yours, and must not land where a commit
+could pick it up.
 
 ## Verify
 
-Runtime checks are individual `verify-*` targets:
+    make verify-all       every verification target, 97 of them, ~38 min
+    make verify-<name>    one of them
+    make verify-zcc       opt-in, outside verify-all; see make help
 
-    make verify-boot
-    make verify-ccp
-    make verify-rsx
-    make verify-util
-
-These checks require the Commodore 900 emulator and a built kboot binary. Set
-`EMU` and `KBOOT`, or place sibling checkouts where `tools/deps.sh` can find
-them. The directory-format checks (`dirfmt-check`, `verify-stamped`) also use
-[cpmtools](http://www.moria.de/~michael/cpmtools/) as an independent reader
-and writer: install it (`apt install cpmtools`) or set `CPMTOOLS` to the
-directory holding `cpmls`.
+The checks run the built medium under the Commodore 900 emulator
+(`make deps DEP=emu`, or set `EMU`) and need a kboot binary.
+`dirfmt-check` and `verify-stamped` additionally read and write the
+images with [cpmtools](http://www.moria.de/~michael/cpmtools/) as an
+independent oracle: `apt install cpmtools`, or set `CPMTOOLS` to the
+directory holding `cpmls`. [`tests/README.md`](tests/README.md)
+describes the suite.
 
 ## License
 
