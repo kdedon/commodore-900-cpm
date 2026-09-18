@@ -3,8 +3,10 @@ vendor/ -- third-party material we did not write and do not maintain.
 Held unmodified.  A drop that needs changing to build is changed by a patch
 in src/ or a step in tools/, never by an edit here.
 
-Licensing is not settled: ../LICENSE covers work written for this project,
-not this material.  Settle it before redistributing.
+Licensing: ../LICENSE covers work written for this project, not this
+material.  The Digital Research dev-pack files below were shared with the
+Z8000 release and its source code, so redistributing them is settled and
+the release image carries them.
 
   z8001mb/    vendor/z8001mb/cpm8k/packages/base/, taken from 4sun5bu's
               Z8001MB project, <https://github.com/4sun5bu/Z8001MB>, master
