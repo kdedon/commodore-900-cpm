@@ -56,7 +56,8 @@ could pick it up.
 
 ## Verify
 
-    make verify-all       every verification target, 97 of them, ~38 min
+    make verify-all       every verification target, 97 of them, ~12 min
+                          (four at a time; VERIFYJOBS=8, ~9 min on 8 cores)
     make verify-<name>    one of them
     make verify-zcc       opt-in, outside verify-all; see make help
 
