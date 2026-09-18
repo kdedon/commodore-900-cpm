@@ -179,11 +179,32 @@ display()'s kblks is summing into an uninitialised automatic again"
 	want ddt 1 "Zilog portable debugger"
 	want ddtload 1 "debugee start=32000000"
 	# and the name off the command tail reached it, which is the whole
-	# of the base page the loader handed the program.  DDT does not get
-	# further than this: it relocates itself into the region the table's
-	# slot 4 names, and on this machine that is the TPA, so debugger and
-	# debugee land on each other (src/bios/bios900.c memtab).
+	# of the base page the loader handed the program.
 	want ddttail 1 "loading 'mhello.z8k' as executable"
+	# ---- AND IT GETS PAST THAT NOW.  Slot 4 of the memory region
+	# table used to name the TPA, so DDT relocated its own 64 KB on top
+	# of the debugee it had just loaded and died in the wreckage; it
+	# now names a segment out of the pool (src/bios/bios900.c memtab,
+	# src/bdos/proc.c pmrtseg).  The first assertion is the one that
+	# matters and it is a NEGATIVE, because which pool segment DDT is
+	# given depends on how much RAM the machine has and on what else
+	# holds a slot: whatever it is, it must not be the debugee's.
+	want ddtseg 0 "debugger segment= 32000000"
+	# With a segment of its own DDT reads the file header and walks the
+	# whole base page the BDOS loader built for the debugee -- the last
+	# line of that walk is the command tail, empty because DDT passed
+	# the debugee none.  Getting to it means the load finished.
+	want ddtmagic 1 "magic number= EE01"
+	want ddtbase 1 "command tail= ''"
+	# It still cannot DEBUG.  Having loaded the debugee, DDT patches an
+	# SC #0 over the first word of its entry point and transfers to it,
+	# which is a breakpoint and is exactly right -- but it never tells
+	# this system where its handler is (neither BIOS function 22 nor
+	# BDOS function 61 is ever called), because on the Zilog board it
+	# was written for the debugger owns the Program Status Area and
+	# plants the vector itself.  Here the SC #0 reaches the kernel's
+	# fault path with nothing recorded, and the program is killed.
+	# That is a second, separate defect and it is not this one.
 	;;
 reverify)
 	# ---- this is a COLD boot, so the system signs on before the session.

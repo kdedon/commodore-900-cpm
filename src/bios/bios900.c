@@ -843,12 +843,59 @@ extern int	procdead();
  * off the end of this object, took whatever kernel data followed it and
  * relocated the debugger on top of it.
  *
- * Slot 4 names the TPA because the TPA is the only 64 KB region this
- * machine has: the copy then lands inside the segment the program
- * already owns instead of in ROM or in the kernel.  It is not a second
- * region -- count is still 1 -- and DDT, debugger and debugee in the one
- * segment, still cannot finish loading a debugee.  Giving it a segment
- * of its own out of the pool (pgalloc.c) is what that would take.
+ * SLOT 4 NOW NAMES A SEGMENT OF THE ASKING PROGRAM'S OWN, out of the
+ * pool (pgalloc.c).  It used to name the TPA, because the TPA was the
+ * only 64 KB region this machine offered, and the consequence was that
+ * debugger and debugee landed on each other: DDT copied itself over the
+ * program it had just loaded and ran into a trap in the wreckage.  The
+ * pool has spare 64 KB segments and a program that wants one may have
+ * one, so it gets one.
+ *
+ * It is still NOT a second region and count is still 1.  Nothing in the
+ * loader may put a program there, and nothing does: the readers listed
+ * above stop at count, and the pool is not offered as a TPA region
+ * (pgalloc.c's banner).  Slot 4 is a channel to one stock binary and
+ * nothing else reads it.
+ *
+ * The segment is per-process and the table is not, so the two cannot be
+ * married in the table's initialiser.  It is recorded in the process
+ * descriptor (src/bdos/proc.h pd_mrtseg, filled by proc.c pmrtseg()) and
+ * copied into slot 4 below at the moment the table is handed out; one
+ * allocation per process, released by pmrtrel() when the program ends.
+ *
+ * And it is filled in only for the callers that read it.  `mrtusr' is
+ * set by the SC #3 BIOS gate (src/bdos/bdosglue.s biosgate) when a
+ * NON-SEGMENTED Normal-mode program -- a stock DRI binary, the only kind
+ * that reads slot 4 -- asks for function 18, and by nothing else.  The
+ * kernel's own readers (bdosinit, pgmld on every program load, the CCP)
+ * call bios() directly, never see the flag set, and therefore never cost
+ * the pool a segment.  That distinction is the whole reason the flag
+ * exists rather than the allocation simply happening in case 18.
+ *
+ * An empty pool answers 0 and slot 4 falls back to TPABASE -- the old
+ * behaviour, no worse than it was, and nothing refuses to run.
+ *
+ * HOW FAR THIS GETS DDT, because the next reader will want to know and
+ * the answer is not "all the way".  With a segment of its own DDT copies
+ * itself into it through the SC #1 gate, resumes executing there, and
+ * every gate in the translation layer follows it across without being
+ * told -- bdosglue.s substitutes the CALLER'S PC SEGMENT, which is the
+ * new one from the first instruction executed there, so its file opens,
+ * reads and its BDOS program load all land in the right place.  The
+ * debugee is loaded into the TPA correctly, base page and all.  DDT then
+ * patches an SC #0 over the first word of the debugee's entry point --
+ * a breakpoint -- and transfers to it.
+ *
+ * And that is where it stops, for a reason this table cannot mend: DDT
+ * never records a handler for that trap.  It calls neither BIOS function
+ * 22 nor BDOS function 61; on the Zilog development board it was written
+ * for, the debugger owns the Program Status Area and writes the vector
+ * into it directly, and a non-segmented program on a board whose TPA is
+ * physical zero is writing the real PSA when it does.  Here those stores
+ * land in the program's own segment and the SC #0 arrives at the
+ * kernel's fault path with xvec[32] empty, which kills the program.
+ * Fixing THAT is a question about who owns this machine's trap vectors,
+ * not about which segment the debugger lives in.
  */
 struct mrt {
 	int	count;
@@ -858,13 +905,22 @@ struct mrt {
 	} regions[5];
 };
 
-/* One region: the 64 KB TPA at seg TPASEG offset 0.  Slot 4 repeats it
- * for DDT; see above. */
+/* One region: the 64 KB TPA at seg TPASEG offset 0.  Slot 4 starts at
+ * the TPA -- the fallback -- and is rewritten per asking program; see
+ * above. */
 static struct mrt memtab = {
 	1,
 	{ { TPABASE, 0x10000L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
 	  { TPABASE, 0x10000L } }
 };
+
+/* Set by the SC #3 gate for a non-segmented Normal-mode caller's
+ * function 18, consumed and cleared by case 18.  A one-shot rather than
+ * a mode the gate leaves standing, so that a kernel bios(18) can never
+ * pick up a flag some earlier program left behind. */
+int	mrtusr;
+
+extern int pmrtseg();		/* src/bdos/proc.c: this process's one	*/
 
 /************************************************************************/
 /*	map_adr (space-code address mapping)				*/
@@ -1098,6 +1154,7 @@ int d0;
 long d1, d2;
 {
 	long oldv;
+	int seg;
 
 	switch (d0) {
 
@@ -1192,6 +1249,12 @@ long d1, d2;
 		return (d1);
 
 	case 18:				/* GMRTA */
+		if (mrtusr) {
+			mrtusr = 0;
+			seg = pmrtseg();
+			memtab.regions[4].tpalow = seg ?
+				((long)seg << 24) : TPABASE;
+		}
 		return ((long)&memtab);
 
 	case 19:				/* GETIOB */

@@ -58,6 +58,8 @@
 
 	.globl	xbdos_		/ BDOS entry point in bdosmain (D3: was __bdos)
 	.globl	bios_		/ C BIOS dispatcher (integration provides)
+	.globl	mrtusr_		/   and its "function 18 is being asked by a
+				/   stock program" flag (bios900.c memtab)
 	.globl	faultcom_	/ trap.s: vector-or-panic path for other SCs
 	.globl	faultpanic_
 	.globl	map_adr_	/ BIOS side (SC #1 gate targets)
@@ -598,11 +600,26 @@ dobios:
 / SC #3: the BIOS gate -- stock binaries' _bios traps this even though
 / the system's own BDOS->BIOS traffic is direct-linked (D3)
 biosgate:
+	clr	mrtusr_			/ see below; cleared for EVERY caller
+					/   so the flag is never left standing
 	ld	r0, rr14(30)		/ caller's FCW
 	bit	r0, $15
 	jr	nz, 1f			/   segmented
 	bit	r0, $14
 	jr	nz, 1f			/   system
+/
+/	A NON-SEGMENTED Normal-mode program asking for function 18 is the
+/	one caller that reads slot 4 of the Memory Region Table -- it is
+/	DDT.Z8K, asking which segment to relocate itself into.  Tell the
+/	BIOS so, because bios() cannot see who called it and the kernel's
+/	own readers of the same function must not be given a segment out
+/	of the pool (src/bios/bios900.c memtab).
+/
+	cp	r3, $18			/ GMRTA
+	jr	ne, 5f
+	ld	r0, $1
+	ld	mrtusr_, r0
+5:
 	ld	r4, rr14(32)		/   user nonseg: P1/P2 seg from PC
 	ld	r6, rr14(32)
 	ld	r0, spflag_		/ split caller: map P1/P2 by their

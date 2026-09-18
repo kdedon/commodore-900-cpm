@@ -840,10 +840,70 @@ XADDR	frame;
 /* Release process resources at warm boot. Sessions keep their TPA for CCP
  * reload; a background transient frees its page and resumes a live peer. */
 
+/*  THE DEBUGGER'S SEGMENT (proc.h pd_mrtseg).
+ *
+ *  Slot 4 of the BIOS's Memory Region Table is the segment DDT.Z8K
+ *  relocates its own 64 KB into, leaving the TPA to the debugee
+ *  (src/bios/bios900.c memtab).  The table is one static object, so the
+ *  answer has to be per-process and it lives here, with the rest of the
+ *  state that is a process's and not its 64 KB image's.
+ *
+ *  ALLOCATED AT MOST ONCE PER PROCESS, and lazily.  Function 18 is
+ *  generic -- pgmld.c reads the table on every program load and
+ *  ccprun.c reads it in the CCP -- so allocating per call would hand
+ *  out a segment a second at boot and never see any of them again.  The
+ *  first ask wins and every later one gets the same segment back; the
+ *  BIOS only asks at all on behalf of a stock non-segmented program
+ *  (src/bdos/bdosglue.s biosgate), which is the only kind of caller
+ *  that reads slot 4.
+ *
+ *  An empty pool answers 0 and that is not an error: the caller falls
+ *  back to naming the TPA, which is what slot 4 said before there was a
+ *  pool answer at all.  Nothing here may refuse to run.
+ */
+
+GLOBAL WORD pmrtseg()
+{
+	REG struct pdesc *me;
+
+	me = &pd[pcur];
+	if (me->pd_mrtseg == 0)
+		me->pd_mrtseg = pgalloc();	/* 0 stays 0: pool empty */
+	return (me->pd_mrtseg);
+}
+
+/*  And back to the pool.  pgrelall() on a foreground warm boot and
+ *  pgrelproc() on a background death would both free the slot anyway --
+ *  it is an unheld slot owned by this process -- but neither of them
+ *  knows about pd_mrtseg, and a descriptor left naming a segment the
+ *  allocator has given to somebody else is how the next DDT would
+ *  relocate itself into a running program.  So the record is cleared
+ *  HERE, on the one path every termination goes through, while pgcur
+ *  still names this process.
+ */
+
+GLOBAL WORD pmrtrel()
+{
+	REG WORD seg;
+
+	if ((seg = pd[pcur].pd_mrtseg) != 0) {
+		pd[pcur].pd_mrtseg = 0;
+		pgfree(seg);
+	}
+	return (0);
+}
+
 GLOBAL WORD procdead()
 {
 	REG WORD nxt, seg;
 
+	pmrtrel();			/* the debugger's segment, if this
+					   program ever asked for one.  Above
+					   the session test below on purpose:
+					   a session does not die here, but
+					   the TRANSIENT that was running on
+					   it does, and the segment was that
+					   transient's */
 	plkdrop();			/* whatever this program was holding
 					   when it died, it is not holding
 					   now.  This runs for the foreground

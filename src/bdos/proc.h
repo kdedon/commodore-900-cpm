@@ -201,6 +201,24 @@ struct pdesc {
 				   console n (XDOS 146) and has not
 				   detached it (147).			*/
 	short	pd_chome;	/* home console retained across session warm boots */
+
+	/*  THE DEBUGGER'S SEGMENT, and it is per-process for the same
+	    reason every other field here is: the Memory Region Table the
+	    BIOS hands out (src/bios/bios900.c memtab) is ONE static
+	    object shared by the whole machine, so the segment its slot 4
+	    names cannot be recorded in it.  Two processes running DDT at
+	    once would otherwise be told the same segment and relocate on
+	    top of each other -- which is the exact bug slot 4 exists to
+	    cure, moved up a level.  The table is filled in for whoever is
+	    asking, out of this field, at the moment of the ask.
+
+	    Zero means "none allocated", which is also what an empty pool
+	    answers, and the two cases want the same behaviour: fall back
+	    to the TPA, exactly as before.  pmrtrel() (proc.c) puts it
+	    back on every termination path.			*/
+
+	short	pd_mrtseg;	/* the pool segment this process's MRT slot
+				   4 names, or 0 if it has never asked. */
 };
 
 /* PNPROC 8 KB supervisor stacks occupy segment 3F from its top downwards
