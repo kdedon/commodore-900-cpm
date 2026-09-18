@@ -85,6 +85,14 @@ jobs:
             echo "Built with commodore-900-toolchain v$(sed -n 's/^version=//p' deps/commodore-900-toolchain/.provenance) and commodore-900-kboot v$(cat deps/commodore-900-kboot/VERSION)."
             echo
             echo 'cpmonly.bin is the bootable disk: kboot, cpm.sys, and drives A: and B:.'
+            echo
+            echo 'Drive A: carries the CP/M-8000 development pack -- ZCC, ASZ8K, LD8K,'
+            echo 'ED, LIBCPM.A, STARTUP.O and the headers -- so the disk compiles and'
+            echo 'links on the machine.'
+            echo
+            echo 'Known limitation: DDT.Z8K loads a debugee correctly but cannot take'
+            echo 'a breakpoint.  It registers its handler through BDOS function 50'
+            echo 'carrying BIOS function 22, which this release does not yet accept.'
           } > dist/NOTES.md
 
       - uses: actions/upload-artifact@v4
