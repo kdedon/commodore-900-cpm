@@ -5,8 +5,7 @@ in src/ or a step in tools/, never by an edit here.
 
 Licensing: ../LICENSE covers work written for this project, not this
 material.  The Digital Research dev-pack files below were shared with the
-Z8000 release and its source code, so redistributing them is settled and
-the release image carries them.
+CP/M-8000 release and its source.
 
   z8001mb/    vendor/z8001mb/cpm8k/packages/base/, taken from 4sun5bu's
               Z8001MB project, <https://github.com/4sun5bu/Z8001MB>, master
@@ -21,4 +20,4 @@ the release image carries them.
 The CP/M 3 and CP/M-8000 reference sources this port was derived from
 (Digital Research's 8080 CP/M 3, the May 1983 and October 1983 CP/M-8000
 snapshots, and CP/M-8000 v1.3 for the Olivetti M20) are reference material,
-not build inputs.  They live in c900oses/cpm8000/.
+not build inputs. 
