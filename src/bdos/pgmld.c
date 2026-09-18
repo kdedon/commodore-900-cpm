@@ -605,7 +605,18 @@ int i;
 							- BPLEN - stksiz;
 					/*  ...in case no stack or 	*/
 					/*    bss segments		*/
-		if (dataloc == 0L) dataloc = segloc[i];
+		if (dataloc == 0L) dataloc = phystarg;
+					/*  C900: was segloc[i] -- the BASE
+					    of the i'th FILE segment, and
+					    segloc[] is indexed by LOGICAL
+					    segment.  A non-segmented program
+					    has one logical segment, so
+					    segloc[1] was never set and the
+					    base page told every such program
+					    its data began at 0.  The other
+					    two arms use phystarg, which is
+					    where this segment is actually
+					    being placed.  */
 		datasiz += l;
 		break;
 	}

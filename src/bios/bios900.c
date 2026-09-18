@@ -832,21 +832,38 @@ extern int	procdead();
  * Layout shared with the readers: bdosmisc.c bdosinit ({WORD nmbr;
  * XADDR low; LONG length;}) and go.c/pgmld.c (struct m_rt, NREGIONS = 2)
  * -- count at 0, first region at 2/6, second at 10/14, 18 bytes total.
- * Two slots are declared so pgmld's m_reg[1] (split-I/D) read stays
- * inside the object; only the first is valid (count = 1).
+ * More than one slot is declared so pgmld's m_reg[1] (split-I/D) read
+ * stays inside the object; only the first is valid (count = 1).
+ *
+ * FIVE are declared, not two, because a PROGRAM reads this table as
+ * well: function 18 hands out its address and DDT.Z8K copies the whole
+ * thing out with mem_cpy -- 42 bytes, count plus FIVE regions, ignoring
+ * count -- and then reads slot 4 as the segment it relocates its own 64
+ * KB into, leaving the TPA to the debugee.  With two slots that copy ran
+ * off the end of this object, took whatever kernel data followed it and
+ * relocated the debugger on top of it.
+ *
+ * Slot 4 names the TPA because the TPA is the only 64 KB region this
+ * machine has: the copy then lands inside the segment the program
+ * already owns instead of in ROM or in the kernel.  It is not a second
+ * region -- count is still 1 -- and DDT, debugger and debugee in the one
+ * segment, still cannot finish loading a debugee.  Giving it a segment
+ * of its own out of the pool (pgalloc.c) is what that would take.
  */
 struct mrt {
 	int	count;
 	struct mrtreg {
 		long	tpalow;		/* XADDR of region base */
 		long	tpalen;
-	} regions[2];
+	} regions[5];
 };
 
-/* One region: the 64 KB TPA at seg TPASEG offset 0. */
+/* One region: the 64 KB TPA at seg TPASEG offset 0.  Slot 4 repeats it
+ * for DDT; see above. */
 static struct mrt memtab = {
 	1,
-	{ { TPABASE, 0x10000L }, { 0L, 0L } }
+	{ { TPABASE, 0x10000L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
+	  { TPABASE, 0x10000L } }
 };
 
 /************************************************************************/
@@ -872,7 +889,28 @@ UWORD space;
 	if (space == 4 || space == 5 || space == 0x105)
 		return (usrseg < 0 ? adr
 				   : ((long)usrseg << 24) | (adr & 0xffffL));
-	return (adr);
+	/*  Spaces 2 and 3 name the RESIDENT SYSTEM's data and program, and
+	    the offset handed in is one the kernel produced: cpm.sys is
+	    compiled non-segmented, so `(long)&object' -- what BIOS
+	    function 18 returns for the memory region table, for instance --
+	    is a bare 16-bit offset with a zero segment.  Returning that
+	    unchanged names segment 0, the boot ROM, and a caller that then
+	    mem_cpy'd from it (DDT does, to read the MRT) copied rubbish.
+	    The space code says which segment the offset belongs to, so
+	    supply it, exactly as the TPA spaces above do.  */
+	if ((space & 0xff) == 2 || (space & 0xff) == 3)
+		return (((long)((space & 0xff) == 2 ? SYSDSEG : SYSTSEG)
+			 << 24) | (adr & 0xffffL));
+	/*  Caller spaces (0, 1).  The address arrives with its own segment
+	    -- the SC #1 gate has already substituted a non-segmented
+	    caller's PC segment for the zero high word nonsegmented C
+	    zero-extends into it -- and that segment is the answer.  It
+	    arrives as a Z8001 SEGMENT WORD (0xB2..), whose bit 15 is not
+	    part of the address; every other far pointer this system hands
+	    out is written (seg << 24) with that bit clear (c900cfg.h
+	    TPABASE).  Drop it, so that two physical addresses for the same
+	    byte compare equal whichever path produced them.  */
+	return (adr & 0x7fffffffL);
 }
 
 /************************************************************************/

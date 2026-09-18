@@ -99,6 +99,15 @@
  * it for 512, 1024 and 2560 KB, which the emulator (1 MB, fixed) cannot.
  */
 #define	SYSPHYSPAGE	0x08		/* phys 0x080000: CPM.SYS's text */
+/*
+ * The resident system's own two segments, as crt.s maps them.  The kernel
+ * is compiled NON-SEGMENTED, so a C pointer to one of its objects is a
+ * bare 16-bit offset; map_adr's system space codes (2 = system data, 3 =
+ * system program) are how a caller turns such an offset into a far
+ * pointer it can hand to mem_cpy or dereference from another segment.
+ */
+#define	SYSTSEG		0x30		/* CPM.SYS text			 */
+#define	SYSDSEG		0x31		/* CPM.SYS data + bss		 */
 #define	PGSEGLO		0x28		/* slot 0's logical segment	 */
 #define	PGNUP		8		/* slots 0..7 ascend, 0x28..0x2F */
 #define	PGNSLOT		38		/* 0x28..0x2F, then 0x27..0x0A --

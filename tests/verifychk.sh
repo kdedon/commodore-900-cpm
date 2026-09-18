@@ -165,9 +165,25 @@ display()'s kblks is summing into an uninitialised automatic again"
 	# ---- PIP (stock DRI) created OUT2.TXT; its contents are covered by
 	# the `typed 2' above, which is what makes this more than a no-op
 	# ---- DDT (stock DRI): it loads the transient and reports the two
-	# segments it will debug in
+	# segments it will debug in.
+	#
+	# `debugee start' is map_adr(0, caller data) -- the PHYSICAL address
+	# of offset 0 of the space the debugee is loaded into -- so on the
+	# Zilog development board, whose TPA is physical 0, it read
+	# 00000000, which is what this line asked for and what no C900 can
+	# print.  Here that address is the TPA base, c900cfg.h TPABASE.
+	# Getting it at all is the assertion: until map_adr's system space
+	# codes were fixed (src/bios/bios900.c) DDT copied its own text in
+	# place of the memory region table, ran into a TRAP and took the
+	# warm boot's CCP load down with it.
 	want ddt 1 "Zilog portable debugger"
-	want ddtload 1 "debugee start=00000000"
+	want ddtload 1 "debugee start=32000000"
+	# and the name off the command tail reached it, which is the whole
+	# of the base page the loader handed the program.  DDT does not get
+	# further than this: it relocates itself into the region the table's
+	# slot 4 names, and on this machine that is the TPA, so debugger and
+	# debugee land on each other (src/bios/bios900.c memtab).
+	want ddttail 1 "loading 'mhello.z8k' as executable"
 	;;
 reverify)
 	# ---- this is a COLD boot, so the system signs on before the session.

@@ -349,6 +349,19 @@ int main()
 	      "freelen must run from the end of bss to the initial stack"
 	      " pointer: the program owns everything between, and nothing above");
 
+	/*  AND THE THREE SECTION ADDRESSES ARE WHERE THE SECTIONS WENT.
+	    This image is code, then data, then bss, laid down in that order
+	    in the one logical segment a non-segmented program has, so each
+	    section begins where the one before it ended.  ldata used to be
+	    taken from segloc[] indexed by FILE segment number, which for a
+	    non-segmented program was never set past the first, so every
+	    such program was told its data began at 0 -- and nothing looked
+	    at the field.  */
+	check(bpp->ldata == bpp->lcode + bpp->codelen,
+	      "ldata must name where the data segment was actually placed");
+	check(bpp->lbss == bpp->ldata + bpp->datalen,
+	      "lbss must follow the data segment");
+
 	/* ---- 17 segments: one past the sixteen-element arrays.  The
 	   header count is 17 and seventeen real segment headers follow, so
 	   the loop has something to read for every one of them.  Under
