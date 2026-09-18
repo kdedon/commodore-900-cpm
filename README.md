@@ -16,7 +16,7 @@ stdio and malloc over `src/cmd/cpmsys.c`, which puts the file layer on
 the BDOS, and stages them on drive A: beside their source. Their status
 reaches function 108 through `exit` (falling off `main` is 0). The source
 still builds on the target with DRI's `ZCC.Z8K` and `LD8K.Z8K`, which
-`make verify-a3` and `make verify-sdb` check; a program built that way
+`make verify-zcc` checks; a program built that way
 links DRI's `STARTUP.O` and `LIBCPM.A` and sets no return code (see
 `DEVIATIONS.md` §10 in the design notes). The system does not use GENCPM. The system banner identifies it as version 3.1.
 

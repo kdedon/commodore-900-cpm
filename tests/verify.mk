@@ -3,6 +3,8 @@
 
 # Emulator verification harness; paths are relative to the repository root.
 # make verify-<name> runs one check; make verify-all runs the suite.
+# make verify-zcc rebuilds the src/app programs on the machine with DRI's
+# ZCC and runs those; it is opt-in and not in verify-all, being 20 minutes.
 # verify-util asserts the development disk contents; verify-setb copies them.
 
 # Runtime tests consume built emulator and kboot artifacts resolved by tools/deps.sh.
@@ -1441,20 +1443,10 @@ selfhost: all
 # `all' builds the five src/app programs on the host (mk/programs.mk,
 # over src/cmd/cpmsys.c) and stages them on drive A: beside their source.
 # These two targets run THOSE binaries on the machine and check the
-# answers they give, and then do it all again with the programs rebuilt
-# on the machine by DRI's ZCC.Z8K and LD8K.Z8K from that source -- the
-# question `selfhost' asks of a nine-line HELLO.C, asked of real
-# programs: does the source still build on the target, and does what it
-# builds work?  The two builds are different compilers and libraries, so
-# their bytes are not compared.
-#
-# The on-target build ERASES each .Z8K first, or a failed compile leaves
-# the host-built copy in place and the checks would run that instead.
-# tests/appbuild.sh does the building, ONE COLD BOOT PER COMMAND, and its
-# header says why that is not the extravagance it looks like: a single
-# scripted session gets bytes eaten by ZCC's chained passes, and does it
-# intermittently, which is the worst way for a verification target to be
-# wrong.  The read-back and the assertions stay here.
+# answers they give.  Rebuilding the same sources ON THE MACHINE with
+# DRI's ZCC.Z8K and LD8K.Z8K -- the question `selfhost' asks of a
+# nine-line HELLO.C, asked of real programs -- is verify-zcc below, which
+# is opt-in because it is the slow half: see its header.
 #
 # $(call APPRUN,IMAGE,INPUT,LOG,DIR) -- one cold boot of INPUT on IMAGE,
 # then its drive A: extracted into DIR.
@@ -1489,22 +1481,9 @@ verify-a3: all
 	$(call APPRUN,$(A3IMG),$(A3SYSIN),$(A3LOG).1.log,$(A3DIR).1)
 	@python3 tests/a3chk.py --cpmsys $(A3LOG).1.log $(A3DIR).1 \
 		|| { echo "verify-a3: FAIL -- the host-built programs"; exit 1; }
-	$(MKDISK) $(A3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b1 SORTFL.Z8K SORTFL
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b2 KILLDU.Z8K KILLDU
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b3 TOHEX.Z8K TOHEX
-	sh tests/appbuild.sh $(A3IMG) $(A3LOG).b4 FROMHEX.Z8K FROMHEX
-	cat $(A3LOG).b1 $(A3LOG).b2 $(A3LOG).b3 $(A3LOG).b4 > $(A3LOG).2.log
-	$(call APPRUN,$(A3IMG),$(A3RUNIN),$(A3LOG).3.log,$(A3DIR).2)
-	@sh tests/appchk.sh $(A3LOG).2.log $(A3DIR).2 \
-		SORTFL.Z8K KILLDU.Z8K TOHEX.Z8K FROMHEX.Z8K \
-		|| { echo "verify-a3: FAIL"; exit 1; }
-	@python3 tests/a3chk.py $(A3LOG).3.log $(A3DIR).2 \
-		|| { echo "verify-a3: FAIL -- the programs ZCC built"; exit 1; }
-	@echo "verify-a3: PASS -- Robert Heller's four utilities, host-built"
-	@echo "           and then rebuilt on the machine by ZCC, converted a"
-	@echo "           48K binary to hex and back, sorted a file and"
-	@echo "           dropped its duplicate lines"
+	@echo "verify-a3: PASS -- Robert Heller's four utilities, host-built,"
+	@echo "           converted a 48K binary to hex and back, sorted a file"
+	@echo "           and dropped its duplicate lines"
 
 # ---- Gate A: SDB ----
 # SDB is a 5,250-line relational DBMS with no terminal dependency at all:
@@ -1513,14 +1492,11 @@ verify-a3: all
 #
 # One cold boot runs the host-built SDB -- read the help file off the
 # disk, create a relation, import three tuples from a text file, print it
-# whole and then through a WHERE clause, export it back out.  Then the
-# on-target build: fourteen compiles and a link, about eight minutes of
-# emulated time, the slowest part of the suite and slow for an honest
-# reason: it is a 1984 three-pass C compiler compiling a real program on a
-# 6 MHz machine.  The same session then runs what those fourteen compiles
-# produced.  Each export lands in a file, and the
-# file is pulled off the partition and checked host-side, so the answer is
-# not just something that scrolled past on a transcript.
+# whole and then through a WHERE clause, export it back out.  The export
+# lands in a file, and the file is pulled off the partition and checked
+# host-side, so the answer is not just something that scrolled past on a
+# transcript.  The same session run against the SDB that ZCC compiles on
+# the machine is verify-zcc's second leg.
 SDBIMG	= build/sdbtest.bin
 SDBDIR	= build/sdb
 SDBLOG	= build/verify-sdb
@@ -1543,10 +1519,12 @@ SDBSRC	= CMD COM CRE ERR IEX INT IO JUNK MTH SCN SDB SEL SRT TBL
 # exported separately into SDBSRT.TXT and read back off the partition.
 SDBRUNIN = $(OSSEL)PIP SORT.DAT=SDBIN.TXT\rSDB\rhelp\rcreate emp ( name char 10 dept char 6 sal num 6 ) 20\rimport \"SDBIN.TXT\" into emp\rprint * from emp ;\rprint * from emp where emp.sal > \"1500\" ;\rexport emp into \"SDBOUT.TXT\" ;\rsort emp by sal ;\rexport emp into \"SDBSRT.TXT\" ;\rexit\r$(ENDIN)
 # SDB as ZCC and LD8K build it on the machine, from the source on drive A:
-# a stock 0xEE03 binary, where `all' builds an 0xEE01 one.  verify-sdb
-# runs it and verify-rsxn feeds it from a file.  It is rebuilt when its
-# source or the system's objects change; not on cpm.sys itself, which
-# `all' deletes and relinks every time.
+# a stock 0xEE03 binary, where `all' builds an 0xEE01 one.  verify-zcc
+# runs it and feeds it from a file.  Fourteen compiles and a link, about
+# ten minutes: the slowest thing in this file, and the reason verify-zcc
+# is not in verify-all.  It is rebuilt when its source or the system's
+# objects change; not on cpm.sys itself, which `all' deletes and relinks
+# every time.
 SDBZCCDIR = $(SDBDIR).zcc
 SDBZCC	= $(SDBZCCDIR)/SDB.Z8K
 $(SDBZCC): $(SDBSRC:%=src/app/%.C) src/app/SDB.H src/app/SDBIO.H $(OBJ) \
@@ -1569,20 +1547,94 @@ define SDBZCCA
 endef
 
 .PHONY: verify-sdb
-verify-sdb: all $(SDBZCC)
+verify-sdb: all
 	$(MKDISK) $(SDBIMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
 	$(call APPRUN,$(SDBIMG),$(SDBRUNIN),$(SDBLOG).1.log,$(SDBDIR).1)
 	@sh tests/sdbchk.sh $(SDBLOG).1.log $(SDBDIR).1 \
 		|| { echo "verify-sdb: FAIL -- the host-built SDB"; exit 1; }
-	$(call SDBZCCA,$(SDBDIR).cpma.img,$(SDBDIR).diska,$(DISKA))
-	$(MKDISK) $(SDBIMG) $(CPMSYS) $(SDBDIR).cpma.img $(CPMBIMG)
-	$(call APPRUN,$(SDBIMG),$(SDBRUNIN),$(SDBLOG).3.log,$(SDBDIR).2)
-	@sh tests/sdbchk.sh $(SDBLOG).3.log $(SDBDIR).2 \
-		|| { echo "verify-sdb: FAIL -- the SDB ZCC built"; exit 1; }
-	@echo "verify-sdb: PASS -- SDB, host-built and then compiled from its"
-	@echo "            own source on the machine, each created a relation,"
+	@echo "verify-sdb: PASS -- SDB, host-built, created a relation,"
 	@echo "            imported three tuples, selected two of them and"
 	@echo "            exported all three back unchanged.  GATE A."
+
+# ---- verify-zcc: the same sources through DRI's own compiler (opt-in) ----
+# Everything above runs the programs `all' builds on the host.  This one
+# builds them AGAIN on the emulated machine with DRI's ZCC.Z8K and
+# LD8K.Z8K and runs what that produces: does the source still build on
+# the target, and does what it builds work?  The two builds are different
+# compilers and libraries, so their bytes are not compared.
+#
+# The on-target build ERASES each .Z8K first, or a failed compile leaves
+# the host-built copy in place and the checks would run that instead.
+# tests/appbuild.sh does the building, ONE COLD BOOT PER COMMAND, and its
+# header says why that is not the extravagance it looks like: a single
+# scripted session gets bytes eaten by ZCC's chained passes, and does it
+# intermittently, which is the worst way for a verification target to be
+# wrong.  The read-back and the assertions stay here.
+#
+# SDB alone is fourteen compiles and a link.  That is most of twenty
+# minutes, which is why this target is NOT in verify-all -- the
+# enumeration there skips it by name -- and is run deliberately:
+#
+#	make verify-zcc
+#
+# before a release, or whenever src/app or the compiler on drive A: moves.
+# Three legs, one from each target it was split out of:
+#
+#   a3    the four utilities rebuilt on the machine, then run on the same
+#         input verify-a3 gives the host-built ones (tests/a3chk.py)
+#   sdb   SDB compiled from its own source, then verify-sdb's session
+#   rsxn  GET FILE feeding that stock 0xEE03 SDB through functions 1 and
+#         10.  verify-rsxn's other three legs need no ZCC build and stay
+#         in the suite; this is the one that wants $(SDBZCC).
+ZCCA3IMG  = build/zcc-a3.bin
+ZCCA3DIR  = build/zcc-a3
+ZCCSDBIMG = build/zcc-sdb.bin
+ZCCSDBDIR = build/zcc-sdb
+ZCCRSXIMG = build/zcc-rsxn.bin
+ZCCLOG	= build/verify-zcc
+.PHONY: verify-zcc
+verify-zcc: all $(CPMAGP) $(SDBZCC)
+	$(MKDISK) $(ZCCA3IMG) $(CPMSYS) $(CPMAIMG) $(CPMBIMG)
+	sh tests/appbuild.sh $(ZCCA3IMG) $(ZCCLOG).a3b1 SORTFL.Z8K SORTFL
+	sh tests/appbuild.sh $(ZCCA3IMG) $(ZCCLOG).a3b2 KILLDU.Z8K KILLDU
+	sh tests/appbuild.sh $(ZCCA3IMG) $(ZCCLOG).a3b3 TOHEX.Z8K TOHEX
+	sh tests/appbuild.sh $(ZCCA3IMG) $(ZCCLOG).a3b4 FROMHEX.Z8K FROMHEX
+	cat $(ZCCLOG).a3b1 $(ZCCLOG).a3b2 $(ZCCLOG).a3b3 $(ZCCLOG).a3b4 \
+		> $(ZCCLOG).a3.log
+	$(call APPRUN,$(ZCCA3IMG),$(A3RUNIN),$(ZCCLOG).a3run.log,$(ZCCA3DIR))
+	@sh tests/appchk.sh $(ZCCLOG).a3.log $(ZCCA3DIR) \
+		SORTFL.Z8K KILLDU.Z8K TOHEX.Z8K FROMHEX.Z8K \
+		|| { echo "verify-zcc: FAIL -- the four utilities did not build"; exit 1; }
+	@python3 tests/a3chk.py $(ZCCLOG).a3run.log $(ZCCA3DIR) \
+		|| { echo "verify-zcc: FAIL -- the programs ZCC built"; exit 1; }
+	$(call SDBZCCA,$(ZCCSDBDIR).cpma.img,$(ZCCSDBDIR).diska,$(DISKA))
+	$(MKDISK) $(ZCCSDBIMG) $(CPMSYS) $(ZCCSDBDIR).cpma.img $(CPMBIMG)
+	$(call APPRUN,$(ZCCSDBIMG),$(SDBRUNIN),$(ZCCLOG).sdb.log,$(ZCCSDBDIR))
+	@sh tests/sdbchk.sh $(ZCCLOG).sdb.log $(ZCCSDBDIR) \
+		|| { echo "verify-zcc: FAIL -- the SDB ZCC built"; exit 1; }
+	$(call SDBZCCA,build/cpma-zccrsxn.img,build/diska-zccrsxn,$(DISKAG))
+	$(MKDISK) $(ZCCRSXIMG) $(CPMSYS) build/cpma-zccrsxn.img
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(ZCCRSXIMG)) \
+		--input="$(RSXNIN1)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(ZCCLOG)).rsxn.log
+	@$(EMUOK)
+	@grep -q 'Getting console input from file: NCMDS.TXT' $(ZCCLOG).rsxn.log \
+		|| { echo "verify-zcc: FAIL -- GET did not take the file"; exit 1; }
+	@grep -q 'SDB - version' $(ZCCLOG).rsxn.log \
+		|| { echo "verify-zcc: FAIL -- SDB.Z8K did not run: the command line was not read out of the file"; exit 1; }
+	@grep -q 'SDB> zzbogus' $(ZCCLOG).rsxn.log \
+		|| { echo "verify-zcc: FAIL -- a line of the file did not reach SDB's own prompt: the gate is still declining a non-segmented caller"; exit 1; }
+	@grep -q 'syntax error' $(ZCCLOG).rsxn.log \
+		|| { echo "verify-zcc: FAIL -- SDB did not ACT on the line it was given"; exit 1; }
+	@grep -q 'GET-DROVE-A-STOCK-BINARY' $(ZCCLOG).rsxn.log \
+		|| { echo "verify-zcc: FAIL -- the exit line did not get SDB out and the next command did not run"; exit 1; }
+	@echo "verify-zcc: PASS -- ZCC and LD8K rebuilt the four utilities and"
+	@echo "            SDB on the machine from the source shipped beside"
+	@echo "            them; those binaries converted a 48K binary to hex"
+	@echo "            and back, sorted a file, dropped its duplicate"
+	@echo "            lines, and ran a whole SDB session -- and the stock"
+	@echo "            0xEE03 SDB took its session from a file through"
+	@echo "            functions 1 and 10"
 
 # ---- real-time clock ----
 # DATE against BIOS function 23, over the emulator's OKI MSM58321 model
@@ -5732,13 +5784,15 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 # Exit status is non-zero iff any target failed.  The list is read from this
 # file at run time -- a target added above is picked up without registering
 # it here -- and the pattern keeps hyphens (verify-hash-ab, verify-rtc-host).
+# verify-zcc is skipped by name: it rebuilds src/app on the machine with
+# DRI's ZCC, which is twenty minutes on its own.  `make verify-zcc' runs it.
 # A test target, reached from nothing: `all' never runs an emulator.
 VERIFYALLLOG = build/verify-all.log
 .PHONY: verify-all
 verify-all:
 	@mkdir -p build; rm -f $(VERIFYALLLOG); pass=0; fail=0; \
 	for t in $$(sed -n 's/^\(verify-[a-z0-9-]*\):.*/\1/p' tests/verify.mk \
-		| grep -v '^verify-all$$' | sort -u); do \
+		| grep -Ev '^verify-(all|zcc)$$' | sort -u); do \
 		echo "=== $$t"; \
 		if $(MAKE) --no-print-directory $$t; then \
 			echo "PASS $$t" >> $(VERIFYALLLOG); pass=$$((pass+1)); \
@@ -6448,14 +6502,15 @@ verify-put: all $(CPMAGP)
 # non-segmented caller's mode.  DEVIATIONS.md #7 is the entry.
 #
 # Four legs, and the reason there are four is that "intercepted" has two
-# directions and the refusal has to survive both:
+# directions and the refusal has to survive both.  Leg 1 is the direction
+# that SUPPLIES a call's answer, and it is the one that needs a stock
+# 0xEE03 binary -- the SDB that ZCC and LD8K build on the machine -- so it
+# lives in verify-zcc, which is where that ten-minute build lives.  The
+# three legs here need no ZCC build and run in a few minutes:
 #
-#   1  GET FILE NCMDS.TXT feeds SDB.Z8K.  SDB is a stock 0xEE03 binary
-#      -- the one ZCC and LD8K build on the machine, $(SDBZCC), put on
-#      drive A: in place of the 0xEE01 one `all' builds -- and every
-#      line of its session -- its own prompt, a deliberate syntax error,
-#      its `exit' -- is read out of the file through functions 1 and 10.
-#      This is the direction that SUPPLIES a call's answer.
+#   1  (verify-zcc) GET FILE NCMDS.TXT feeds SDB.Z8K, and every line of
+#      its session -- its own prompt, a deliberate syntax error, its
+#      `exit' -- is read out of the file through functions 1 and 10.
 #   2  DDT.Z8K with nothing resident: the control for leg 3, and the
 #      reason it is needed is that leg 3 asserts a MUTATION of DDT's
 #      output, so the unmutated form has to be on the record.
@@ -6496,13 +6551,8 @@ RSXNIN3	= $(OSSEL)RSXLDR UCASEH.RSX\rDDT MHELLO.Z8K\r
 RSXNIN4	= $(OSSEL)PUT FILE DOUT.TXT\rDUMP NMARKER.TXT\rSIZEZ8K MHELLO.Z8K\rPUT CONSOLE\rTYPE DOUT.TXT\r$(ENDIN)
 
 .PHONY: verify-rsxn
-verify-rsxn: all $(CPMAGP) $(SDBZCC)
-	$(call SDBZCCA,build/cpma-rsxn.img,build/diska-rsxn,$(DISKAG))
-	$(MKDISK) $(RSXNIMG) $(CPMSYS) build/cpma-rsxn.img
-	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
-		--input="$(RSXNIN1)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
-		| tee $(abspath $(RSXNLOG))-1.log
-	@$(EMUOK)
+verify-rsxn: all $(CPMAGP)
+	$(MKDISK) $(RSXNIMG) $(CPMSYS) $(CPMAGP)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(RSXNIMG)) \
 		--input="$(RSXNIN2)" --max=$(RSXNMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(RSXNLOG))-2.log
@@ -6516,18 +6566,7 @@ verify-rsxn: all $(CPMAGP) $(SDBZCC)
 		--input="$(RSXNIN4)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(RSXNLOG))-4.log
 	@$(EMUOK)
-#	--- 1: functions 1 and 10 served from a file to a stock 0xEE03 binary
-	@grep -q 'Getting console input from file: NCMDS.TXT' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- GET did not take the file"; exit 1; }
-	@grep -q 'SDB - version' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- SDB.Z8K did not run: the command line was not read out of the file"; exit 1; }
-	@grep -q 'SDB> zzbogus' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- a line of the file did not reach SDB's own prompt: the gate is still declining a non-segmented caller"; exit 1; }
-	@grep -q 'syntax error' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- SDB did not ACT on the line it was given"; exit 1; }
-	@grep -q 'GET-DROVE-A-STOCK-BINARY' $(RSXNLOG)-1.log \
-		|| { echo "verify-rsxn: FAIL -- the exit line did not get SDB out and the next command did not run"; exit 1; }
-#	--- 2/3: the same stock binary's output, unmutated and mutated
+#	--- 2/3: a stock binary's output, unmutated and mutated
 	@grep -q 'Zilog portable debugger' $(RSXNLOG)-2.log \
 		|| { echo "verify-rsxn: FAIL -- DDT did not run with nothing resident: the control leg proves nothing"; exit 1; }
 	@grep -q 'RSXLDR: ATTACHED AT F700 RESIDENT' $(RSXNLOG)-3.log \
@@ -6541,10 +6580,10 @@ verify-rsxn: all $(CPMAGP) $(SDBZCC)
 		|| { echo "verify-rsxn: FAIL -- DUMP.Z8K's output was not captured into the file and read back"; exit 1; }
 	@test "`grep -c 'Segmented Program' $(RSXNLOG)-4.log`" = 1 \
 		|| { echo "verify-rsxn: FAIL -- SIZEZ8K.Z8K is split I/D and its output must NOT reach the chain; DEVIATIONS.md #7 says so and this counted it twice"; exit 1; }
-	@echo "verify-rsxn: PASS -- a stock 0xEE03 binary fed from a file through"
-	@echo "             functions 1 and 10, another one's output mutated by a"
-	@echo "             module, DDT.Z8K's banner among it, and a split-I/D"
-	@echo "             caller still going straight to the BDOS"
+	@echo "verify-rsxn: PASS -- a stock 0xEE03 binary's output mutated by a"
+	@echo "             module, DDT.Z8K's banner among it, another one's"
+	@echo "             output captured to a file, and a split-I/D caller"
+	@echo "             still going straight to the BDOS"
 
 # ---- verify-ddtseg: no program may write over a supervisor stack ----
 # Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: six
@@ -7920,8 +7959,8 @@ verify-repl: all $(CPMAIMG) $(CPMBIMG)
 	@echo "             could not replace its program file left it whole"
 
 # ---- src/app under malformed input ----
-# verify-a3 and verify-sdb build these same programs on the machine and run
-# them on good input.  This target runs them on BAD input, and it runs them
+# verify-a3, verify-sdb and verify-zcc run these same programs on good
+# input.  This target runs them on BAD input, and it runs them
 # ON THE HOST for the reason tests/appbound.sh's header gives at length:
 # every defect it covers is a write past the end of a buffer, and on the
 # Z8001 such a write lands in whatever is next in the TPA while the command
