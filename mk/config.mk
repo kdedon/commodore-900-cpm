@@ -58,6 +58,9 @@ COPYYEAR := $(shell date +%Y)
 
 OBJDIR = build/obj
 LOG    = build/build.log
+# Unique to this make process: the stamp rules below write a temporary
+# beside their target on EVERY build, and verify-all runs many makes at once.
+TMPSFX := .tmp.$(shell echo $$$$)
 # Compiler identity and binary digest; changes invalidate target objects.
 TCSTAMP = build/toolchain.txt
 CPMSYS = build/cpm.sys

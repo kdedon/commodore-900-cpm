@@ -70,7 +70,7 @@ $(OBJDIR):
 
 # Refresh the compiler stamp every build, preserving its mtime if unchanged.
 $(TCSTAMP): FORCE | $(OBJDIR)
-	@sh tools/tcstamp.sh '$(C900_TOOLCHAIN)' > $@.tmp
-	@cat $@.tmp; cat $@.tmp >> $(LOG)
-	@cmp -s $@.tmp $@ || cp $@.tmp $@
-	@rm -f $@.tmp
+	@sh tools/tcstamp.sh '$(C900_TOOLCHAIN)' > $@$(TMPSFX)
+	@cat $@$(TMPSFX); cat $@$(TMPSFX) >> $(LOG)
+	@cmp -s $@$(TMPSFX) $@ || cp $@$(TMPSFX) $@
+	@rm -f $@$(TMPSFX)

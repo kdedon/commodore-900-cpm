@@ -32,13 +32,19 @@ deps:
 	sh tools/deps-fetch.sh $(DEP)
 
 # Remove published images before compiling so failed builds do not leave stale outputs.
+# VERIFYCHILD is one of verify-all's concurrent workers (tests/verifyrun.sh):
+# the build was made and checked once before they started, and a worker that
+# republished it would pull the images out from under the others.
 unpublish:
-	@rm -f $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG) $(CPMDISKALL)
+	@$(if $(VERIFYCHILD),:,rm -f $(CPMSYS) $(CPMAIMG) $(CPMARIMG) $(CPMBIMG) $(CPMDISKALL))
 
 clean:
 	rm -rf build
 
-# Recipes share build.log and scratch names in $(OBJDIR); -j interleaves.
+# The compile rules share build.log and scratch names in $(OBJDIR); -j
+# interleaves them.  The verify suite gets its concurrency instead from
+# verify-all, which runs many of these serial makes at once
+# (tests/verifyrun.sh); nothing here depends on -j.
 .NOTPARALLEL:
 
 # Check documentation references in the packed images, including program strings.
@@ -60,9 +66,9 @@ $(OBJDIR)/cpmver.h: FORCE | $(OBJDIR)
 	  '   Set CPMVER in mk/config.mk; dates come from the build host. */' \
 	  '#define SYS_BANNER "\014\n\r\nCPM-Z8000 Version $(CPMVER) $(CPMDATE)$$"' \
 	  '#define SYS_COPYRIGHT "\r\nCopyright $(COPYYEAR) OpenCoherent contributors$$"' \
-	  > $@.tmp
-	@cmp -s $@.tmp $@ || mv $@.tmp $@
-	@rm -f $@.tmp
+	  > $@$(TMPSFX)
+	@cmp -s $@$(TMPSFX) $@ || mv $@$(TMPSFX) $@
+	@rm -f $@$(TMPSFX)
 
 $(OBJDIR)/bdosmisc.o: $(OBJDIR)/cpmver.h
 

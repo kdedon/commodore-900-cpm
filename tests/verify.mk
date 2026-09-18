@@ -40,7 +40,9 @@ SESS1	= SESSION 1\r
 # inside the group, then check it with EMUOK after tee drains the transcript.
 # EMUCD validates the dependency before changing directories.
 EMUCD = sh tools/deps.sh -n emu '$(EMU)' && cd $(EMU)/bin
-EMUSTATUS = build/emu.status
+# Named for the target that is running, because verify-all runs several of
+# them at once and the status of one emulator is not the verdict of another.
+EMUSTATUS = build/emu-$(notdir $@).status
 EMUSTAT = echo $$? > $(abspath $(EMUSTATUS))
 EMUOK = test "`cat $(EMUSTATUS)`" = 0 \
 	|| { echo "*** the emulator exited `cat $(EMUSTATUS)`: what is above is not a session"; exit 1; }
@@ -1374,7 +1376,7 @@ verify-initdir-mutants: all
 	rc=0; \
 	for m in M1 M2 M3 M4; do \
 		sh tests/initdir-mutate.sh $$m || { rc=1; break; }; \
-		if $(MAKE) --no-print-directory verify-initdir >build/mut-$$m.log 2>&1; then \
+		if $(MAKE) --no-print-directory verify-initdir >build/idmut-$$m.log 2>&1; then \
 			echo "verify-initdir-mutants: FAIL -- $$m PASSED verify-initdir;"; \
 			echo "  whatever that mutant broke, nothing is asserting on it"; \
 			rc=1; \
@@ -4288,7 +4290,9 @@ HASHABN    = 384
 # there being no OTHER rule left to build the real file with.
 .PHONY: hashoff-cpmsys
 hashoff-cpmsys:
+	@mkdir -p $(HASHOFFDIR)
 	$(MAKE) OBJDIR=$(HASHOFFOBJ) CPMSYS=$(HASHOFFSYS) \
+		SPLITMOD=$(HASHOFFDIR)/split.mod LOG=$(HASHOFFDIR)/build.log \
 		DEFS='-DHASH_A_DEFAULT=0 -DHASH_B_DEFAULT=0' $(HASHOFFSYS)
 
 $(HASHABB): tools/mkcpmfs.py
@@ -5777,32 +5781,25 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 	@echo "             unaffected within CONCZTOL, and the poller never woke on a"
 	@echo "             silent wire) and wakes (it read the byte only after a wire"
 	@echo "             trace proves the byte was not there when it was asked for)"
-# ---- verify-all: every verify-* target above, one after another ----
-# Sequential because the targets share build/ (media, transcripts, and the
-# images `all' rebuilds).  Each runs in its own $(MAKE) so a failure ends
-# that target only; the rest still run, and the summary names every verdict.
-# Exit status is non-zero iff any target failed.  The list is read from this
-# file at run time -- a target added above is picked up without registering
-# it here -- and the pattern keeps hyphens (verify-hash-ab, verify-rtc-host).
+# ---- verify-all: every verify-* target above, VERIFYJOBS at a time ----
+# Each target still runs in its own $(MAKE) and its own emulator, so a
+# failure ends that target only; the rest still run, and the summary names
+# every verdict.  Exit status is non-zero iff any target failed.  The list
+# is read from this file at run time -- a target added above is picked up
+# without registering it here -- and the pattern keeps hyphens
+# (verify-hash-ab, verify-rtc-host).
 # verify-zcc is skipped by name: it rebuilds src/app on the machine with
 # DRI's ZCC, which is twenty minutes on its own.  `make verify-zcc' runs it.
 # A test target, reached from nothing: `all' never runs an emulator.
+#
+# tests/verifyrun.sh is what makes running several at once safe; its header
+# says how.  VERIFYJOBS=1 is the old one-after-another suite.
 VERIFYALLLOG = build/verify-all.log
+VERIFYJOBS ?= 4
 .PHONY: verify-all
 verify-all:
-	@mkdir -p build; rm -f $(VERIFYALLLOG); pass=0; fail=0; \
-	for t in $$(sed -n 's/^\(verify-[a-z0-9-]*\):.*/\1/p' tests/verify.mk \
-		| grep -Ev '^verify-(all|zcc)$$' | sort -u); do \
-		echo "=== $$t"; \
-		if $(MAKE) --no-print-directory $$t; then \
-			echo "PASS $$t" >> $(VERIFYALLLOG); pass=$$((pass+1)); \
-		else \
-			echo "FAIL $$t" >> $(VERIFYALLLOG); fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo "=== verify-all summary ($(VERIFYALLLOG))"; cat $(VERIFYALLLOG); \
-	echo "verify-all: $$pass passed, $$fail failed, $$((pass+fail)) run"; \
-	[ "$$fail" -eq 0 ]
+	@mkdir -p build
+	@sh tests/verifyrun.sh $(VERIFYJOBS) '$(MAKE)' $(VERIFYALLLOG)
 
 HELPIMG	= build/helptest.bin
 HELPLOG	= build/verify-help.log
@@ -6326,7 +6323,9 @@ verify-conc7: all $(CPMACONCV)
 # input would be handed over during the file's own session and eaten;
 # and it is preceded by two bare CRs because the byte after a mark can
 # still land in an output path that is polling for ^S.
-GPIMG	= build/gptest.bin
+# One medium per target: verify-get and verify-put rebuild it and the guest
+# writes to it, and under verify-all they run at the same time.
+GPIMG	= build/gptest-$(notdir $@).bin
 GPLOG	= build/verify-gp
 # One sacrificial pair of CRs, then the command, all as type-ahead.
 GPBACK	= \i\r\i\r\iT\iY\iP\iE\i \iG\iM\iA\iR\iK\i2\i.\iT\iX\iT\i\r
@@ -6659,8 +6658,18 @@ verify-ddtseg: all $(CPMAGP)
 # All four use CATT.Z8K (src/cmd/catt.c), which rides on $(CPMAXDOS) next
 # to CON1.Z8K and for the same reason: that image is nobody's alignment.
 C10IMG	= build/c10test.bin
-$(C10IMG): all $(CPMAXDOS)
+# Prerequisites are the FILES it is made of, not the phony `all': a medium
+# that is rebuilt on every make is rebuilt by every one of verify-all's
+# workers, over the copy the others are booting.
+$(C10IMG): $(CPMSYS) $(CPMAXDOS) $(CPMBIMG) $(wildcard $(KBOOT)) tools/mkcpmdisk.py
 	$(MKDISK) $@ $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+
+# The guest writes to the medium it booted, so each of the four takes its own
+# copy of it: they share the image, not the disk, and under verify-all they
+# run at the same time.  A copy also means none of them boots what another
+# one left behind, whatever order they run in.
+C10RUN	= build/c10-$(notdir $@).bin
+C10COPY	= cp $(C10IMG) $(C10RUN)
 
 # ---- verify-c10own: 146 AND 147 ON A CONSOLE THIS PROCESS OWNS ----
 # The transient IS the process the CCP was running in, so the console it
@@ -6676,7 +6685,7 @@ $(C10IMG): all $(CPMAXDOS)
 # broke the machine on its way to being right.
 C10OWNLOG = build/verify-c10own.log
 .PHONY: verify-c10own
-verify-c10own: $(C10IMG)
+verify-c10own: all $(C10IMG)
 	@# THE `7' IS TYPE-AHEAD (\i) AND IT HAS TO BE.  The feeder holds
 	@# the byte after a carriage return until the guest prints a fresh
 	@# prompt (emulator src/bus.c, inq_wait_seq), and CATT reads before
@@ -6684,7 +6693,8 @@ verify-c10own: $(C10IMG)
 	@# --input-mark releases it on `CATT: again 0' instead: after the
 	@# console has been detached and retaken, which is the moment the
 	@# read is meant to test.
-	{ $(EMUCD) && ./c900 --disk=$(abspath $(C10IMG)) \
+	@$(C10COPY)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(C10RUN)) \
 		--input="CATT\r\i7$(ENDIN)" --input-mark='CATT: again 0' \
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
 		$(EMUSTAT); } | tee $(abspath $(C10OWNLOG))
@@ -6738,8 +6748,9 @@ verify-c10own: $(C10IMG)
 C10WC0	= build/verify-c10wait-c0.log
 C10WC1	= build/verify-c10wait-c1.log
 .PHONY: verify-c10wait
-verify-c10wait: $(C10IMG)
-	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10IMG) \
+verify-c10wait: all $(C10IMG)
+	@$(C10COPY)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10RUN) \
 		--input='$(SESS1)CATT W\r$(ENDIN)' --max=$(EMUMAX) --stop-on=idle \
 		--stop-mark='$(ENDMARK)' \
 		--send-after='CATT: waiting 1' --send='USER 0\r' \
@@ -6806,8 +6817,9 @@ verify-c10wait: $(C10IMG)
 C10BC0	= build/verify-c10brk-c0.log
 C10BC1	= build/verify-c10brk-c1.log
 .PHONY: verify-c10brk
-verify-c10brk: $(C10IMG)
-	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10IMG) \
+verify-c10brk: all $(C10IMG)
+	@$(C10COPY)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10RUN) \
 		--input="`printf '$(SESS1)CATT H\r\\i\003CATT D\r'`" \
 		--input-mark='CATT: held 1' \
 		--max=$(EMUMAX) --stop-on=idle --stop-mark='$(ENDMARK)' \
@@ -6875,8 +6887,9 @@ verify-c10brk: $(C10IMG)
 C10TC0	= build/verify-c10two-c0.log
 C10TC1	= build/verify-c10two-c1.log
 .PHONY: verify-c10two
-verify-c10two: $(C10IMG)
-	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10IMG) \
+verify-c10two: all $(C10IMG)
+	@$(C10COPY)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(C10RUN) \
 		--input='$(SESS1)CATT\r\i0$(ENDIN)' --input-mark='CATT: again 0' \
 		--max=$(EMUMAX) --stop-on=idle \
 		--stop-mark='$(ENDMARK)' \
@@ -8206,3 +8219,25 @@ verify-concr2: all $(CPMACONCR2)
 .PHONY: verify-local
 verify-local: all
 	@sh tests/localt.sh $(MAKE)
+
+# ---- verifyprep: what the targets above share ----
+# Every file prerequisite of every verify target: the fixture images, the
+# media and the host-side tools.  verify-all builds them here, once, before
+# it starts running targets concurrently -- two makes that each built
+# build/cpma-conc.img would be writing the same file at the same time.
+#
+# Read from this file rather than listed, for the reason verify-all's own
+# target list is: a target added above is prepared without being registered
+# here.  The first sed joins continued prerequisite lines; the $(eval)
+# expands the variable names the list is written in.  verify-zcc is left out
+# for the reason verify-all leaves it out: its inputs are the twenty-minute
+# ZCC rebuild, and `make verify-zcc' is where that belongs.  The name has no
+# hyphen after `verify', so verify-all's enumeration does not take it for a
+# test.
+VERIFYPREPRAW := $(shell sed -e :a -e '/\\$$/N; s/\\\n//; ta' tests/verify.mk \
+	| grep -Ev '^verify-(all|zcc):' \
+	| sed -n 's/^verify-[a-z0-9-]*:\(.*\)/\1/p')
+$(eval VERIFYPREP := $(VERIFYPREPRAW))
+VERIFYPREP := $(filter-out all verify-%,$(sort $(VERIFYPREP)))
+.PHONY: verifyprep
+verifyprep: $(VERIFYPREP)
