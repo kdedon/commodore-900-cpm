@@ -6,6 +6,9 @@
 #
 #   sh tests/verifyrun.sh JOBS MAKE SUMMARY
 #
+# VERIFYSET, if set (make verify-all VERIFYSET="..."), names the targets to
+# run instead of the whole suite; see targets() below.
+#
 # Run from the repository root by `make verify-all'.  Every target still
 # gets its own $(MAKE) and its own emulator, exactly as when the suite ran
 # one after another; JOBS of them are simply in flight at once.  Four
@@ -47,9 +50,21 @@ MUTS='verify-banner-mutants verify-initdir-mutants'
 
 # The suite's own targets, read from the makefile at run time: a target
 # added there is picked up without being registered here.
-targets() {
+suite() {
 	sed -n 's/^\(verify-[a-z0-9-]*\):.*/\1/p' tests/verify.mk |
 		grep -Ev '^verify-(all|zcc)$' | sort -u
+}
+
+# What this run covers: the whole suite, or -- when VERIFYSET names some
+# targets (`make verify-all VERIFYSET="verify-z80 verify-i86"', which is how
+# CI runs only what a push can affect) -- those, plus the verify-*
+# prerequisites each of them needs, so the job grouping below is unchanged.
+targets() {
+	if [ -z "${VERIFYSET:-}" ]; then
+		suite
+		return
+	fi
+	for t in $VERIFYSET; do echo $t; vdeps $t; done | sort -u
 }
 
 # The verify-* prerequisites of one target, if any.
@@ -167,6 +182,20 @@ if [ -n "${MAKEFLAGS:-}" ]; then
 	export MAKEFLAGS
 fi
 
+# A name in VERIFYSET that is not a suite target is refused before anything
+# runs: a typo would otherwise select nothing and report success.
+VERIFYSET=`echo ${VERIFYSET:-}`
+if [ -n "$VERIFYSET" ]; then
+	all=" `suite | tr '\012' ' '` "
+	for t in $VERIFYSET; do
+		case $all in *" $t "*) ;; *)
+			echo "verifyrun: VERIFYSET names \`$t', which is not a suite target" >&2
+			exit 2 ;;
+		esac
+	done
+	echo "=== VERIFYSET: `targets | tr '\012' ' '`"
+fi
+
 rm -rf $RUNDIR
 mkdir -p $RUNDIR
 : > $RUNDIR/results
@@ -177,7 +206,9 @@ $MAKE --no-print-directory all || exit 1
 # (build/cpmhost without cpmtools, say) must fail the targets that need it
 # and no others, which is what happened when they ran one after another.
 $MAKE --no-print-directory -k verifyprep || true
-for t in $MUTS; do mutsetup $t; done
+for t in $MUTS; do
+	case " `targets | tr '\012' ' '` " in *" $t "*) mutsetup $t;; esac
+done
 MUTDEPS=`mutdeps`
 export MUTDEPS
 
@@ -215,7 +246,13 @@ fi
 echo "=== phase 2: `wc -l < $jobs` jobs, $J at a time"
 xargs -P "$J" -I@@ sh tests/verifyrun.sh --job "$MAKE" @@ < $jobs
 
-[ -s $RUNDIR/times ] && cp $RUNDIR/times $TIMES
+# A subset run updates its own targets' timings and keeps everybody else's.
+if [ -s $RUNDIR/times ] && [ -n "$VERIFYSET" ]; then
+	cat $RUNDIR/times $TIMES 2>/dev/null | awk '!seen[$2]++' > $TIMES.new
+	mv $TIMES.new $TIMES
+elif [ -s $RUNDIR/times ]; then
+	cp $RUNDIR/times $TIMES
+fi
 sort -k2 $RUNDIR/results > $SUM
 pass=`grep -c '^PASS' $SUM` || pass=0
 fail=`grep -c '^FAIL' $SUM` || fail=0

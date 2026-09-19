@@ -20,7 +20,8 @@ help:
 	  'make farptrcheck     check the banked-memory invariant in src/bdos' \
 	  'make verify-<name>   run one emulator verification target' \
 	  'make verify-all      run every verification target but verify-zcc,' \
-	  '                     VERIFYJOBS at a time (default 4, 1 = one by one)' \
+	  '                     VERIFYJOBS at a time (default 4, 1 = one by one);' \
+	  '                     VERIFYSET="verify-a verify-b" runs just those' \
 	  'make verify-zcc      rebuild src/app on the machine with DRI ZCC and' \
 	  '                     run those binaries; 20 minutes, not in verify-all' \
 	  'make cpmlocal        LOCALDIR=<dir> LOCALOUT=<path outside the checkout>:' \
