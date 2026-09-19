@@ -14,6 +14,9 @@
 # it as an artifact: `latest' is read a single time, so everything in the
 # release was built against the same releases.
 #
+# The whole verify suite (`make verify-all') runs in its own job beside the
+# build, and nothing is published unless it passes.
+#
 # The images are sparse files of tens of megabytes that are mostly zeros, so
 # they are published gzipped.  cpma.img is not published: it is the
 # development drive A:, with the verify suite's guest halves on it.
@@ -40,6 +43,8 @@ jobs:
         run: make deps DEP=toolchain
       - name: The loader, and the handoff header the BIOS compiles
         run: make deps DEP=kboot
+      - name: The emulator the verify suite boots
+        run: make deps DEP=emu
       # A tar because the toolchain release carries symlinks and executables.
       - name: Pack the edges
         run: tar -cf cpm-deps.tar deps
@@ -101,8 +106,39 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # The whole suite, against the same tag and the same edges as `build'.  It
+  # runs beside `build', and `publish' needs both: a failing suite publishes
+  # nothing.
+  verify:
+    needs: deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: cpm-deps }
+      - name: Restore the edges
+        run: tar -xpf cpm-deps.tar
+      - name: cpmtools
+        run: sudo apt-get update -q && sudo apt-get install -y -q cpmtools
+      # Four at a time: the runner has four vCPUs.
+      - name: The verify suite
+        env:
+          C900_TOOLCHAIN: ${{ github.workspace }}/deps/commodore-900-toolchain
+          KBOOT: ${{ github.workspace }}/deps/commodore-900-kboot/kboot
+          KBOOTSRC: ${{ github.workspace }}/deps/commodore-900-kboot
+          EMU: ${{ github.workspace }}/deps/commodore-900-emulator
+        run: make verify-all VERIFYJOBS=4
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: verify-logs
+          path: |
+            build/verify-run/
+            build/verify-*.log
+          retention-days: 7
+
   publish:
-    needs: build
+    needs: [build, verify]
     if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:

@@ -924,6 +924,12 @@ CPMTOOLS := $(if $(CPMTOOLS),$(CPMTOOLS),$(shell sh tools/deps.sh cpmtools))
 CPMTOOLSCHK = sh tools/deps.sh -n cpmtools '$(CPMTOOLS)' || exit 1
 # cpmtools reads ./diskdefs, so it runs from the directory holding ours.
 CPMT = cd tests/cpmtools && $(abspath $(CPMTOOLS))
+# Naming a driver skips libdsk's geometry probe, which reads sector 0 -- our
+# first directory entry -- as an Amstrad PCW superblock and takes the fifth
+# filename byte for a sector-size shift, overrunning its 512-byte buffer.
+# Every geometry value still comes from our diskdefs; the format name only
+# satisfies the lookup.  Fixed in libdsk 1.5.18; Ubuntu ships 1.5.9.
+CPMTDEV = -T raw,pcw180
 .PHONY: dirfmt-check
 dirfmt-check:
 	@$(CPMTOOLSCHK)
@@ -970,11 +976,19 @@ verify-stamped: all
 		|| { echo "verify-stamped: FAIL -- directory label damaged"; exit 1; }
 	@grep -q 'STAMP1.TXT' build/stamp-after.txt \
 		|| { echo "verify-stamped: FAIL -- PIP did not create its file"; exit 1; }
-	@$(CPMT)/fsck.cpm -n -f c900a $(abspath build/stamp-cpma.img) \
-		> $(abspath build/stamp-after-cpm.txt) \
-		|| { cat $(abspath build/stamp-after-cpm.txt); \
-		     echo "verify-stamped: FAIL -- fsck.cpm finds the stamped directory damaged"; exit 1; }
-	@$(CPMT)/cpmls -f c900a $(abspath build/stamp-cpma.img) \
+	@# A signal says fsck.cpm died, not that it reached a verdict; glibc's
+	@# heap check aborts it after a clean read on some builds.  Naming the
+	@# two apart keeps a crash in its own tool from reading as our damage.
+	@{ $(CPMT)/fsck.cpm -n -f c900a $(CPMTDEV) $(abspath build/stamp-cpma.img) \
+		> $(abspath build/stamp-after-cpm.txt); } ; s=$$?; \
+	  if [ $$s -ge 128 ]; then \
+		cat $(abspath build/stamp-after-cpm.txt); \
+		echo "verify-stamped: FAIL -- fsck.cpm died on signal $$((s - 128)) without reaching a verdict"; exit 1; \
+	  elif [ $$s -ne 0 ]; then \
+		cat $(abspath build/stamp-after-cpm.txt); \
+		echo "verify-stamped: FAIL -- fsck.cpm finds the stamped directory damaged"; exit 1; \
+	  fi
+	@$(CPMT)/cpmls -f c900a $(CPMTDEV) $(abspath build/stamp-cpma.img) \
 		> $(abspath build/stamp-after-cpm.txt)
 	@grep -qx 'stamp1.txt' build/stamp-after-cpm.txt \
 		|| { echo "verify-stamped: FAIL -- cpmtools does not see PIP's file"; exit 1; }
@@ -4398,9 +4412,16 @@ COH_KBDDIR ?= $(or $(patsubst %/kb.c,%,$(firstword $(wildcard $(foreach d,\
 	.. ../.. ../../.. ../../../.. repos,$(abspath $(d))/$(COH_KBDREL)/kb.c)))),\
 	$(abspath ..)/$(COH_KBDREL))
 
+# The oracle is COHERENT source that is not ours to vendor, so it is only
+# ever a sibling checkout.  Where it is absent -- CI, a fresh clone -- there
+# is nothing to compare against and the target skips.
 .PHONY: verify-kbd
-verify-kbd: build/kbdtest
-	./build/kbdtest
+verify-kbd:
+	@if test -f $(COH_KBDDIR)/kb.c; then \
+	  $(MAKE) --no-print-directory build/kbdtest && ./build/kbdtest; \
+	else \
+	  echo "verify-kbd: SKIP -- no COHERENT keyboard driver beside this checkout"; \
+	fi
 
 # kbtab.h has no include guard, so the driver and its table are two objects.
 build/kbdtest: tests/kbdtest.c tests/kbdoracle.c tests/kbdorat.c \

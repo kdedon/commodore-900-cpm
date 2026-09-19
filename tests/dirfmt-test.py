@@ -63,6 +63,10 @@ T_LABEL = 0x20
 
 WORK = None
 CPMTOOLS = None
+# Naming a driver skips libdsk's geometry probe, which misreads our first
+# directory entry as a PCW superblock and overruns its sector buffer.  The
+# geometry comes from diskdefs either way.
+DEV = ['-T', 'raw,pcw180']
 failures = []
 checks = 0
 
@@ -99,15 +103,15 @@ def ct(tool, img, *args, expect_ok=True):
     env = dict(os.environ, TZ='UTC')
     opts = [a for a in args if a.startswith('-')]
     rest = [a for a in args if not a.startswith('-')]
-    return run([os.path.join(CPMTOOLS, tool), '-f', FORMAT] + opts
+    return run([os.path.join(CPMTOOLS, tool), '-f', FORMAT] + DEV + opts
                + [path(img)] + rest,
                expect_ok=expect_ok, cwd=DISKDEFS_DIR, env=env)
 
 
 def fsck(img):
     env = dict(os.environ, TZ='UTC')
-    return run([os.path.join(CPMTOOLS, 'fsck.cpm'), '-n', '-f', FORMAT,
-                path(img)], expect_ok=False, cwd=DISKDEFS_DIR, env=env)
+    return run([os.path.join(CPMTOOLS, 'fsck.cpm'), '-n', '-f', FORMAT]
+               + DEV + [path(img)], expect_ok=False, cwd=DISKDEFS_DIR, env=env)
 
 
 def path(name):

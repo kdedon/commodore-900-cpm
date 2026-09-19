@@ -25,13 +25,16 @@
 # `make all' IS NOT A GATE ON THE NETWORK, and that is the constraint it was
 # written against.  The only fetches are the deps job's `make deps' steps for
 # the two releases it compiles with, the toolchain and kboot (the BIOS
-# compiles kboot's bootinfo.h, and the boot medium carries its loader);
-# `all' itself fetches nothing.  So this step fails for a compile, staging,
+# compiles kboot's bootinfo.h, and the boot medium carries its loader), and
+# the emulator release the verify job boots; `all' itself fetches nothing.  So this step fails for a compile, staging,
 # packing or exclusion fault and for nothing else.
 #
-# Nothing here boots -- `make verify' and `make selfhost' are the runtime
-# gates, they need the emulator, and they are a separate question from
-# whether it links.
+# The verify job boots: it runs the part of `make verify-all' that the
+# push's changed files can affect, as tests/cisel.sh reads them -- nothing for
+# a docs-only change, a few targets for a guest-shim or src/app change, and
+# the whole suite for anything touching the system or anything it does not
+# recognise.  The first push of a branch runs the whole suite.  A tag push
+# skips it here: release.yml runs the whole suite for a tag.
 name: build
 
 on:
@@ -58,6 +61,10 @@ jobs:
         run: make deps DEP=toolchain
       - name: The loader, and the handoff header the BIOS compiles
         run: make deps DEP=kboot
+      # A published binary, with the ROM and disk it boots from: nothing to
+      # build.  Only the verify job uses it.
+      - name: The emulator the verify suite boots
+        run: make deps DEP=emu
 
       - name: Pack the edges
         run: tar -cf cpm-deps.tar deps
@@ -119,3 +126,86 @@ jobs:
         if: failure()
         working-directory: cpm
         run: cat build/build.log build/obj/link.txt build/obj/modlink.txt 2>/dev/null || true
+
+  # ---------------------------------------------------------------------------
+  # The verify suite, narrowed to what this push can affect.  Beside `link',
+  # not after it: `make verify-all' builds `all' first, so a compile fault
+  # fails both, and neither waits for the other.
+  # ---------------------------------------------------------------------------
+  verify:
+    needs: deps
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    steps:
+      # The whole history, so the push's BEFORE commit is there to diff.
+      - uses: actions/checkout@v4
+        with: { path: cpm, fetch-depth: 0 }
+
+      # The workflow computes the diff; tests/cisel.sh only reads the list.
+      # No BEFORE (a branch's first push, all zeros, a dispatch run) or one
+      # git cannot diff against (a force push) runs everything.
+      - name: What this push can affect
+        id: sel
+        working-directory: cpm
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          CREATED: ${{ github.event.created }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          AFTER: ${{ github.sha }}
+        run: |
+          case $EVENT in
+          push)         from=$BEFORE ;;
+          pull_request) from=$BASE ;;
+          *)            from= ;;
+          esac
+          [ "$CREATED" = true ] && from=
+          [ -n "$(printf '%s' "$from" | tr -d 0)" ] || from=
+          if [ -n "$from" ] && files=$(git diff --name-only "$from" "$AFTER"); then
+            printf '%s\n' "$files"
+            targets=$(printf '%s\n' "$files" | sh tests/cisel.sh)
+          else
+            targets=all
+          fi
+          echo "verify: ${targets:-nothing}"
+          echo "set=$targets" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        if: steps.sel.outputs.set != ''
+        with: { name: cpm-deps, path: cpm }
+      - name: Restore the edges
+        if: steps.sel.outputs.set != ''
+        working-directory: cpm
+        run: tar -xpf cpm-deps.tar
+
+      # The independent CP/M 3 directory reader dirfmt-check and
+      # verify-stamped check the format against.
+      - name: cpmtools
+        if: steps.sel.outputs.set != ''
+        run: sudo apt-get update -q && sudo apt-get install -y -q cpmtools
+
+      # Four at a time: the runner has four vCPUs.
+      - name: The verify suite
+        if: steps.sel.outputs.set != ''
+        working-directory: cpm
+        env:
+          C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
+          KBOOT: ${{ github.workspace }}/cpm/deps/commodore-900-kboot/kboot
+          KBOOTSRC: ${{ github.workspace }}/cpm/deps/commodore-900-kboot
+          EMU: ${{ github.workspace }}/cpm/deps/commodore-900-emulator
+          SET: ${{ steps.sel.outputs.set }}
+        run: |
+          if [ "$SET" = all ]; then
+            make verify-all VERIFYJOBS=4
+          else
+            make verify-all VERIFYJOBS=4 VERIFYSET="$SET"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: verify-logs
+          path: |
+            cpm/build/verify-run/
+            cpm/build/verify-*.log
+          retention-days: 7
