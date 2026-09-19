@@ -71,7 +71,10 @@ char **argv;
 	report("wboot(1)", 1, 0L, 1);
 	report("conout(4)", 4, 0L, 1);
 	report("gmrta(18)", 18, 0L, 1);
-	report("setxvec(22)", 22, 0L, 1);
+	/* SETXVEC is allowed (DDT records its breakpoint handler this
+	   way).  Vector 48 is past the table, so the probe records
+	   nothing and answers 0 -- side-effect free, like SECTRAN. */
+	report("setxvec(22)", 22, 48L, 0);
 	report("undefined(99)", 99, 0L, 1);
 	report("sectran(16)", 16, 0L, 0);
 	report("flush(21)", 21, 0L, 0);

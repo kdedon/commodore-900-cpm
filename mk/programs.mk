@@ -466,6 +466,15 @@ $(UOBJDIR)/INITDIR.Z8K: $(UOBJDIR)/initdir.lout $(LOUT2CPM)
 $(UOBJDIR)/BIOSET.Z8K: $(UOBJDIR)/bioset.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# SCZERO (verify-ddtbrk): the C driver and its one-instruction SC #0.
+$(UOBJDIR)/sczero.lout: $(UOBJDIR)/sczero.o $(UOBJDIR)/sczerosc.o \
+			$(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o \
+		$(UOBJDIR)/sczero.o $(UOBJDIR)/sczerosc.o $(ULIB)
+
+$(UOBJDIR)/SCZERO.Z8K: $(UOBJDIR)/sczero.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/CONBRK.Z8K: $(UOBJDIR)/conbrk.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

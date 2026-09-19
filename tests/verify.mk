@@ -6661,6 +6661,73 @@ verify-ddtseg: all $(CPMAGP)
 	@echo "               segment 0x3F is untouched: no program wrote over"
 	@echo "               another process's supervisor stack"
 
+# ---- verify-ddtbrk: DDT.Z8K takes real breakpoints ----
+# DDT records its SC #0 handler through BDOS fn 50 carrying BIOS fn 22
+# for vector 32 (src/bdos/iosys.c), and reads the frame it is called with
+# as DRI's 40 bytes: r0-r13, the caller's normal r14/r15, id, FCW, PC
+# (src/bios/trap.s faultcom_).  Session, on a copy of drive A: with
+# SCZERO added (tests/images.mk):
+#   SCZERO    control: SC #0 with no handler recorded is a TRAP report
+#             and a warm boot, as it always was
+#   DDT MHELLO.Z8K
+#             DDT plants SC #0 at the debugee's entry and runs it: the
+#             first stop.  `b 3200000A' plants a second one past crt0's
+#             `jr begin' and two POPLs (src/cmd/crt0.s); `g' resumes.
+#   ^C        at DDT's `-' prompt: the program ends, warm boot
+#   SCZERO    again: DDT's handler must have died with DDT (proc.c
+#             procdead, xvclr), so this is the same TRAP report, not a
+#             jump into the debugger's freed segment
+# DDT's `-' is not a prompt the emulator gates on, so everything after
+# the DDT command line runs gate-off (\g); \003 is ^C (a printf format,
+# like EDVERIFYFMT).  DDT starts a debugee NON-segmented (fcw 1800, its
+# own choice) and MHELLO is a segmented program, so the second stop is
+# placed before anything that depends on the mode.
+DDTBRKIMG = build/ddtbrktest.bin
+DDTBRKLOG = build/verify-ddtbrk.log
+DDTBRKMAX = 200000000
+DDTBRKFMT = $(OSSEL)SCZERO\rDDT MHELLO.Z8K\r\\gb 3200000A\rg\r\003SCZERO\r$(ENDIN)
+.PHONY: verify-ddtbrk
+verify-ddtbrk: all $(CPMADDT)
+	$(MKDISK) $(DDTBRKIMG) $(CPMSYS) $(CPMADDT)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(DDTBRKIMG)) \
+		--input="$$(printf '$(DDTBRKFMT)')" --max=$(DDTBRKMAX) \
+		$(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(DDTBRKLOG))
+	@$(EMUOK)
+	@grep -q 'Zilog portable debugger' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- DDT.Z8K did not run"; exit 1; }
+	@# the entry breakpoint: id is SC #0 and the PC is the planted
+	@# address.  With our 36-byte frame DDT read the id where the PC
+	@# segment is and never took the breakpoint at all.
+	@grep -q 'id=7F00 fcw=1000 pcs=B200 pc=0000 ' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- no stop at the debugee's entry (id=7F00 pc=0000): DDT's handler was not recorded, or read a frame of the wrong shape"; exit 1; }
+	@grep -q '3200000A: *1 ' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- DDT did not accept the second breakpoint"; exit 1; }
+	@# the second stop, at exactly the address planted: execution went on
+	@# from the corrected PC (0000, not the 0002 past the SC -- that is a
+	@# warm-boot stub), and the handler's frame edits were taken back.
+	@grep -q 'id=7F00 fcw=1000 pcs=B200 pc=000A ' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- the continued debugee did not stop at the planted 000A"; exit 1; }
+	@grep -q '^B200000A: 3524 0018 ' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- DDT did not list the instruction at the second breakpoint"; exit 1; }
+	@# r14 is the banked NSPSEG of a non-segmented program, carried at
+	@# +28 of DRI's frame: the two POPLs through @r14 moved it 3200 -> 3208
+	@grep -q 're=3208 rf=FDFC' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- r14/r15 at the second stop are not the debugee's normal SP (frame +28/+30)"; exit 1; }
+	@# SCZERO before DDT and after it: both a TRAP report for vector 32,
+	@# and nothing else trapped
+	@test "`grep -c 'TRAP vec=0020 id=7F00' $(DDTBRKLOG)`" = 2 \
+		|| { echo "verify-ddtbrk: FAIL -- SC #0 with no handler did not report a trap both before and after DDT: DDT's vector outlived it"; exit 1; }
+	@test "`grep -c 'TRAP vec=' $(DDTBRKLOG)`" = 2 \
+		|| { echo "verify-ddtbrk: FAIL -- an unexpected trap"; exit 1; }
+	@! grep -q 'SC #0 RETURNED' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- a program's SC #0 was resumed with no handler of its own"; exit 1; }
+	@grep -q '$(ENDMARK)' $(DDTBRKLOG) \
+		|| { echo "verify-ddtbrk: FAIL -- the session did not get back to the CCP"; exit 1; }
+	@echo "verify-ddtbrk: PASS -- DDT stopped at its entry breakpoint and at a"
+	@echo "               planted one, continued between them, and its trap"
+	@echo "               vector died with it"
+
 # ================= C10: THE CONSOLE-OWNERSHIP RULE =================
 # A console has ONE owner.  The owner keeps it until it DETACHES, and any
 # other process that asks for it WAITS.  That is MP/M's Attach Console and

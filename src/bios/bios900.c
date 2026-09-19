@@ -875,8 +875,7 @@ extern int	procdead();
  * An empty pool answers 0 and slot 4 falls back to TPABASE -- the old
  * behaviour, no worse than it was, and nothing refuses to run.
  *
- * HOW FAR THIS GETS DDT, because the next reader will want to know and
- * the answer is not "all the way".  With a segment of its own DDT copies
+ * HOW FAR THIS GETS DDT.  With a segment of its own DDT copies
  * itself into it through the SC #1 gate, resumes executing there, and
  * every gate in the translation layer follows it across without being
  * told -- bdosglue.s substitutes the CALLER'S PC SEGMENT, which is the
@@ -886,21 +885,14 @@ extern int	procdead();
  * patches an SC #0 over the first word of the debugee's entry point --
  * a breakpoint -- and transfers to it.
  *
- * And that is where it stops, for a reason this table cannot mend: DDT
- * never records a handler for that trap.  Instrumenting BIOS function 22
- * and BDOS function 61 shows it calls NEITHER across a whole session, so
- * the SC #0 reaches the kernel's fault path with xvec[32] empty and the
- * program is killed.
- *
- * That is not a quirk of some development board.  DDT.Z8K is Zilog's
- * portable debugger (its banner: Version 841128.14, Zilog Inc.) shipped
- * as part of CP/M-8000, and the copy staged here is BYTE-IDENTICAL to
- * the one on the Olivetti M20 CP/M-8000 v1.1 distribution disk.  It is
- * an official application that shipped and worked.  So the path it uses
- * to plant a trap vector is one CP/M-8000 PROVIDED and this port does
- * not -- the M20 system is the reference for what that path was.
- * Fixing it is a question about who owns this machine's trap vectors,
- * not about which segment the debugger lives in.
+ * Its handler for that trap it records just before, as BIOS function 22
+ * for vector 32 carried by BDOS function 50 -- the idiom DRI's own BDOS
+ * uses (bdosmisc.c) -- and it reads the frame it is handed as DRI's
+ * 40-byte one.  Both are provided now: iosys.c bioscl() passes code 22,
+ * the vector table below is per process, and trap.s faultcom_ presents
+ * a recorded handler with DRI's frame.  DDT.Z8K is Zilog's portable
+ * debugger (Version 841128.14) as shipped with CP/M-8000, byte-identical
+ * to the Olivetti M20 v1.1 disk copy; the M20 system is the reference.
  */
 struct mrt {
 	int	count;
@@ -983,10 +975,37 @@ UWORD space;
  * NMI 0, EPU 1, SEG 2, PRV 8, SC #n 32+n; C900 adds NVI 6, VI 7).
  * BIOS fn 22 (SETXVEC) records handlers here; the fault path (trap.s
  * faultcom_) calls a recorded handler as a segmented subroutine with
- * the register frame on the stack, and panics through panic() below
- * when no handler is recorded.
+ * DRI's 40-byte register frame on the stack, and panics through panic()
+ * below when no handler is recorded.
+ *
+ * ONE ROW PER PROCESS, indexed by pgcur (pgalloc.c), the BIOS's mirror of
+ * the running descriptor.  The only recorders are programs -- nothing in
+ * this kernel dispatches through the table except the fault path -- and a
+ * program's handler lives in that program's memory, so a single shared
+ * table would let DDT on one console catch another console's SC #0 or
+ * fault and jump into its own segment with a stranger's frame.  Per row,
+ * two debuggers on two consoles each get their own breakpoints.  A row is
+ * cleared when its process's program ends (xvclr, from proc.c procdead(),
+ * on the path every termination takes) and when a descriptor is handed
+ * to a new process (pcreate), so a vector can never outlive the memory it
+ * points into.  XVNPROC must be at least proc.h PNPROC and match trap.s;
+ * a process with no row records nothing and sees nothing recorded, which
+ * is exactly today's behaviour for every program that never asks.
  */
-long	xvec[48];
+#define XVNPROC	6		/* src/bdos/proc.h PNPROC; trap.s XVNPROC */
+long	xvec[XVNPROC][48];
+extern int pgcur;		/* the running process (pgalloc.c)	*/
+
+/* Forget every vector process `p' recorded. */
+xvclr(p)
+int p;
+{
+	register int i;
+
+	if (p >= 0 && p < XVNPROC)
+		for (i = 0; i < 48; i++)
+			xvec[p][i] = 0L;
+}
 
 extern UWORD xbdos();
 
@@ -1275,9 +1294,10 @@ long d1, d2;
 		return ((long)dskerr);
 
 	case 22:				/* SETXVEC: record + return old */
-		if ((int)d1 >= 0 && (int)d1 < 48) {
-			oldv = xvec[(int)d1];
-			xvec[(int)d1] = d2;
+		if ((int)d1 >= 0 && (int)d1 < 48
+		    && pgcur >= 0 && pgcur < XVNPROC) {
+			oldv = xvec[pgcur][(int)d1];
+			xvec[pgcur][(int)d1] = d2;
 			return (oldv);
 		}
 		return (0L);

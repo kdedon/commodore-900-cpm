@@ -11,7 +11,7 @@
  *	       programs reach the dispatcher through the SC #2 trap gate
  *	       instead.
  * initexc() -- (re)initialize the 18-entry exception-vector array; called
- *	       from bdosinit and every warmboot.
+ *	       from bdosinit, every warmboot and pcreate.
  */
 #include "stdio.h"		/* DRI types layer (sys/stdio.h) */
 
@@ -24,8 +24,13 @@ LONG parm;
 	return (xbdos(func, (UWORD)parm, parm));
 }
 
-extern long xvec[];		/* BIOS trap-vector table (bios900.c) */
-
+/* The BIOS trap-vector table is NOT touched here any more.  It is per
+ * process (bios900.c xvec), and a program's recorded vectors die with the
+ * program through xvclr() in proc.c procdead() -- all 48 of them, where
+ * the M20's initexc reclaimed only 2-23 and 36-47 and left SC #0's vector
+ * to outlive the debugger that set it.  This routine is also called from
+ * pcreate(), while the running row is still the PARENT's, and clearing it
+ * there would take a debugger's breakpoints away from it. */
 initexc(vecp)
 UBYTE **vecp;
 {
@@ -33,13 +38,4 @@ UBYTE **vecp;
 
 	for (i = 0; i < 18; i++)
 		vecp[i] = (UBYTE *)0;
-	/* Clear the BDOS-managed range of the BIOS trap-vector table
-	 * (the M20's initexc re-pointed vectors 2-23 and 36-47 at its
-	 * own handler each boot, so program-recorded vectors died with
-	 * the program; recording a zero has the same effect here --
-	 * 0-1 and 24-35 stay with the BIOS, exceptn.z8k contract). */
-	for (i = 2; i < 24; i++)
-		xvec[i] = 0L;
-	for (i = 36; i < 48; i++)
-		xvec[i] = 0L;
 }

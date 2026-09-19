@@ -68,8 +68,8 @@ REG struct iopb *iop;		/* iop is a pointer to a i/o parameter block */
 }
 
 
-/* Function 50 accepts disk, clock, page-allocation and device-control BIOS
- * calls listed below. Other codes return FFFFFFFFh. This is an interface
+/* Function 50 accepts disk, clock, page-allocation, trap-vector and
+ * device-control BIOS calls listed below. Other codes return FFFFFFFFh. This is an interface
  * policy, not a protection boundary: SC 3 exposes the raw BIOS dispatcher. */
 
 LONG bioscl(code, p1, p2)
@@ -89,6 +89,11 @@ LONG	p1, p2;			/* its two LONG parameters		*/
 	case 14:		/* WRITE			*/
 	case 16:		/* SECTRAN			*/
 	case 21:		/* FLUSH			*/
+	case 22:		/* SETXVEC -- DRI's own route to a trap
+				   vector (bdosmisc.c), and DDT.Z8K's for
+				   its SC #0 breakpoint.  Recorded for the
+				   calling process only and forgotten when
+				   its program ends (bios900.c xvec) */
 	case 23:		/* TIME -- the only route to the chip */
 	case 25:		/* SEGMENT -- likewise, for 64 KB	*/
 	case 29:		/* CONCNT -- how many consoles exist	*/

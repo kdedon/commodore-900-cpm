@@ -37,6 +37,8 @@ EXTERN	WORD	pgfree();
 EXTERN	WORD	pgtpaswap();
 EXTERN	VOID	pghold();
 EXTERN	WORD	pgrelproc();	/* free THIS process's scratch segments	*/
+EXTERN	WORD	xvclr();	/* src/bios/bios900.c: forget a process's
+				   recorded trap vectors		*/
 EXTERN	WORD	pgcur;		/* and the allocator's idea of which
 				   process that is.  It is `pcur', and
 				   the two are assigned together: see
@@ -423,6 +425,8 @@ WORD	con, sess;
 	kidx = i;			/* recorded here because `i' is a
 					   loop variable again below, and
 					   the child's CCP state is psv[kidx] */
+	xvclr(kidx);			/* no trap vector of whatever last
+					   held this slot (bios900.c xvec) */
 
 	/*  THE SLOT IS CLAIMED HERE, before anything below can yield.
 	    plock() parks the caller whenever another process holds the
@@ -897,6 +901,14 @@ GLOBAL WORD procdead()
 {
 	REG WORD nxt, seg;
 
+	xvclr(pcur);			/* every trap vector this program
+					   recorded (BIOS fn 22): its handler
+					   is in memory that is about to be
+					   freed or reloaded, and the next
+					   program's SC #0 or fault must not
+					   jump into it.  Its row alone --
+					   another console's debugger keeps
+					   its own (bios900.c xvec)	*/
 	pmrtrel();			/* the debugger's segment, if this
 					   program ever asked for one.  Above
 					   the session test below on purpose:

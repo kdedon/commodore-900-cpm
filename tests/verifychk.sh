@@ -196,16 +196,17 @@ display()'s kblks is summing into an uninitialised automatic again"
 	# the debugee none.  Getting to it means the load finished.
 	want ddtmagic 1 "magic number= EE01"
 	want ddtbase 1 "command tail= ''"
-	# It still cannot DEBUG.  Having loaded the debugee, DDT patches an
-	# SC #0 over the first word of its entry point and transfers to it,
-	# which is a breakpoint and is exactly right -- but it never tells
-	# this system where its handler is: neither BIOS function 22 nor
-	# BDOS function 61 is ever called, so the trap reaches the kernel's
-	# fault path with nothing recorded and the program is killed.
-	# This binary is Zilog's portable debugger as shipped with
-	# CP/M-8000, byte-identical to the Olivetti M20 v1.1 disk copy, so
-	# it worked somewhere: the vector path it uses is one CP/M-8000
-	# provided and this port does not.  A second, separate defect.
+	# And it takes the breakpoint.  Having loaded the debugee, DDT
+	# records its SC #0 handler (BDOS fn 50 carrying BIOS fn 22,
+	# src/bdos/iosys.c), patches an SC #0 over the first word of the
+	# entry point and transfers to it.  The trap reaches that handler
+	# with DRI's 40-byte frame (src/bios/trap.s faultcom_), so DDT reads
+	# the SC's identifier and the PC it planted, and prints its register
+	# display and `-' prompt -- where the session coasts to EMUMAX.
+	# Before, fn 50 refused code 22 and the SC #0 killed the program.
+	# verify-ddtbrk takes it further: a second breakpoint, and the
+	# handler dying with DDT.
+	want ddtbrk 1 "id=7F00 fcw=1000 pcs=B200 pc=0000 "
 	;;
 reverify)
 	# ---- this is a COLD boot, so the system signs on before the session.

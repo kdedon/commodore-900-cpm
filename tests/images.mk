@@ -68,6 +68,20 @@ $(CPMACONCS): $(CPMAIMG) $(UCONCS) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAS)
 
+# DDT breakpoint fixture: SCZERO issues DDT's breakpoint SC with no handler.
+USCZERO  = $(UOBJDIR)/SCZERO.Z8K
+CPMADDT  = build/cpma-ddt.img
+DISKAD   = build/diska-ddt
+$(CPMADDT): $(CPMAIMG) $(USCZERO) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKAD)
+	@mkdir -p $(DISKAD)
+	@for f in $(DISKA)/*; do b=`basename $$f`; \
+		cmp -s $$f $(DISKAD)/$$b || cp $$f $(DISKAD)/$$b; done
+	@for f in $(USCZERO); do b=`basename $$f`; \
+		cmp -s $$f $(DISKAD)/$$b || cp $$f $(DISKAD)/$$b; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAD)
+
 # PROFILE.SUB must be absent from the baseline image for the cold-start comparison.
 CPMAPROF = build/cpma-prof.img
 DISKAP   = build/diska-prof

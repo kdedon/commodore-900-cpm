@@ -4,6 +4,8 @@
 / C900 trap handlers. Hardware pushes {id, FCW, PCseg, PCoff};
 / stubs save r0-r13 on the system stack before calling C or xvec handlers.
 / Frame offsets: r0-r13 0..27, id 28, FCW 30, PCseg 32, PCoff 34.
+/ A program's recorded handler sees DRI's 40-byte frame instead; see
+/ faultcom_.
 / Vector numbering follows the M20: NMI 0, EPU 1, SEG 2, PRV 8;
 / C900 uses 6/7 for NVI/VI. Unhandled Normal-mode faults warm boot;
 / unhandled System-mode faults halt.
@@ -19,8 +21,11 @@
 	.globl	pdisp_			/   is live; the dispatcher (proc.c)
 	.globl	sysstk_			/ the running process's supervisor
 					/   stack TOP (proc.c; proc.h PSTKOF)
-	.globl	xvec_			/ 48-entry vector table (bios900.c)
+	.globl	xvec_			/ per-process vector table (bios900.c)
+	.globl	pgcur_			/   and the row: the running process
 	.globl	panic_			/ frame printer (bios900.c)
+
+XVNPROC	=	6			/ rows in xvec (bios900.c XVNPROC)
 
 	.shri
 
@@ -45,7 +50,7 @@ tepa_:
 	jr	eq, 1f
 	cp	r0, $0x8E00
 	jr	nz, faultcom_
-1:	ldl	rr2, xvec_+4		/ FPE vector recorded (fn 22 slot 1)?
+1:	call	xvget			/ FPE vector recorded (fn 22 slot 1)?
 	testl	rr2
 	jr	nz, faultcom_		/   yes: dispatch it
 	ldm	r0, (rr14), $14		/   no: skip the FP instruction
@@ -85,16 +90,75 @@ tvi_:
 	jr	faultcom_
 
 / Common fault path.  r4 = trap-vector number (0..47), frame as above.
+/
+/ A recorded handler is a PROGRAM's (BIOS fn 22 -- DDT.Z8K registers
+/ SC #0, vector 32, for its breakpoints), and it is written against DRI's
+/ frame, not ours: biostrap.z8k's _trap saves the caller's normal r14/r15
+/ between the registers and the hardware words, so a handler reads
+/     r0-r13 0..27, nr14 28, nr15 30, id 32, FCW 34, PCseg 36, PCoff 38
+/ (40 bytes; biosdefs.z8k scinst/scfcw/scseg/scpc).  So the 36-byte frame
+/ is widened to that ONLY here, for the length of the call: the fourteen
+/ register words move down four bytes, the hardware words stay where the
+/ CPU put them, and NSPSEG/NSPOFF fill the gap.  Everything of ours --
+/ the stubs above, bdosglue.s, ttick_, pdisp -- keeps the 36-byte frame.
+/
+/ The handler is called as a segmented subroutine in System mode, return
+/ address on top of the frame.  It may rewrite any of it; DDT does (the
+/ breakpoint's PC-2, and whatever registers its user edits) and switches
+/ itself to Normal mode and back through BDOS fn 62 before its ret.  On
+/ return every change is taken: nr14/nr15 back into NSPSEG/NSPOFF (as
+/ _trap_ret's ldctl NSP), the registers shifted back up, and FCW and PC
+/ were never moved, so the IRET takes them as they now stand.  Registers
+/ on entry to the handler are NOT the caller's (DRI passed r2-r13 intact):
+/ the frame is the interface, and it is all DDT reads.
 faultcom_:
-	ld	r5, r4
-	sll	r5, $2
-	ldl	rr2, xvec_(r5)		/ recorded handler?
+	call	xvget			/ rr2 = this process's vector r4
 	testl	rr2
 	jr	z, faultpanic_
-	call	(rr2)			/ yes: segmented subroutine call;
-	ldm	r0, (rr14), $14		/   its ret resumes the faulter
-	add	r15, $28
-	iret
+	sub	r15, $4			/ widen: r0-r13 move down 4 bytes
+	ldl	rr4, rr14		/   dst = the new SP
+	ldl	rr6, rr14
+	add	r7, $4			/   src = where the stub saved them
+	ld	r0, $14			/   (ascending, dst below src: safe)
+	ldir	@rr4, @rr6, r0
+	ldctl	r0, NSPSEG		/ the gap: the caller's normal SP
+	ld	rr14(28), r0
+	ldctl	r0, NSPOFF
+	ld	rr14(30), r0
+	call	(rr2)			/ segmented subroutine call
+	di	VI, NVI			/ the handler may have left them on
+	ld	r0, rr14(28)		/ take its normal SP back
+	ldctl	NSPSEG, r0
+	ld	r0, rr14(30)
+	ldctl	NSPOFF, r0
+	ldl	rr4, rr14		/ narrow: r0-r13 move up 4 bytes
+	add	r5, $26			/   src = last register word
+	ldl	rr6, rr14
+	add	r7, $30			/   dst = 4 bytes above it
+	ld	r0, $14			/   (descending, dst above src: safe)
+	lddr	@rr6, @rr4, r0
+	add	r15, $4
+	ldm	r0, (rr14), $14		/ its ret resumes the faulter,
+	add	r15, $28		/   with whatever FCW and PC the
+	iret				/   handler left in the frame
+
+/ rr2 = the RUNNING PROCESS's recorded handler for vector r4 (0..47), or 0.
+/ Clobbers r0 and r1.  The table is per process (bios900.c xvec): row
+/ pgcur, the BIOS's mirror of the running descriptor (pgalloc.c), so a
+/ vector one program records is never seen by another program's fault.
+xvget:
+	subl	rr2, rr2
+	ld	r1, pgcur_
+	cp	r1, $XVNPROC
+	jr	uge, 1f			/ no row: nothing recorded
+	ld	r0, r1
+	sll	r0, $5			/ row * 48 = row * 32 + row * 16
+	sll	r1, $4
+	add	r1, r0
+	add	r1, r4
+	sll	r1, $2			/ * sizeof(long)
+	ldl	rr2, xvec_(r1)
+1:	ret
 
 faultpanic_:
 	/ Report PC-2 from the saved resume address. For multiword opcodes
@@ -119,9 +183,9 @@ fhang:
 / 100 Hz CIO #1 CT3 ISR, vector 0. Clear level-triggered IP/IUS first.
 / The 36-byte saved frame matches struct pframe for pdisp().
 / Spend one quantum tick; clamp an exhausted quantum until a safe switch.
-/ Normal-mode callers are safe. System-mode callers are preempted only
-/ with an empty supervisor stack (interrupted SP == sysstk), ensuring
-/ there is no active BDOS frame or partially updated shared state.
+/ A caller in either mode is preempted only with an empty supervisor
+/ stack (interrupted SP == sysstk), ensuring there is no active BDOS or
+/ fault frame and no partially updated shared state.
 / Entry FCW disables interrupts, making scheduler state changes atomic.
 ttick_:
 	sub	r15, $28
@@ -140,15 +204,18 @@ ttick_:
 	jr	gt, 1f			/   last of it asks for a dispatch.
 	ld	r0, $0			/ clamp while a BDOS call blocks preemption
 	ld	pquant_, r0
-	ld	r0, rr14(30)		/ the interrupted FCW
-	bit	r0, $14			/ S/N: clear = Normal mode, the TPA,
-	jr	z, 2f			/   nothing of ours on this stack
-	ld	r0, r15			/ System mode: switch only if this
-	add	r0, $36			/   process's supervisor stack is
-	ld	r1, sysstk_		/   EMPTY.  The frame sits at SP-36,
-	cp	r0, r1			/   so SP+36 is the stack top when
-	jr	ne, 1f			/   there is no BDOS activation
-2:	ld	r2, r14			/ frame XADDR: high word = 0x3F00
+	ld	r0, r15			/ Switch only if this process's
+	add	r0, $36			/   supervisor stack is EMPTY.  The
+	ld	r1, sysstk_		/   frame sits at SP-36, so SP+36 is
+	cp	r0, r1			/   the stack top when there is no
+	jr	ne, 1f			/   BDOS activation.  Asked in BOTH
+					/   modes: a program's fault handler
+					/   (faultcom_) may drop to Normal
+					/   mode -- DDT's does -- with its
+					/   trap frame still on this stack,
+					/   and pdisp would save only the
+					/   tick's frame and lose that one.
+	ld	r2, r14			/ frame XADDR: high word = 0x3F00
 	ld	r3, r15			/   (seg << 8), low word = offset
 	pushl	(rr14), rr2
 	call	pdisp_			/ returns only if this process is
