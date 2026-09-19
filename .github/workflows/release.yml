@@ -95,9 +95,9 @@ jobs:
             echo 'ED, LIBCPM.A, STARTUP.O and the headers -- so the disk compiles and'
             echo 'links on the machine.'
             echo
-            echo 'Known limitation: DDT.Z8K loads a debugee correctly but cannot take'
-            echo 'a breakpoint.  It registers its handler through BDOS function 50'
-            echo 'carrying BIOS function 22, which this release does not yet accept.'
+            echo 'DDT.Z8K takes breakpoints.  It starts every debuggee in non-segmented'
+            echo 'mode, so a segmented program can be stepped only up to its first'
+            echo 'instruction whose effect depends on the mode.'
           } > dist/NOTES.md
 
       - uses: actions/upload-artifact@v4
