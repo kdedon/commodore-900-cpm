@@ -501,6 +501,7 @@ static void t_neg(void)
 /* ================================================================== */
 
 static char xseg[65536];
+static char xseg2[65536];
 static struct i86 xm;
 
 static void xsetup(void)
@@ -791,9 +792,9 @@ static void t_exec(void)
 	 * not advance IP: a refusal has to be able to name its own
 	 * address, which is the whole reason the decoder is complete --- */
 	xsetup();
-	xseg[0x100] = (char)0xa4;			/* movsb	*/
-	chk("movsb refused", xstep(), X_UNIMP);
-	chk("movsb ip", xm.ip & 0xffff, 0x100);
+	xseg[0x100] = (char)0xe4; xseg[0x101] = 0x00;	/* in al,0	*/
+	chk("in refused", xstep(), X_UNIMP);
+	chk("in ip", xm.ip & 0xffff, 0x100);
 	xsetup();
 	xseg[0x100] = (char)0xd6;			/* SALC		*/
 	chk("salc is not an instruction", xstep(), X_BAD);
@@ -804,6 +805,315 @@ static void t_exec(void)
 	xseg[0x100] = (char)0xcf;			/* iret		*/
 	chk("iret refused", xstep(), X_UNIMP);
 	chk("iret ip", xm.ip & 0xffff, 0x100);
+}
+
+/* ================================================================== */
+/* 3a. string operations					      */
+/* ================================================================== */
+
+static void xsetup2(void);		/* section 3b, below		*/
+
+/* Lay `n' bytes of `s' at xseg[off]. */
+static void put(int off, const char *s, int n)
+{
+	memcpy(&xseg[off], s, (size_t)n);
+}
+
+static void t_string(void)
+{
+	/* --- MOVSB, forward, no prefix --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x5a;
+	xseg[0x100] = (char)0xa4;
+	chk("movsb rc", xstep(), X_OK);
+	chk("movsb byte", xseg[0x3000] & 0xff, 0x5a);
+	chk("movsb si", xm.r[R_SI] & 0xffff, 0x2001);
+	chk("movsb di", xm.r[R_DI] & 0xffff, 0x3001);
+	chk("movsb ip", xm.ip & 0xffff, 0x101);
+
+	/* --- MOVSB with DF set walks backwards --- */
+	xsetup();
+	xm.fl |= F_DF;
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x77;
+	xseg[0x100] = (char)0xa4;
+	chk("movsb df rc", xstep(), X_OK);
+	chk("movsb df byte", xseg[0x3000] & 0xff, 0x77);
+	chk("movsb df si", xm.r[R_SI] & 0xffff, 0x1fff);
+	chk("movsb df di", xm.r[R_DI] & 0xffff, 0x2fff);
+
+	/* --- MOVSW moves two bytes and steps by two, each way --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	put(0x2000, "\x34\x12", 2);
+	xseg[0x100] = (char)0xa5;
+	chk("movsw rc", xstep(), X_OK);
+	chk("movsw lo", xseg[0x3000] & 0xff, 0x34);
+	chk("movsw hi", xseg[0x3001] & 0xff, 0x12);
+	chk("movsw si", xm.r[R_SI] & 0xffff, 0x2002);
+	chk("movsw di", xm.r[R_DI] & 0xffff, 0x3002);
+
+	xsetup();
+	xm.fl |= F_DF;
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x100] = (char)0xa5;
+	chk("movsw df si", (xstep(), xm.r[R_SI] & 0xffff), 0x1ffe);
+	chk("movsw df di", xm.r[R_DI] & 0xffff, 0x2ffe);
+
+	/* --- REP MOVSB copies CX bytes and leaves CX zero --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 4;
+	put(0x2000, "abcd", 4);
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xa4;
+	chk("rep movsb rc", xstep(), X_OK);
+	chk("rep movsb copied", memcmp(&xseg[0x3000], "abcd", 4), 0);
+	chk("rep movsb stopped", xseg[0x3004] & 0xff, 0);
+	chk("rep movsb cx", xm.r[R_CX] & 0xffff, 0);
+	chk("rep movsb si", xm.r[R_SI] & 0xffff, 0x2004);
+	chk("rep movsb di", xm.r[R_DI] & 0xffff, 0x3004);
+	chk("rep movsb ip", xm.ip & 0xffff, 0x102);
+
+	/* --- REP MOVSW counts WORDS, not bytes --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 3;
+	put(0x2000, "ABCDEF", 6);
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xa5;
+	chk("rep movsw rc", xstep(), X_OK);
+	chk("rep movsw copied", memcmp(&xseg[0x3000], "ABCDEF", 6), 0);
+	chk("rep movsw stopped", xseg[0x3006] & 0xff, 0);
+	chk("rep movsw cx", xm.r[R_CX] & 0xffff, 0);
+
+	/* --- REP with CX = 0 does nothing and falls through --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 0;
+	xseg[0x2000] = 0x11;
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xa4;
+	chk("rep cx0 rc", xstep(), X_OK);
+	chk("rep cx0 wrote nothing", xseg[0x3000] & 0xff, 0);
+	chk("rep cx0 si", xm.r[R_SI] & 0xffff, 0x2000);
+	chk("rep cx0 di", xm.r[R_DI] & 0xffff, 0x3000);
+	chk("rep cx0 ip", xm.ip & 0xffff, 0x102);
+
+	/* --- STOS, both sizes; the byte form must not touch AH --- */
+	xsetup();
+	xm.r[R_AX] = 0xbe5a; xm.r[R_DI] = 0x3000;
+	xseg[0x100] = (char)0xaa;
+	chk("stosb rc", xstep(), X_OK);
+	chk("stosb byte", xseg[0x3000] & 0xff, 0x5a);
+	chk("stosb untouched", xseg[0x3001] & 0xff, 0);
+	chk("stosb di", xm.r[R_DI] & 0xffff, 0x3001);
+
+	xsetup();
+	xm.r[R_AX] = 0x1234; xm.r[R_DI] = 0x3000;
+	xseg[0x100] = (char)0xab;
+	chk("stosw rc", xstep(), X_OK);
+	chk("stosw lo", xseg[0x3000] & 0xff, 0x34);
+	chk("stosw hi", xseg[0x3001] & 0xff, 0x12);
+	chk("stosw di", xm.r[R_DI] & 0xffff, 0x3002);
+
+	xsetup();
+	xm.fl |= F_DF;
+	xm.r[R_AX] = 0x00ff; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 3;
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xaa;
+	chk("rep stosb df rc", xstep(), X_OK);
+	chk("rep stosb df filled", memcmp(&xseg[0x2ffe], "\xff\xff\xff", 3),
+		0);
+	chk("rep stosb df above", xseg[0x3001] & 0xff, 0);
+	chk("rep stosb df di", xm.r[R_DI] & 0xffff, 0x2ffd);
+	chk("rep stosb df cx", xm.r[R_CX] & 0xffff, 0);
+
+	/* --- LODS, both sizes --- */
+	xsetup();
+	xm.r[R_AX] = 0xbeef; xm.r[R_SI] = 0x2000;
+	xseg[0x2000] = 0x5a;
+	xseg[0x100] = (char)0xac;
+	chk("lodsb rc", xstep(), X_OK);
+	chk("lodsb ax", xm.r[R_AX] & 0xffff, 0xbe5a);
+	chk("lodsb si", xm.r[R_SI] & 0xffff, 0x2001);
+
+	xsetup();
+	xm.r[R_SI] = 0x2000;
+	put(0x2000, "\x78\x56", 2);
+	xseg[0x100] = (char)0xad;
+	chk("lodsw ax", (xstep(), xm.r[R_AX] & 0xffff), 0x5678);
+	chk("lodsw si", xm.r[R_SI] & 0xffff, 0x2002);
+
+	/* --- MOVS, STOS and LODS leave the flags exactly as they were --- */
+	xsetup();
+	xm.fl = (i16)(F_ONES | F_CF | F_ZF | F_SF);
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 2;
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xa4;
+	xstep();
+	chk("rep movsb keeps flags", i86flags(&xm) & 0xffff,
+		(long)(F_ONES | F_CF | F_ZF | F_SF));
+
+	/* --- CMPS sets the flags a CMP would, and stores nothing --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x42; xseg[0x3000] = 0x42;
+	xseg[0x100] = (char)0xa6;
+	chk("cmpsb equal rc", xstep(), X_OK);
+	chk("cmpsb equal zf", (i86flags(&xm) & F_ZF) != 0, 1);
+	chk("cmpsb equal cf", (xm.fl & F_CF) != 0, 0);
+	chk("cmpsb equal si", xm.r[R_SI] & 0xffff, 0x2001);
+	chk("cmpsb equal di", xm.r[R_DI] & 0xffff, 0x3001);
+
+	/* [SI] - [DI], so a smaller source borrows. */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x10; xseg[0x3000] = 0x20;
+	xseg[0x100] = (char)0xa6;
+	xstep();
+	chk("cmpsb less zf", (i86flags(&xm) & F_ZF) != 0, 0);
+	chk("cmpsb less cf", (xm.fl & F_CF) != 0, 1);
+
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	put(0x2000, "\x00\x80", 2);
+	put(0x3000, "\x00\x80", 2);
+	xseg[0x100] = (char)0xa7;
+	chk("cmpsw equal rc", xstep(), X_OK);
+	chk("cmpsw equal zf", (i86flags(&xm) & F_ZF) != 0, 1);
+	chk("cmpsw si", xm.r[R_SI] & 0xffff, 0x2002);
+
+	/* --- REPE CMPSB stops at the first difference --- */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 4;
+	put(0x2000, "abcd", 4);
+	put(0x3000, "abxd", 4);
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xa6;
+	chk("repe cmpsb rc", xstep(), X_OK);
+	chk("repe cmpsb cx", xm.r[R_CX] & 0xffff, 1);
+	chk("repe cmpsb si", xm.r[R_SI] & 0xffff, 0x2003);
+	chk("repe cmpsb di", xm.r[R_DI] & 0xffff, 0x3003);
+	chk("repe cmpsb zf", (i86flags(&xm) & F_ZF) != 0, 0);
+
+	/* Equal all the way through: the count runs out instead. */
+	xsetup();
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 4;
+	put(0x2000, "abcd", 4);
+	put(0x3000, "abcd", 4);
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xa6;
+	xstep();
+	chk("repe cmpsb all cx", xm.r[R_CX] & 0xffff, 0);
+	chk("repe cmpsb all zf", (i86flags(&xm) & F_ZF) != 0, 1);
+
+	/* --- SCAS, and REPNE stopping on the match --- */
+	xsetup();
+	xm.r[R_AX] = 0x0033; xm.r[R_DI] = 0x3000;
+	xseg[0x3000] = 0x33;
+	xseg[0x100] = (char)0xae;
+	chk("scasb rc", xstep(), X_OK);
+	chk("scasb zf", (i86flags(&xm) & F_ZF) != 0, 1);
+	chk("scasb di", xm.r[R_DI] & 0xffff, 0x3001);
+
+	xsetup();
+	xm.r[R_AX] = 0x0033; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 4;
+	put(0x3000, "\x11\x22\x33\x44", 4);
+	xseg[0x100] = (char)0xf2; xseg[0x101] = (char)0xae;
+	chk("repne scasb rc", xstep(), X_OK);
+	chk("repne scasb cx", xm.r[R_CX] & 0xffff, 1);
+	chk("repne scasb di", xm.r[R_DI] & 0xffff, 0x3003);
+	chk("repne scasb zf", (i86flags(&xm) & F_ZF) != 0, 1);
+
+	/* No match anywhere: the count runs out and ZF is clear. */
+	xsetup();
+	xm.r[R_AX] = 0x0099; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 4;
+	put(0x3000, "\x11\x22\x33\x44", 4);
+	xseg[0x100] = (char)0xf2; xseg[0x101] = (char)0xae;
+	xstep();
+	chk("repne scasb miss cx", xm.r[R_CX] & 0xffff, 0);
+	chk("repne scasb miss di", xm.r[R_DI] & 0xffff, 0x3004);
+	chk("repne scasb miss zf", (i86flags(&xm) & F_ZF) != 0, 0);
+
+	/* REPE SCASW scans while the words match. */
+	xsetup();
+	xm.r[R_AX] = 0x1111; xm.r[R_DI] = 0x3000; xm.r[R_CX] = 4;
+	put(0x3000, "\x11\x11\x11\x11\x22\x22", 6);
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xaf;
+	chk("repe scasw rc", xstep(), X_OK);
+	chk("repe scasw cx", xm.r[R_CX] & 0xffff, 1);
+	chk("repe scasw di", xm.r[R_DI] & 0xffff, 0x3006);
+
+	/* --- the 64 KB boundary: SI and DI wrap, they do not run on --- */
+	xsetup();
+	xm.r[R_AX] = 0x00aa; xm.r[R_DI] = 0xffff; xm.r[R_CX] = 2;
+	xseg[0x100] = (char)0xf3; xseg[0x101] = (char)0xaa;
+	chk("rep stosb wrap rc", xstep(), X_OK);
+	chk("rep stosb wrap top", xseg[0xffff] & 0xff, 0xaa);
+	chk("rep stosb wrap round", xseg[0x0000] & 0xff, 0xaa);
+	chk("rep stosb wrap di", xm.r[R_DI] & 0xffff, 1);
+
+	/* A word straddling the top: low byte at 0xFFFF, high byte at 0. */
+	xsetup();
+	xm.r[R_AX] = 0x1234; xm.r[R_DI] = 0xffff;
+	xseg[0x100] = (char)0xab;
+	chk("stosw wrap rc", xstep(), X_OK);
+	chk("stosw wrap lo", xseg[0xffff] & 0xff, 0x34);
+	chk("stosw wrap hi", xseg[0x0000] & 0xff, 0x12);
+	chk("stosw wrap di", xm.r[R_DI] & 0xffff, 1);
+
+	xsetup();
+	xm.fl |= F_DF;
+	xm.r[R_SI] = 0x0000; xm.r[R_DI] = 0x3000;
+	xseg[0x0000] = 0x6b;
+	xseg[0x100] = (char)0xa4;
+	chk("movsb wrap down rc", xstep(), X_OK);
+	chk("movsb wrap down byte", xseg[0x3000] & 0xff, 0x6b);
+	chk("movsb wrap down si", xm.r[R_SI] & 0xffff, 0xffff);
+
+	/* --- the segment override moves the SOURCE and only the source.
+	 * ES is the second segment here, so a plain MOVSB reads DS and
+	 * writes ES, and SS: MOVSB reads the ES segment instead. --- */
+	xsetup2();
+	xm.sr[S_ES] = 0x4000; xm.sb[S_ES] = xseg2;
+	xm.sr[S_SS] = 0x4000; xm.sb[S_SS] = xseg2;
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x11; xseg2[0x2000] = 0x22;
+	xseg[0x100] = (char)0xa4;
+	chk("movsb ds rc", xstep(), X_OK);
+	chk("movsb ds source", xseg2[0x3000] & 0xff, 0x11);
+
+	xsetup2();
+	xm.sr[S_ES] = 0x4000; xm.sb[S_ES] = xseg2;
+	xm.sr[S_SS] = 0x4000; xm.sb[S_SS] = xseg2;
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x11; xseg2[0x2000] = 0x22;
+	xseg[0x100] = (char)0x36; xseg[0x101] = (char)0xa4;	/* ss: */
+	chk("movsb ss: rc", xstep(), X_OK);
+	chk("movsb ss: source", xseg2[0x3000] & 0xff, 0x22);
+	chk("movsb ss: dest still es", xseg[0x3000] & 0xff, 0);
+
+	/* CMPS reads its destination through ES whatever the prefix says. */
+	xsetup2();
+	xm.sr[S_ES] = 0x4000; xm.sb[S_ES] = xseg2;
+	xm.r[R_SI] = 0x2000; xm.r[R_DI] = 0x3000;
+	xseg[0x2000] = 0x44; xseg2[0x3000] = 0x44; xseg[0x3000] = 0x55;
+	xseg[0x100] = (char)0xa6;
+	xstep();
+	chk("cmpsb dest is es", (i86flags(&xm) & F_ZF) != 0, 1);
+
+	/* --- a biased ES window: the write that leaves it refuses, and
+	 * does not wrap round to the bottom of the host segment --- */
+	xsetup();
+	i86nseg = 2;
+	i86spar[1] = 0x2000; i86sbase[1] = xseg2;
+	memset(xseg2, 0, sizeof xseg2);
+	i86nsegslow = i86nsegbad = 0;
+	xm.r[R_CX] = 0x2010;
+	xseg[0x100] = (char)0x8e; xseg[0x101] = (char)0xc1;	/* mov es,cx */
+	chk("es slow rc", xstep(), X_OK);
+	chk("es bias", xm.so[S_ES] & 0xffff, 0x100);
+
+	xm.r[R_AX] = 0x005a; xm.r[R_DI] = 0xfff0; xm.r[R_CX] = 1;
+	xseg[0x102] = (char)0xf3; xseg[0x103] = (char)0xaa;
+	chk("rep stosb window rc", xstep(), X_WINDOW);
+	chk("rep stosb window ip", xm.ip & 0xffff, 0x102);
+	chk("rep stosb window slot", xm.fseg, S_ES);
+	chk("rep stosb window off", xm.foff & 0xffff, 0xfff0);
+	chk("rep stosb window no wrap", xseg2[0xf0] & 0xff, 0);
+	i86nsegslow = i86nsegbad = 0;
 }
 
 /* ================================================================== */
@@ -832,8 +1142,6 @@ static void t_exec(void)
  * first, and "far_wboot beats a resolvable segment" is the check that
  * says it is.
  */
-
-static char xseg2[65536];
 
 /* xsetup() with a SECOND paragraph, 0x4000, so a far transfer has
  * somewhere real to land and an unhanded paragraph is still unhanded. */
@@ -4315,6 +4623,7 @@ char **argv;
 	t_incdec();
 	t_neg();
 	t_exec();
+	t_string();
 	t_far();
 	t_segcheck();
 	t_segslow();

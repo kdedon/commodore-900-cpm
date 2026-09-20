@@ -608,6 +608,91 @@ i16 v;
 }
 
 /* ------------------------------------------------------------------ */
+/* string operations						       */
+
+/*
+ * MOVS/CMPS/STOS/LODS/SCAS, with the REP prefixes folded in.
+ *
+ * The source is DS:SI and a segment override moves it; the destination is
+ * ES:DI and nothing can move it, so in->seg appears on one side only.  SI
+ * and DI step by the operand width, backwards when DF is set, and wrap
+ * inside the segment as every other reference here does.  DF is never
+ * lazy, so it is read straight out of fl.
+ *
+ * CMPS and SCAS leave the same lazy record CMP does; the other three
+ * touch no flags.  Only the REPE/REPNE early-out needs ZF, so only those
+ * two ever materialise it.  A reference that escapes a biased window sets
+ * m->fault, which ends the loop and is reported by the caller.
+ */
+static strop(m, in)
+struct i86 *m;
+struct i86in *in;
+{
+	register i16 s, d;
+	register int w, rep;
+	i16 step, a, b;
+
+	w = in->w;
+	step = (i16)(w ? 2 : 1);
+	if (m->fl & F_DF)
+		step = (i16)(0 - step);
+	rep = (in->fl & (IN_REP | IN_REPNE)) != 0;
+	for (;;) {
+		if (rep && m->r[R_CX] == 0)
+			break;
+		s = m->r[R_SI];
+		d = m->r[R_DI];
+		switch (in->x) {
+		case 0:					/* MOVS		*/
+			if (w)
+				mww(m, S_ES, d, mrw(m, in->seg, s));
+			else
+				mwb(m, S_ES, d, mrb(m, in->seg, s));
+			m->r[R_SI] = (i16)(s + step);
+			m->r[R_DI] = (i16)(d + step);
+			break;
+		case 1:					/* CMPS		*/
+			a = (i16)(w ? mrw(m, in->seg, s)
+				    : (i16)mrb(m, in->seg, s));
+			b = (i16)(w ? mrw(m, S_ES, d) : (i16)mrb(m, S_ES, d));
+			alu(m, 7, w, a, b);
+			m->r[R_SI] = (i16)(s + step);
+			m->r[R_DI] = (i16)(d + step);
+			break;
+		case 2:					/* STOS		*/
+			if (w)
+				mww(m, S_ES, d, m->r[R_AX]);
+			else
+				mwb(m, S_ES, d, getb(m, 0));
+			m->r[R_DI] = (i16)(d + step);
+			break;
+		case 3:					/* LODS		*/
+			if (w)
+				m->r[R_AX] = mrw(m, in->seg, s);
+			else
+				setb(m, 0, mrb(m, in->seg, s));
+			m->r[R_SI] = (i16)(s + step);
+			break;
+		default:				/* SCAS		*/
+			a = (i16)(w ? m->r[R_AX] : (i16)getb(m, 0));
+			b = (i16)(w ? mrw(m, S_ES, d) : (i16)mrb(m, S_ES, d));
+			alu(m, 7, w, a, b);
+			m->r[R_DI] = (i16)(d + step);
+			break;
+		}
+		if (m->fault || !rep)
+			break;
+		m->r[R_CX] = (i16)(m->r[R_CX] - 1);
+		if (in->x == 1 || in->x == 4) {
+			a = (i16)((i86flags(m) & F_ZF) != 0);
+			if ((in->fl & IN_REPNE) ? a : !a)
+				break;
+		}
+	}
+	return (0);
+}
+
+/* ------------------------------------------------------------------ */
 /* segment-register writes: K3's check				       */
 
 /* Resolve a paragraph inside an assigned segment by storing its byte
@@ -1197,10 +1282,13 @@ struct i86in *in;
 		m->ip = ip0;
 		return (X_HALT);
 
+	case I_STRING:
+		strop(m, in);
+		break;
+
 	/* ---- decoded, deliberately not executed in stage one.  Each
 	 * of these is a line in CPM86-STAGE-ONE.md §2.3's "no" column;
 	 * refusing loudly is the whole point of decoding them. */
-	case I_STRING:				/* no string/REP ops	*/
 	case I_IRET: case I_INTO:		/* no interrupt frames	*/
 	case I_ESC:				/* no 8087		*/
 	case I_IO:				/* no PC hardware	*/
