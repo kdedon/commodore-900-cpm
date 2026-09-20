@@ -14,8 +14,8 @@
 # it as an artifact: `latest' is read a single time, so everything in the
 # release was built against the same releases.
 #
-# The whole verify suite (`make verify-all') runs in its own job beside the
-# build, and nothing is published unless it passes.
+# The whole verify suite runs beside the build, split across four runners,
+# and nothing is published unless every shard passes.
 #
 # The images are sparse files of tens of megabytes that are mostly zeros, so
 # they are published gzipped.  cpma.img is not published: it is the
@@ -99,9 +99,17 @@ jobs:
   # The whole suite, against the same tag and the same edges as `build'.  It
   # runs beside `build', and `publish' needs both: a failing suite publishes
   # nothing.
+  #
+  # Split across four runners, tests/cishard.sh dealing the targets out by
+  # recorded duration.  Two jobs per runner, not four: a runner with a job
+  # per vCPU starves the emulators and they time out.
   verify:
     needs: deps
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -110,18 +118,18 @@ jobs:
         run: tar -xpf cpm-deps.tar
       - name: cpmtools
         run: sudo apt-get update -q && sudo apt-get install -y -q cpmtools
-      # Four at a time: the runner has four vCPUs.
-      - name: The verify suite
+      - name: The verify suite, shard ${{ matrix.shard }} of 4
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/deps/commodore-900-toolchain
           KBOOT: ${{ github.workspace }}/deps/commodore-900-kboot/kboot
           KBOOTSRC: ${{ github.workspace }}/deps/commodore-900-kboot
           EMU: ${{ github.workspace }}/deps/commodore-900-emulator
-        run: make verify-all VERIFYJOBS=4
+          SHARD: ${{ matrix.shard }}
+        run: make verify-all VERIFYJOBS=2 VERIFYSET="$(sh tests/cishard.sh 4 "$SHARD")"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: verify-logs
+          name: verify-logs-${{ matrix.shard }}
           path: |
             build/verify-run/
             build/verify-*.log

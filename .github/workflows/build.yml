@@ -132,10 +132,15 @@ jobs:
   # not after it: `make verify-all' builds `all' first, so a compile fault
   # fails both, and neither waits for the other.
   # ---------------------------------------------------------------------------
-  verify:
-    needs: deps
+  # What to run, decided once, so the shards below all agree on it.  The whole
+  # suite is dealt out over four runners; a handful of targets is not worth
+  # more than one.
+  select:
     if: ${{ !startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
+    outputs:
+      set: ${{ steps.sel.outputs.set }}
+      shards: ${{ steps.sel.outputs.shards }}
     steps:
       # The whole history, so the push's BEFORE commit is there to diff.
       - uses: actions/checkout@v4
@@ -169,42 +174,55 @@ jobs:
           fi
           echo "verify: ${targets:-nothing}"
           echo "set=$targets" >> "$GITHUB_OUTPUT"
+          if [ "$targets" = all ]; then
+            echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'shards=[1]' >> "$GITHUB_OUTPUT"
+          fi
 
+  # Two jobs per runner, not four: a runner with a job per vCPU starves the
+  # emulators and they time out.
+  verify:
+    needs: [deps, select]
+    if: needs.select.outputs.set != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.select.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: cpm }
       - uses: actions/download-artifact@v4
-        if: steps.sel.outputs.set != ''
         with: { name: cpm-deps, path: cpm }
       - name: Restore the edges
-        if: steps.sel.outputs.set != ''
         working-directory: cpm
         run: tar -xpf cpm-deps.tar
 
       # The independent CP/M 3 directory reader dirfmt-check and
       # verify-stamped check the format against.
       - name: cpmtools
-        if: steps.sel.outputs.set != ''
         run: sudo apt-get update -q && sudo apt-get install -y -q cpmtools
 
-      # Four at a time: the runner has four vCPUs.
       - name: The verify suite
-        if: steps.sel.outputs.set != ''
         working-directory: cpm
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
           KBOOT: ${{ github.workspace }}/cpm/deps/commodore-900-kboot/kboot
           KBOOTSRC: ${{ github.workspace }}/cpm/deps/commodore-900-kboot
           EMU: ${{ github.workspace }}/cpm/deps/commodore-900-emulator
-          SET: ${{ steps.sel.outputs.set }}
+          SET: ${{ needs.select.outputs.set }}
+          SHARD: ${{ matrix.shard }}
         run: |
           if [ "$SET" = all ]; then
-            make verify-all VERIFYJOBS=4
-          else
-            make verify-all VERIFYJOBS=4 VERIFYSET="$SET"
+            SET=$(sh tests/cishard.sh 4 "$SHARD")
           fi
+          make verify-all VERIFYJOBS=2 VERIFYSET="$SET"
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: verify-logs
+          name: verify-logs-${{ matrix.shard }}
           path: |
             cpm/build/verify-run/
             cpm/build/verify-*.log
