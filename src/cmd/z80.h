@@ -184,9 +184,9 @@ struct z80 {
 /* ED FE nn is the shim's three-byte hook encoding: one dispatch path
  * serves BDOS, BIOS vectors, and exit. Z80 prefixes remain decodable. */
 #define HOOK_BDOS	0	/* the CALL 5 bridge			*/
-#define HOOK_BIOS	1	/* .. through 17: BIOS vectors 1-17	*/
-#define HOOK_EXIT	31	/* the guest returned to the CCP	*/
-#define HOOK_MAX	31
+#define HOOK_BIOS	1	/* .. through 33: BIOS vectors 0-32	*/
+#define HOOK_EXIT	63	/* the guest returned to the CCP	*/
+#define HOOK_MAX	63
 
 /* struct z80in .fl bits */
 #define ZF_IMM		0x01	/* .imm holds an immediate operand	*/
@@ -275,8 +275,15 @@ extern int z80ww();		/* (m, addr, v)				*/
  * to GUESTTOP is 57.6 KB. */
 #define GUESTTOP	0xe400	/* first byte the guest TPA does not own */
 #define FAKEBDOS	0xe406	/* the CALL 5 target: an ED FE 00 hook	*/
-#define FAKEBIOS	0xf200	/* 17 JMPs, one per CP/M-80 BIOS vector	*/
-#define NBIOSV		17
+#define FAKEBIOS	0xf200	/* one JMP per CP/M 3 BIOS vector	*/
+#define NBIOSV		33	/* CP/M 3's table: BOOT through RESERV2	*/
+
+/* The guest-resident SCB image.  Function 49 offset 0x3A has to answer
+ * with an address the guest can load from, so the shim keeps a copy of
+ * the SCB here, above the TPA and past the BIOS table and its stubs, and
+ * refreshes it from the native SCB around every function 49. */
+#define FAKESCB		0xf300
+#define SCBIMGLEN	100	/* src/bdos/scb.h SCBLEN		*/
 
 /* FAKEBDOS is GUESTTOP + 6 and the 6 is load-bearing.  A CP/M-80
  * program finds the top of the TPA by reading the ADDRESS FIELD of the
@@ -347,7 +354,7 @@ extern int z80rsxhdr();		/* parse a 0xC9 prefix; 0 if not one	*/
  *		Parse a command tail into 0x0080 and the two default
  *		FCBs, exactly as the CCP does.  Returns the tail length.
  *	int  z80furn(m)			struct z80 *m;
- *		Page zero, the fake BDOS, the 17-entry fake BIOS and the
+ *		Page zero, the fake BDOS, the fake BIOS table and the
  *		exit stub.  Called by z80load(); separate because the
  *		tests check it on its own.
  *	int  z80rsxhdr(img, n, r)	char *img; long n;
@@ -388,6 +395,7 @@ extern int z80bdosfn;		/* the function that asked, or -1	*/
 extern int z80biosfn;		/* the BIOS vector that asked, or -1	*/
 extern z32 z80nbdos;		/* calls serviced			*/
 extern z16 z80dma;		/* the guest's DMA address (fn 26)	*/
+extern z16 z80srch;		/* guest FCB of the last search first	*/
 extern z16 z80ver;		/* what function 12 tells the guest	*/
 
 /* Host address of `len' guest bytes at `off', or 0 when they do not all

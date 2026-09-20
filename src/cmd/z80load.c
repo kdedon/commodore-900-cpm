@@ -50,7 +50,7 @@ int a, no;
 /* ------------------------------------------------------------------ */
 /* the furniture						       */
 
-/* Plant page-zero JMP vectors, BDOS and exit hooks, and 17 BIOS JMPs.
+/* Plant page-zero JMP vectors, BDOS and exit hooks, and the BIOS JMPs.
  * BIOS table index k targets hook HOOK_BIOS+k; index 1 is warm boot. */
 int z80furn(m)
 struct z80 *m;

@@ -12,6 +12,7 @@ int	z80bdosfn;		/* function of the last call, or -1	*/
 int	z80biosfn;		/* BIOS vector of the last call, or -1	*/
 z32	z80nbdos;		/* calls serviced			*/
 z16	z80dma;			/* the guest's DMA address (fn 26)	*/
+z16	z80srch;		/* guest FCB of the last search first	*/
 
 /*
  * The multi-sector count the native BDOS is currently holding.
@@ -27,6 +28,11 @@ z16	z80dma;			/* the guest's DMA address (fn 26)	*/
  * which is what z80bdosinit() does here.
  */
 static int	z80mult = 1;
+
+/* The guest's copy of the SCB: whether its address has been handed out,
+ * and the copy as the last refresh left it. */
+static int	scbpub;
+static z8	scbsnap[SCBIMGLEN];
 
 #define Z80SCBMLT 0x4a		/* SCB_MLTIO -- src/bdos/scb.h:64	*/
 
@@ -59,6 +65,7 @@ z16	z80ver = 0x0031;
 #define P_SCB	9		/* DE, function 49's parameter block	*/
 #define P_NO	10		/* not mapped in stage one		*/
 
+#define Z80BPB	8		/* fn 50: {func, A, BC, DE, HL}		*/
 #define Z80FCB	36		/* sizeof(struct fcb) -- src/cmd/cpm.h	*/
 #define Z80REN	52		/* fn 23: old FCB at 0, new at 16	*/
 #define Z80DMA	128		/* one CP/M record			*/
@@ -117,7 +124,7 @@ static z8 pmap[113] = {
 	P_NO,		/* 47 chain to program				*/
 	P_NONE,		/* 48 flush buffers				*/
 	P_SCB,		/* 49 get/set SCB				*/
-	P_NO,		/* 50 direct BIOS call				*/
+	P_NO,		/* 50 direct BIOS call -- handled before this table */
 	P_NO,		/* 51 set DMA base: CP/M-86's, not CP/M-80's	*/
 	P_NO,		/* 52 get DMA base: ditto			*/
 	P_NO,		/* 53 get max memory				*/
@@ -127,7 +134,7 @@ static z8 pmap[113] = {
 	P_NO,		/* 57 free memory				*/
 	P_NO,		/* 58 free all memory				*/
 	P_NO,		/* 59 program load				*/
-	P_NO,		/* 60 call RSX					*/
+	P_NO,		/* 60 call RSX -- handled before this table	*/
 	P_NO,		/* 61 set exception vector			*/
 	P_NO,		/* 62 (setsupf: ours, and not the guest's)	*/
 	P_NO,		/* 63 get/set TPA limits				*/
@@ -158,12 +165,11 @@ static z8 pmap[113] = {
 #define Z80PARSE 152		/* parse filename: mapped past the table */
 
 /*
- * The SCB offsets whose CONTENTS are an address.  Reading one of these
- * through function 49 hands the guest a Z8000 address it cannot use,
- * and writing one corrupts the operating system, so both are refused by
- * name.  Every other offset in the block is a byte or a count and means
- * the same thing on both machines -- which is most of it, and is why
- * function 49 is mapped at all.
+ * The SCB offsets whose CONTENTS are an address.  The native side holds
+ * a Z8000 address in each, which is no use to a guest, so none of them
+ * passes through function 49 unchanged.  Four of the six name something
+ * the shim knows the guest address of and are answered here; the other
+ * two name buffers that only exist on the native side and stay refused.
  *
  * Offsets from src/bdos/scb.h; a word access at `off' also touches
  * `off + 1', so a two-byte field is entered under both its bytes.
@@ -174,8 +180,14 @@ static z8 scbaddr[] = {
 	0x35, 0x36,		/* banked-BIOS 128-byte buffer address	*/
 	0x3a, 0x3b,		/* address of the SCB image itself	*/
 	0x3c, 0x3d,		/* current DMA address			*/
-	0x47, 0x48		/* address of the search FCB		*/
+	0x47, 0x48,		/* address of the search FCB		*/
+	0x62, 0x63		/* @MXTPA, the top of the user TPA	*/
 };
+
+#define Z80SCBADD 0x3a
+#define Z80SCBDMA 0x3c
+#define Z80SCBSRCH 0x47
+#define Z80SCBMXTPA 0x62
 
 static int scbaddrfld(off)
 int off;
@@ -186,6 +198,24 @@ int off;
 		if (off == (int)scbaddr[i])
 			return (1);
 	return (0);
+}
+
+/*
+ * The guest's answer for an address-valued offset, or -1 when there is
+ * none to give.  @MXTPA is v3's own form -- the first address above the
+ * TPA, which is the BDOS entry -- and the other three are the addresses
+ * the guest itself named.
+ */
+static long scbguestaddr(off)
+int off;
+{
+	switch (off) {
+	case Z80SCBADD:		return ((long)FAKESCB);
+	case Z80SCBDMA:		return ((long)z80dma);
+	case Z80SCBSRCH:	return ((long)z80srch);
+	case Z80SCBMXTPA:	return ((long)FAKEBDOS);
+	}
+	return (-1L);
 }
 
 /* Reason codes, so a caller can print one sentence. */
@@ -317,12 +347,93 @@ struct z80 *m;
 {
 	z80dma = PZ_DMA;
 	z80mult = 1;		/* src/bdos/bdosmisc.c:171		*/
+	z80srch = 0;
+	scbpub = 0;
 	onbuf = 0;
 	z80bdosfn = -1;
 	z80biosfn = -1;
 	breason = BR_NONE;
 	z80nbdos = 0;
 	return (setdma(m));
+}
+
+/* ------------------------------------------------------------------ */
+/* the guest-resident SCB image					       */
+
+/*
+ * The native SCB is reachable only a word at a time through function
+ * 49, so offset 0x3A has no pointer into it to hand out.  The shim
+ * instead keeps a copy of the whole image at FAKESCB -- above the TPA,
+ * where the guest cannot allocate over it -- and publishes that.
+ *
+ * scbpull() refills the copy and remembers what it wrote; scbpush()
+ * sends back the bytes the guest has changed since.  Both run around
+ * every function 49 and after a BIOS TIME, so a field read through the
+ * published address is as fresh as the guest's last call and a field
+ * written there lands on its next one.  Neither is entered before a
+ * guest asks for the address.
+ */
+#define Z80SCBMAX 99		/* SCBMAX -- src/bdos/scb.h:80		*/
+#define Z80SCBPB  4		/* the function 49 parameter block	*/
+
+static int scbpull(m)
+struct z80 *m;
+{
+	char pbk[Z80SCBPB];
+	register int off;
+	long a;
+	int v;
+
+	for (off = 0; off < SCBIMGLEN; off += 2) {
+		pbk[0] = (char)off;
+		pbk[1] = 0;			/* a get		*/
+		pbk[2] = 0;
+		pbk[3] = 0;
+		v = z80sys(49, (z16)0, pbk);
+		m->m[(z16)(FAKESCB + off)] = (char)(v & 0xff);
+		m->m[(z16)(FAKESCB + off + 1)] = (char)((v >> 8) & 0xff);
+	}
+	for (off = 0; off < SCBIMGLEN; off++) {
+		a = scbguestaddr(off);
+		if (a < 0)
+			continue;
+		m->m[(z16)(FAKESCB + off)] = (char)(a & 0xff);
+		m->m[(z16)(FAKESCB + off + 1)] = (char)((a >> 8) & 0xff);
+	}
+	for (off = 0; off < SCBIMGLEN; off++)
+		scbsnap[off] = (z8)(m->m[(z16)(FAKESCB + off)] & 0xff);
+	return (0);
+}
+
+static int scbpush(m)
+struct z80 *m;
+{
+	char pbk[Z80SCBPB];
+	register int off;
+	int v;
+	z32 n;
+
+	for (off = 0; off < Z80SCBMAX; off++) {
+		if (scbaddrfld(off))
+			continue;
+		v = m->m[(z16)(FAKESCB + off)] & 0xff;
+		if (v == (int)scbsnap[off])
+			continue;
+		pbk[0] = (char)off;
+		pbk[1] = (char)0xff;		/* set a byte		*/
+		pbk[2] = (char)v;
+		pbk[3] = 0;
+		if (z80sys(49, (z16)0, pbk) == 0 && off == Z80SCBMLT) {
+			n = (z32)v;
+			if (n == 0)
+				n = 1;
+			if (n > 128)
+				n = 128;
+			z80mult = (int)n;
+		}
+		scbsnap[off] = (z8)v;
+	}
+	return (0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -335,6 +446,7 @@ struct z80 *m;
 int v;
 {
 	register int r;
+	char tbuf[4];
 
 	z80biosfn = v;
 	switch (v) {
@@ -365,6 +477,17 @@ int v;
 		return (B_RUN);
 	case 15:			/* LISTST			*/
 		m->a = 0xff;		/* the list device is always ready */
+		return (B_RUN);
+	case 26:			/* TIME				*/
+		/* C = 0 reads the clock; C = 0FFh would set it, and the
+		 * guest's copy of the SCB is not where our clock takes
+		 * a setting from.  Function 105 refreshes the native
+		 * SCB's own stamp bytes, so the copy is refilled. */
+		if ((z80getr(m, R_C) & 0xff) != 0)
+			break;
+		m->a = (z8)(z80sys(105, (z16)0, tbuf) & 0xff);
+		if (scbpub)
+			scbpull(m);
 		return (B_RUN);
 	}
 	breason = BR_BIOS;
@@ -410,7 +533,8 @@ struct z80 *m;
 	register int fn, cls;
 	register char *p;
 	z16 de;
-	int r;
+	int r, off, set;
+	long ga;
 	z32 n;
 	/* The native character control block for functions 111 and 112.
 	 * `a' is a host pointer, which on the target IS the XADDR our
@@ -492,6 +616,37 @@ struct z80 *m;
 		return (B_RUN);
 	}
 
+	if (fn == 50) {
+		/* The BIOS parameter block: function, A, then BC, DE and
+		 * HL as guest words.  Load the registers the vector
+		 * reads and let the BIOS seam answer, so a vector it does
+		 * not map is still refused by its own name. */
+		p = z80addr(m, de, (z32)Z80BPB);
+		if (p == (char *)0) {
+			breason = BR_ADDR;
+			return (B_ADDR);
+		}
+		m->a = (z8)(p[1] & 0xff);
+		m->rp[P_BC] = (z16)((p[2] & 0xff) | ((p[3] & 0xff) << 8));
+		m->rp[P_DE] = (z16)((p[4] & 0xff) | ((p[5] & 0xff) << 8));
+		m->rp[P_HL] = (z16)((p[6] & 0xff) | ((p[7] & 0xff) << 8));
+		r = biosv(m, p[0] & 0xff);
+		if (r != B_RUN)
+			return (r);
+		/* A BIOS vector answers in A; the BDOS call it came
+		 * through answers in all three places. */
+		m->rp[P_HL] = (z16)(m->a & 0xff);
+		z80setr(m, R_B, 0);
+		return (B_RUN);
+	}
+	if (fn == 60) {
+		/* No RSX chain is loaded, so nothing handled the call. */
+		m->a = 0xff;
+		m->rp[P_HL] = 0x00ff;
+		z80setr(m, R_B, 0);
+		return (B_RUN);
+	}
+
 	if (fn > Z80MAXFN) {
 		/* 152 parse filename would be worth having -- it is how
 		 * a CP/M 3 program turns a command tail into an FCB --
@@ -548,6 +703,10 @@ struct z80 *m;
 		ranswap(p, fn);
 		r = z80sys(fn, (z16)0, p);
 		ranswap(p, fn);
+		/* @SEARCHA follows the FCB a search first was given;
+		 * search next keeps using that one. */
+		if (fn == 17)
+			z80srch = de;
 		break;
 	case P_STR:
 		/* Function 9's string ends at a `$' the guest put there.
@@ -604,30 +763,53 @@ struct z80 *m;
 		 * high}.  No pointer in it, so it goes by reference --
 		 * but the offset it names decides whether the ANSWER is
 		 * a number or one of our addresses. */
-		p = z80addr(m, de, 4L);
+		p = z80addr(m, de, (z32)Z80SCBPB);
 		if (p == (char *)0) {
 			breason = BR_ADDR;
 			return (B_ADDR);
 		}
-		if (scbaddrfld(p[0] & 0xff)) {
+		off = p[0] & 0xff;
+		set = (p[1] & 0xff) == 0xff || (p[1] & 0xff) == 0xfe;
+		if (scbpub)
+			scbpush(m);	/* what the guest wrote in the copy */
+		ga = scbguestaddr(off);
+		if (ga >= 0) {
+			/* @SEARCHA is the only address field a guest
+			 * writes: ERASE saves it, erases, and puts it
+			 * back.  It names a guest FCB, so the shim's own
+			 * mirror is where the value belongs. */
+			if (set && off == Z80SCBSRCH) {
+				z80srch = (z16)((p[2] & 0xff)
+					| ((p[3] & 0xff) << 8));
+				r = 0;
+			} else if (set) {
+				breason = BR_SCB;
+				return (B_FN);
+			} else {
+				r = (int)ga;
+				if (off == Z80SCBADD)
+					scbpub = 1;
+			}
+		} else if (scbaddrfld(off)) {
 			breason = BR_SCB;
 			return (B_FN);
+		} else {
+			r = z80sys(fn, (z16)0, p);
+			/* The second door to the multi-sector count.
+			 * scbpost() puts the stored byte into
+			 * GBL.multcnt through function 44's clamp, which
+			 * is the clamp repeated here. */
+			if (r == 0 && off == Z80SCBMLT && set) {
+				n = (z32)(p[2] & 0xff);
+				if (n == 0)
+					n = 1;
+				if (n > 128)
+					n = 128;
+				z80mult = (int)n;
+			}
 		}
-		r = z80sys(fn, (z16)0, p);
-		/* The second door to the multi-sector count.  Byte 1 of
-		 * the block is the set flag -- 0xff a byte, 0xfe a word
-		 * (src/bdos/scb.c scb_fn()) -- and scbpost() then puts
-		 * the stored byte into GBL.multcnt through function 44's
-		 * clamp, which is the clamp repeated here. */
-		if (r == 0 && (p[0] & 0xff) == Z80SCBMLT &&
-		    ((p[1] & 0xff) == 0xff || (p[1] & 0xff) == 0xfe)) {
-			n = (z32)(p[2] & 0xff);
-			if (n == 0)
-				n = 1;
-			if (n > 128)
-				n = 128;
-			z80mult = (int)n;
-		}
+		if (scbpub)
+			scbpull(m);
 		break;
 	case P_CCB:
 		/* Translate the guest's little-endian {address, length} words into

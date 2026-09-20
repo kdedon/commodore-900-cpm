@@ -2353,6 +2353,34 @@ static int sconn;
 static int ssearch;
 static char ssname[11];
 
+/*
+ * The SCB image, as far as function 49 can see it: src/bdos/scb.c's own
+ * initial values, plus the page length and the mirrors the real
+ * scbsync() fills in.  A whole image rather than the three constants
+ * this used to answer, because the shim now reads every word of it to
+ * build the guest's copy, and a stub that answered zero everywhere
+ * would make that copy agree with nothing.
+ */
+#define SS_LEN		100
+#define SS_MAX		99		/* offsets 99 and up are refused */
+
+static unsigned char sscb[SS_LEN];
+static long ssrchp;			/* @SEARCHA, native side	*/
+
+static void sscbreset(void)
+{
+	memset(sscb, 0, sizeof sscb);
+	sscb[0x05] = 0x31;		/* version 3.1			*/
+	sscb[0x1a] = 80;		/* console width		*/
+	sscb[0x1c] = 24;		/* console page length		*/
+	sscb[0x37] = '$';		/* output delimiter		*/
+	sscb[0x3c] = 0x80;		/* dmaad = 0080h		*/
+	sscb[0x4a] = 1;			/* @MLTIO			*/
+	sscb[0x57] = 0x80;		/* long error messages		*/
+	memset(sscb + 0x58, 0xff, 5);	/* the stamp bytes		*/
+	ssrchp = 0;
+}
+
 static void sputc(int c)
 {
 	if (sconn < (int)sizeof scon - 1)
@@ -2751,6 +2779,10 @@ static int stub(int fn, z16 val, char *addr)
 	case 17:				/* search first		*/
 		memcpy(ssname, addr + 1, 11);
 		ssearch = 0;
+		/* @SEARCHA on the real BDOS is the host address of this
+		 * FCB; a marker here, so a shim that passed the native
+		 * value through would be caught answering it. */
+		ssrchp = 0xaa55L;
 		/* fall through */
 	case 18:				/* search next		*/
 		for (i = ssearch; i < SF_MAX; i++)
@@ -2799,22 +2831,41 @@ static int stub(int fn, z16 val, char *addr)
 		 * multio() stub above exists: a stub that accepted this
 		 * and ignored it would hide the very defect the DMA
 		 * bound was written against. */
-		if ((addr[0] & 0xff) == 0x4a &&
-		    ((addr[1] & 0xff) == 0xff || (addr[1] & 0xff) == 0xfe)) {
-			i = addr[2] & 0xff;
-			if (i == 0)
-				i = 1;
-			if (i > 128)
-				i = 128;
-			smultcnt = i;
+		i = addr[0] & 0xff;
+		if (i >= SS_MAX)
+			return (0xffff);
+		/* scbsync(): the fields the real one refreshes from BDOS
+		 * state before every access.  @SEARCHA holds a native
+		 * address, which is the whole reason the shim may not
+		 * pass it on. */
+		sscb[0x4a] = (unsigned char)smultcnt;
+		sscb[0x47] = (unsigned char)(ssrchp & 0xff);
+		sscb[0x48] = (unsigned char)((ssrchp >> 8) & 0xff);
+		if ((addr[1] & 0xff) == 0xff || (addr[1] & 0xff) == 0xfe) {
+			sscb[i] = (unsigned char)addr[2];
+			if ((addr[1] & 0xff) == 0xfe)
+				sscb[i + 1] = (unsigned char)addr[3];
+			/* scbpost() */
+			n = sscb[0x4a];
+			if (n == 0)
+				n = 1;
+			if (n > 128)
+				n = 128;
+			sscb[0x4a] = (unsigned char)n;
+			smultcnt = (int)n;
 			return (0);
 		}
-		switch (addr[0] & 0xff) {
-		case 0x05: return (0x31);	/* version 3.1		*/
-		case 0x1a: return (80);		/* console width		*/
-		case 0x1c: return (24);		/* console page length	*/
-		}
-		return (0);
+		return (sscb[i] | (sscb[i + 1] << 8));
+	case 105:				/* get date and time	*/
+		/* The clock our BDOS keeps in the SCB's own stamp bytes,
+		 * copied out four at a time with the seconds in A. */
+		sscb[0x58] = 0x34;
+		sscb[0x59] = 0x12;
+		sscb[0x5a] = 0x09;
+		sscb[0x5b] = 0x41;
+		sscb[0x5c] = 0x27;
+		memcpy(addr, sscb + 0x58, 4);
+		return (0x27);
 	default:
 		return (0xff);
 	}
@@ -3038,7 +3089,7 @@ static void t_seam(void)
 
 	z80hookno = HOOK_EXIT;
 	chk("the exit hook terminates", z80bdos(&G), B_EXIT);
-	z80hookno = 25;
+	z80hookno = HOOK_BIOS + NBIOSV;		/* past the last vector	*/
 	r = z80bdos(&G);
 	chk("a hook we never planted is refused", r, B_HOOKNO);
 }
@@ -3068,6 +3119,7 @@ static void sreset(void)
 	sdma = 0;
 	ssearch = 0;
 	smultcnt = 1;
+	sscbreset();
 }
 
 static void sprint(const char *tag)
@@ -3673,6 +3725,189 @@ static void t_dmabound(void)
 	G.m = gmem;				/* leave the shared guest */
 }
 
+/* ==================================================================
+ *
+ * The system control block, the direct BIOS call, and the RSX call.
+ *
+ * Function 49 offsets 0x3A and 0x47 answer with ADDRESSES, so the
+ * checks below are as much about where they point as about what they
+ * say: the copy has to be inside the guest's 64 KB, above the TPA,
+ * clear of the BIOS table, and holding what the native side reports.
+ */
+
+static int scbcall(int off, int set, int val)
+{
+	gmem[0x0300] = (char)off;
+	gmem[0x0301] = (char)set;
+	gmem[0x0302] = (char)(val & 0xff);
+	gmem[0x0303] = (char)((val >> 8) & 0xff);
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 49);
+	G.rp[P_DE] = 0x0300;
+	return (z80bdos(&G));
+}
+
+static int bioscall(int func, int a, int bc)
+{
+	memset(gmem + 0x0310, 0, 8);
+	gmem[0x0310] = (char)func;
+	gmem[0x0311] = (char)a;
+	gmem[0x0312] = (char)(bc & 0xff);
+	gmem[0x0313] = (char)((bc >> 8) & 0xff);
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 50);
+	G.rp[P_DE] = 0x0310;
+	return (z80bdos(&G));
+}
+
+static int gword(unsigned a)
+{
+	return ((gmem[a] & 0xff) | ((gmem[a + 1] & 0xff) << 8));
+}
+
+static void t_scb(void)
+{
+	static char img[8];
+
+	sreset();
+	sysmode = SYS_CPM;
+	img[0] = (char)0xc3;
+	chk("scb: a stub image loads", z80load(&G, gmem, img, 1L), CL_OK);
+	z80bdosinit(&G);
+
+	/* the copy has somewhere of its own to live */
+	chk("the SCB copy is above the TPA", (long)(FAKESCB >= GUESTTOP), 1L);
+	chk("... clear of the BIOS table and its stubs",
+		(long)(FAKESCB >= FAKEBIOS + 7 * NBIOSV), 1L);
+	chk("... and ends inside the guest",
+		(long)(FAKESCB + SCBIMGLEN <= 0x10000L), 1L);
+
+	/* ---- 0x3A: the address of the image itself. */
+
+	chk("fn 49 offset 0x3a is answered", scbcall(0x3a, 0, 0), B_RUN);
+	chk("... with the copy's address", (long)G.rp[P_HL], (long)FAKESCB);
+	chk("... which the guest can load from",
+		(long)(G.rp[P_HL] != 0), 1L);
+
+	/* and the copy holds what the native side reports */
+	chk("the copy carries the version byte",
+		(long)(gmem[FAKESCB + 0x05] & 0xff), 0x31L);
+	chk("... the console width",
+		(long)(gmem[FAKESCB + 0x1a] & 0xff), 80L);
+	chk("... the page length",
+		(long)(gmem[FAKESCB + 0x1c] & 0xff), 24L);
+	chk("... the output delimiter",
+		(long)(gmem[FAKESCB + 0x37] & 0xff), (long)'$');
+	chk("... the multi-sector count",
+		(long)(gmem[FAKESCB + 0x4a] & 0xff), 1L);
+	chk("... and the long-message flag",
+		(long)(gmem[FAKESCB + 0x57] & 0xff), 0x80L);
+	chk("the copy names itself", (long)gword(FAKESCB + 0x3a),
+		(long)FAKESCB);
+	chk("... the guest's DMA address", (long)gword(FAKESCB + 0x3c),
+		(long)PZ_DMA);
+	chk("... and the guest's TPA ceiling",
+		(long)gword(FAKESCB + 0x62), (long)FAKEBDOS);
+
+	/* ---- the other address fields, through function 49 itself. */
+
+	chk("fn 49 offset 0x3c is answered", scbcall(0x3c, 0, 0), B_RUN);
+	chk("... with the DMA address", (long)G.rp[P_HL], (long)PZ_DMA);
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 26);
+	G.rp[P_DE] = 0x2000;
+	z80bdos(&G);
+	scbcall(0x3c, 0, 0);
+	chk("... which follows function 26", (long)G.rp[P_HL], 0x2000L);
+	chk("... in the copy too", (long)gword(FAKESCB + 0x3c), 0x2000L);
+
+	chk("fn 49 offset 0x62 is answered", scbcall(0x62, 0, 0), B_RUN);
+	chk("... with the BDOS entry", (long)G.rp[P_HL], (long)FAKEBDOS);
+
+	/* ---- 0x47: the search FCB, which is the guest's own. */
+
+	scbcall(0x47, 0, 0);
+	chk("@SEARCHA is zero before any search", (long)G.rp[P_HL], 0L);
+	memset(gmem + 0x0100, 0, 36);
+	smkname(gmem + 0x0101, "NOSUCH.DAT");
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 17);			/* search first		*/
+	G.rp[P_DE] = 0x0100;
+	z80bdos(&G);
+	scbcall(0x47, 0, 0);
+	chk("@SEARCHA is the FCB the guest gave", (long)G.rp[P_HL], 0x0100L);
+	chk("... not the address the native side holds",
+		(long)(G.rp[P_HL] != 0xaa55L), 1L);
+	chk("... and the copy agrees", (long)gword(FAKESCB + 0x47), 0x0100L);
+	/* ERASE saves it, erases, and puts it back. */
+	chk("@SEARCHA takes a write", scbcall(0x47, 0xfe, 0x0100), B_RUN);
+	scbcall(0x47, 0, 0);
+	chk("... and reads back what was written",
+		(long)G.rp[P_HL], 0x0100L);
+
+	/* ---- the fields that name nothing the guest can reach. */
+
+	chk("fn 49 offset 0x1e is still refused", scbcall(0x1e, 0, 0), B_FN);
+	chk("a write to the SCB's own address is refused",
+		scbcall(0x3a, 0xfe, 0x1000), B_FN);
+	chk("a write to @MXTPA is refused", scbcall(0x62, 0xfe, 0x1000),
+		B_FN);
+
+	/* ---- what the guest writes in the copy reaches the BDOS. */
+
+	gmem[FAKESCB + 0x1b] = 7;		/* the console column	*/
+	scbcall(0x05, 0, 0);
+	chk("a write in the copy reaches the native SCB",
+		(long)sscb[0x1b], 7L);
+	gmem[FAKESCB + 0x4a] = 4;		/* the multi-sector count */
+	scbcall(0x05, 0, 0);
+	chk("... including the multi-sector count", (long)smultcnt, 4L);
+	chk("... and the copy still agrees",
+		(long)(gmem[FAKESCB + 0x4a] & 0xff), 4L);
+	gmem[FAKESCB + 0x4a] = 1;
+	scbcall(0x05, 0, 0);
+
+	/* ---- function 50, the direct BIOS call. */
+
+	sconn = 0;
+	chk("fn 50 CONOUT runs", bioscall(4, 0, 'Q'), B_RUN);
+	scon[sconn] = '\0';
+	chk("... and wrote the character from BC", (long)sconn, 1L);
+	chk("... which is the one asked for", (long)(scon[0] & 0xff),
+		(long)'Q');
+	chk("... and z80bdosfn says 50", z80bdosfn, 50);
+	chk("... with z80biosfn saying which vector", z80biosfn, 4);
+
+	chk("fn 50 TIME runs", bioscall(26, 0, 0), B_RUN);
+	chk("... answering the seconds in A", (long)G.a, 0x27L);
+	chk("... and in HL", (long)G.rp[P_HL], 0x27L);
+	chk("... and refreshes the copy's date",
+		(long)gword(FAKESCB + 0x58), 0x1234L);
+	chk("... its hour", (long)(gmem[FAKESCB + 0x5a] & 0xff), 0x09L);
+	chk("... and its seconds",
+		(long)(gmem[FAKESCB + 0x5c] & 0xff), 0x27L);
+
+	chk("fn 50 DEVTBL is refused by name", bioscall(20, 0, 0), B_BIOS);
+	chk("... naming the vector", z80biosfn, 20);
+	chk("fn 50 SELDSK is refused by name", bioscall(9, 0, 0), B_BIOS);
+	chk("fn 50 warm boot terminates", bioscall(1, 0, 0), B_EXIT);
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 50);
+	G.rp[P_DE] = (z16)(0x10000L - 7);
+	chk("a BIOSPB running off the top is refused", z80bdos(&G), B_ADDR);
+
+	/* ---- function 60 with no RSX chain loaded. */
+
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 60);
+	G.rp[P_DE] = 0x0100;
+	chk("fn 60 runs", z80bdos(&G), B_RUN);
+	chk("... answering 0FFh: nothing handled it", (long)G.a, 0xffL);
+	chk("... and the same in HL", (long)G.rp[P_HL], 0xffL);
+
+	sysmode = SYS_REC;
+}
+
 /* ================================================================== */
 
 /*
@@ -3876,6 +4111,7 @@ char **argv;
 	t_pip(argv[1]);
 	t_random();
 	t_dmabound();
+	t_scb();
 
 	printf("z80test: %d checks, %d failures\n", ntest, nfail);
 	return (nfail != 0);
