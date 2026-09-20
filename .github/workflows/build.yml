@@ -204,6 +204,25 @@ jobs:
       - name: cpmtools
         run: sudo apt-get update -q && sudo apt-get install -y -q cpmtools
 
+      # The suite's phase 1, hoisted into a step of its own so the wall of
+      # compiler output is folded away from the step that runs the tests.
+      # The suite still runs it; by then there is nothing left to do.
+      - name: Build the system and the suite's fixtures
+        working-directory: cpm
+        env:
+          C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
+          KBOOT: ${{ github.workspace }}/cpm/deps/commodore-900-kboot/kboot
+          KBOOTSRC: ${{ github.workspace }}/cpm/deps/commodore-900-kboot
+        run: |
+          echo '::group::make all'
+          make all
+          echo '::endgroup::'
+          # -k and the status unchecked, as the suite runs it: a fixture that
+          # cannot be built must fail the targets needing it and no others.
+          echo '::group::make verifyprep'
+          make -k verifyprep || true
+          echo '::endgroup::'
+
       - name: The verify suite
         working-directory: cpm
         env:
@@ -227,3 +246,10 @@ jobs:
             cpm/build/verify-run/
             cpm/build/verify-*.log
           retention-days: 7
+
+      # Last, so the bottom of a failed job's log says what failed and shows
+      # the end of its transcript.
+      - name: What failed
+        if: failure()
+        working-directory: cpm
+        run: sh tests/verifyfail.sh
