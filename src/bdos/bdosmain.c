@@ -72,6 +72,7 @@ EXTERN UBYTE	cpy_bi();	/* copy one byte in from user space */
 EXTERN		seterr();	/* record a disk error for the program */
 EXTERN		prt_blk();	/* print a character block (fcns 111/112) */
 EXTERN UBYTE	serial[];	/* system serial number (fcn 107)	*/
+EXTERN UBYTE	dflt_drive;	/* drive a reset selects		*/
 EXTERN UWORD	scb_fn();	/* get/set system control block (fcn 49) */
 EXTERN UWORD	parsefn();	/* parse filename (fcn 152)		*/
 EXTERN UWORD	rsxfn();	/* call resident system extension (60)	*/
@@ -276,7 +277,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    ro_dsk  = 0;
 		    crit_dsk= 0;
 		    GBL.curdsk = 0xff;
-		    GBL.dfltdsk = 0;
+		    GBL.dfltdsk = dflt_drive;
 		    GBL.dmaadr = pdmaget();	/* C900: back to base page +
 						   0x80 -- whatever fn 26 did
 						   to it, this process's own

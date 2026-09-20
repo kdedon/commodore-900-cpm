@@ -4348,6 +4348,36 @@ verify-hash-ab: $(HASHABON) $(HASHABOFF)
 	python3 tests/hashab.py --emu $(EMU) --on $(abspath $(HASHABON)) \
 		--off $(abspath $(HASHABOFF)) --n $(HASHABN)
 
+# ---- tools/gencpm.py: the config file governs the shipped image ----
+# A COPY of the linked system is stamped with settings that differ from the
+# ones the port ships and booted: the CCP comes up on the configured drive
+# and function 107 returns the configured serial, with nothing recompiled.
+# The copy is what gets patched, so a concurrent target's build/cpm.sys is
+# left alone.
+GCSYS	= build/gencpm-cpm.sys
+GCDAT	= build/gencpm-test.dat
+GCIMG	= build/gencpm.bin
+GCLOG	= build/verify-gencpm.log
+# CPM3FN prints the serial; it lives on A:, and the prompt under test is B:.
+GCIN	= $(OSSEL)A:\rCPM3FN\r$(ENDIN)
+
+.PHONY: verify-gencpm
+verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
+	cp $(CPMSYS) $(GCSYS)
+	@printf 'serial = ZZZZZZ\ndefault_drive = B\nhash_a = on\nhash_b = on\n' \
+		> $(GCDAT)
+	python3 tools/gencpm.py $(GCDAT) $(GCSYS)
+	$(MKDISK) $(GCIMG) $(GCSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GCIMG)) \
+		--input="$(GCIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GCLOG))
+	@$(EMUOK)
+	@grep -q 'serial  -> ZZZZZZ' $(GCLOG) \
+		|| { echo "verify-gencpm: FAIL -- fn 107 did not return the configured serial"; exit 1; }
+	@grep -q 'B>A:' $(GCLOG) \
+		|| { echo "verify-gencpm: FAIL -- the CCP did not come up on the configured drive"; exit 1; }
+	@echo "verify-gencpm: PASS -- serial and default drive came from the config file"
+
 CRSRIMG	= build/crsrtest.bin
 CRSRLOG	= build/verify-crsr.log
 # No $(ENDIN) here: this target replays the transcript through a terminal

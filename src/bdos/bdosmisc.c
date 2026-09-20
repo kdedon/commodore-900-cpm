@@ -54,10 +54,16 @@ EXTERN  VOID	ccpabort();		/* sys/ccprun.c: cancel the CCP's
 
 /*  System serial number returned by function 107.  Six bytes, as on
     CP/M 3 (bdos30.asm:5082-5091, where the field is likewise a literal
-    waiting to be stamped by the system generator).  gencpm-c900 will
-    own this value; until it exists the port ships one.  */
+    waiting to be stamped by the system generator).  This is the value
+    the port ships; a dist stamps its own into the linked image.  */
 
 GLOBAL UBYTE serial[6] = { 'C', '9', '0', '0', '0', '1' };
+
+
+/*  Drive a reset selects: 0 = A.  A data byte, so the shipped image can
+    be stamped with another one without a rebuild.  */
+
+GLOBAL UBYTE dflt_drive = 0;
 
 
 /* CP/M 3 error codes index this table from one. Keep NULL entries for

@@ -1,0 +1,7 @@
+# Settings tools/gencpm.py stamps into a linked cpm.sys.
+# These are the values the port ships; a dist changes them here.
+
+serial = C90001
+default_drive = A
+hash_a = on
+hash_b = on
