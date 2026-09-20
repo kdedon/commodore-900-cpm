@@ -332,6 +332,73 @@ def p_multi():
     return a.code(), bytes(msgs), exp
 
 
+def p_pload():
+    """I86PL.CMD -- a guest that loads a guest, through BDOS function 59.
+
+    Function 59 is how a CP/M-86 debugger gets the program it debugs into
+    memory.  Nothing DRI shipped but DDT86 calls it, and DDT86's answer is
+    an interactive transcript, so this is the caller: it asks for a system
+    control block (49), loads PIP.CMD by the FCB the command tail filled,
+    and gives the segments back (57).
+
+    IT DOES NOT TAKE THE LOADER'S WORD FOR ANY OF IT.  The answer is a
+    paragraph, and the program reads through it: the group table at the
+    base page names the code and data groups, the data base must be the
+    base page's own paragraph, and PIP's first four bytes -- 9C 58 FA 8C,
+    its prologue -- must be at the code paragraph named.  Those bytes can
+    only be there if the load really read the file.
+    """
+    a = Asm(0)
+    a.b(0xbe, 0xff, 0xff)               # mov si,0xffff  -- the refusal
+    a.b(0xb9, 0x31, 0x00)               # mov cx,49      -- get SCB
+    a.b(0xba, 0x00, 0x02)               # mov dx,0x200
+    a.b(0xcd, 0xe0)                     # int 0e0h
+    a.b(0x39, 0xf3)                     # cmp bx,si      -- there is none
+    a.rel8(0x75, 'fail')
+    a.b(0xb9, 0x3b, 0x00)               # mov cx,59      -- program load
+    a.b(0xba, 0x5c, 0x00)               # mov dx,0x5c    -- the tail's FCB
+    a.b(0xcd, 0xe0)
+    a.b(0x39, 0xf0)                     # cmp ax,si
+    a.rel8(0x74, 'fail')                # je fail        -- 0FFFFh
+    a.b(0x8e, 0xc0)                     # mov es,ax      -- its base page
+    a.b(0x26, 0x8b, 0x1e, 0x03, 0x00)   # mov bx,es:[3]  -- code base
+    a.b(0x26, 0x8b, 0x16, 0x09, 0x00)   # mov dx,es:[9]  -- data base
+    a.b(0x39, 0xc2)                     # cmp dx,ax      -- base page in it
+    a.rel8(0x75, 'fail')
+    a.b(0x8e, 0xc3)                     # mov es,bx
+    a.b(0x26, 0x8b, 0x3e, 0x00, 0x00)   # mov di,es:[0]
+    a.b(0x26, 0x8b, 0x2e, 0x02, 0x00)   # mov bp,es:[2]
+    a.b(0xb8, 0x9c, 0x58)               # mov ax,0x589c  -- PIP's prologue
+    a.b(0x39, 0xc7)                     # cmp di,ax
+    a.rel8(0x75, 'fail')
+    a.b(0xb8, 0xfa, 0x8c)               # mov ax,0x8cfa
+    a.b(0x39, 0xc5)                     # cmp bp,ax
+    a.rel8(0x75, 'fail')
+    a.b(0x31, 0xc0)                     # xor ax,ax      -- MCB base 0:
+    a.b(0xa3, 0x00, 0x02)               # mov [0x200],ax    all of it
+    a.b(0xa3, 0x02, 0x02)               # mov [0x202],ax
+    a.b(0xb9, 0x39, 0x00)               # mov cx,57      -- free memory
+    a.b(0xba, 0x00, 0x02)               # mov dx,0x200
+    a.b(0xcd, 0xe0)
+    a.b(0xba, 0x00, 0x01)               # mov dx,MSGOK
+    a.b(0xb9, 0x09, 0x00)               # print string
+    a.b(0xcd, 0xe0)
+    a.b(0xb9, 0x00, 0x00)               # system reset
+    a.b(0xcd, 0xe0)
+    a.label('fail')
+    a.b(0xba, 0x10, 0x01)               # mov dx,MSGBAD
+    a.b(0xb9, 0x09, 0x00)
+    a.b(0xcd, 0xe0)
+    a.b(0xb9, 0x00, 0x00)
+    a.b(0xcd, 0xe0)
+
+    msgs = bytearray(0x100)
+    msgs += b"I86PL OK\r\n$"             # at DS:0x100
+    msgs += bytes(0x110 - len(msgs))
+    msgs += b"I86PL BAD\r\n$"            # at DS:0x110
+    return a.code(), bytes(msgs)
+
+
 def p_refuse(bad, comment):
     """RUNUNIMP.CMD and RUNBAD.CMD -- the same program twice, differing in
     one byte, so that "decoded, not implemented" and "not an instruction"
@@ -561,6 +628,14 @@ def main(argv):
     man.append("LOAD I86MG.CMD CE_OK model=large entry=0 ng=5 "
                "alloc=%d,%d,%d,%d,%d" % ((MAXPAR,) * 5))
     man.append("RUN I86MG.CMD X_INT " + exp)
+
+    # ---- the function 59 caller.  No manifest entry: a fixture run stops
+    # at the first INT, which here is the third instruction, so the host
+    # suite calls the seam directly instead and this file is the target's.
+    code, data = p_pload()
+    write(d, 'I86PL.CMD',
+          [(G_CODE, npar(code), 0, npar(code), 0),
+           (G_DATA, npar(data), 0, 512, 0)], [code, data])
 
     # ---- and the one fixture that is not a .CMD: GENCMD's input.
     hexf, msg = p_hex()

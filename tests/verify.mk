@@ -156,9 +156,11 @@ ARXMAX ?= 2000000000
 TRUNCBMAX ?= 1500000000
 # GENCMD sizes its work from the base page: it scans its whole data group
 # once per output record, and that group is a full 64 KB.  1.9 million
-# interpreted 8086 instructions in one of the four programs verify-i86
-# runs is past the default budget.
-I86MAX ?= 1500000000
+# interpreted 8086 instructions in one of the five programs verify-i86
+# runs is past the default budget.  The five together measure 1.553
+# billion, and the ceiling is a ceiling -- the session stops when its
+# input is consumed, so the slack costs nothing.
+I86MAX ?= 1700000000
 
 # ---- CP/M 3 V1 wave function tests (44, 45, 42/43/98/107-112, fn 10) ----
 # One program per cold boot, then one scripted editing session, all onto a
@@ -689,7 +691,7 @@ I86IMG	= build/i86test.bin
 I86LOG	= build/verify-i86.log
 I86IN	= build/i86in.txt
 I86SUB	= build/i86sub.txt
-# Three programs, one session, in an order the session itself fixes.
+# Five programs, one session, in an order the session itself fixes.
 # PIP is the gate stage one closed.  GENCMD is second: it is the binary
 # that reads its own base-page paragraph count and refuses to work
 # against a small one, so it is the target-side evidence for
@@ -712,7 +714,16 @@ I86SUB	= build/i86sub.txt
 # group reached only through the paragraph i86bpage() published for it.
 # It must come before SUBMIT for the same reason GENCMD does -- SUBMIT
 # ends the session.
-I86VERIFYIN = $(OSSEL)$(SESS1)CPM86 PIP.CMD I86OUT.TXT=I86IN.TXT\rCPM86 GENCMD.CMD I86HEX\rCPM86 I86MG.CMD\rCPM86 SUBMIT.CMD I86SUB\r
+#
+# I86PL.CMD is fourth, and it is the only caller of BDOS function 59 --
+# program load -- there is.  The function exists for a debugger: DDT86 is
+# the one binary in the drop that calls it, and its answer is an
+# interactive transcript, which is no gate.  So the caller is synthesised
+# too (tools/mkcmdfix.py p_pload()) and the program it loads is DRI's own
+# PIP.CMD, off the real file system through the real BDOS.  It checks the
+# load from inside the guest: the base page the loader answers with names
+# the groups, and PIP's own prologue must be at the code paragraph named.
+I86VERIFYIN = $(OSSEL)$(SESS1)CPM86 PIP.CMD I86OUT.TXT=I86IN.TXT\rCPM86 GENCMD.CMD I86HEX\rCPM86 I86MG.CMD\rCPM86 I86PL.CMD PIP.CMD\rCPM86 SUBMIT.CMD I86SUB\r
 # The host run's own $$$.SUB, written by tests/i86test.c section 8c as it
 # runs, so that the target's copy is compared against bytes a run produced
 # and not against bytes someone typed out.
@@ -732,6 +743,7 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	cp $(I86CORPUS)/GENCMD.CMD $(I86DISK)/GENCMD.CMD
 	cp $(I86FIX)/I86HEX.H86 $(I86DISK)/I86HEX.H86
 	cp $(I86FIX)/I86MG.CMD $(I86DISK)/I86MG.CMD
+	cp $(I86FIX)/I86PL.CMD $(I86DISK)/I86PL.CMD
 	python3 -c 'import sys; sys.stdout.buffer.write(bytes((0x20 + (k * 7 + (k >> 5)) % 0x5e) for k in range(1024)))' \
 		> $(I86IN)
 	cp $(I86IN) $(I86DISK)/I86IN.TXT
@@ -856,7 +868,21 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@grep -q 'I86MG OK' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the multi-group guest did not reach"; \
 		     echo "            its own verdict.  See build/verify-i86.log."; exit 1; }
-	@# --- the fourth program: DRI's SUBMIT.CMD ---
+	@# --- the fourth program: I86PL.CMD, BDOS function 59 ---
+	@# The only place program load runs behind the real BDOS.  The guest
+	@# grades itself: BAD means 59 refused, or answered a paragraph whose
+	@# base page does not describe the program, or put something other
+	@# than PIP at the code paragraph it named.
+	@grep -q 'I86PL BAD' $(I86LOG) \
+		&& { echo "verify-i86: FAIL -- function 59 did not load PIP.CMD."; \
+		     echo "            The guest read the base page it was answered"; \
+		     echo "            with and PIP's prologue was not where it said."; \
+		     exit 1; } \
+		|| true
+	@grep -q 'I86PL OK' $(I86LOG) \
+		|| { echo "verify-i86: FAIL -- the function 59 guest did not reach"; \
+		     echo "            its own verdict.  See build/verify-i86.log."; exit 1; }
+	@# --- the fifth program: DRI's SUBMIT.CMD ---
 	@grep -q 'i86: 2689 instructions, 9 BDOS calls' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the target run of SUBMIT did not"; \
 		     echo "            take the same path as the host run (2,689"; \
