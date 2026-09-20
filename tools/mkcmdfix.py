@@ -208,17 +208,18 @@ def p_small():
     0.  i86load.c: zero is not a bound of zero, it is "no maximum", so the
     allocation grows from G-Min to the whole 64 KB segment the group owns
     -- and this program does not take the loader's word for it, it reads
-    its own data group's paragraph count out of the base page (word at
-    DS:6, the second group-table entry's length) and stores it.  A loader
-    that read G-Max literally would put 0 there; one that stopped at G-Min
-    would put 512, which is what it did until 2026-09-04.
+    its own data group's size out of the base page and stores it.  A group
+    table entry is six bytes and its length is a 24-bit BYTE count, so a
+    whole 64 KB segment is 0x010000 and the word at DS:7 holds its top two
+    bytes, 0x0100.  A loader that read G-Max literally would put 0 there;
+    one that stopped at G-Min would put 0x0020, which is 512 paragraphs.
 
     The array it sums sits at DS:0x100, immediately above the base page,
     which is also the check that the data image landed at DS:0 with only
     its first 256 bytes overwritten.
     """
     a = Asm(0)
-    a.b(0xa1, 0x06, 0x00)               # mov ax,[6]     -- data G paragraphs
+    a.b(0xa1, 0x07, 0x00)               # mov ax,[7]     -- data G size, top
     a.b(0xa3, 0x00, 0x02)               # mov [0x200],ax
     a.b(0xbe, 0x00, 0x01)               # mov si,0x100
     a.b(0xb9, 0x05, 0x00)               # mov cx,5
@@ -233,8 +234,9 @@ def p_small():
     words = (0x0101, 0x0202, 0x0303, 0x0404, 0x0505)    # sum 0x0f0f
     data = bytes(0x100) + b''.join(w16(v) for v in words)
     steps = 5 + 5 * 3 + 2
+    top = (MAXPAR * 16) >> 8
     exp = ("ip=0x%04x ax=%d bx=0x0f0f steps=%d w=ds:0x200:%d "
-           "w=ds:0x202:0x0f0f" % (a.at('halt'), MAXPAR, steps, MAXPAR))
+           "w=ds:0x202:0x0f0f" % (a.at('halt'), top, steps, top))
     return a.code(), data, exp
 
 
@@ -261,8 +263,9 @@ def p_multi():
          must have used.
       3. The auxiliary group has a segment and NO segment register, so the
          only way to it is the base page: the program loads its paragraph
-         from DS:0x10 -- the fifth group-table entry, which i86bpage()
-         fills from g->par -- into ES, and writes and reads through it.
+         from DS:0x1b -- the base word of the fifth six-byte group-table
+         entry, which i86bpage() fills from g->par -- into ES, and writes
+         and reads through it.
          i86resolve() has to answer that paragraph without a slow-path
          escape, which is what makes `slow segment resolutions 0' on the
          target a statement about this program.
@@ -289,7 +292,7 @@ def p_multi():
     a.b(0x36, 0x8b, 0x3e, 0xfe, 0x03)   # mov di,ss:[0x3fe]
     a.b(0x39, 0xc7)                     # cmp di,ax
     a.rel8(0x75, 'fail')                # jne fail            -- 2: SS
-    a.b(0x8b, 0x36, 0x10, 0x00)         # mov si,[0x10]  -- aux1 paragraph
+    a.b(0x8b, 0x36, 0x1b, 0x00)         # mov si,[0x1b]  -- aux1 paragraph
     a.b(0x8e, 0xc6)                     # mov es,si
     a.b(0xb8, 0xaa, 0x55)               # mov ax,0x55aa
     a.b(0x26, 0xa3, 0x00, 0x02)         # mov es:[0x200],ax

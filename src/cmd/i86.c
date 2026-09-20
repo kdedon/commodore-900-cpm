@@ -62,6 +62,55 @@ char *addr;
 	return (__bdos(fn, addr ? (long) addr : (long) (val & 0xffff)));
 }
 
+/*
+ * The spare segments BDOS function 59 draws on when a guest loads a
+ * program of its own.  They come from the same pool as the guest's, are
+ * held apart from gseg[] because they come and go while the guest runs,
+ * and putsegs() gives back whatever is still out at the end.
+ *
+ * Four, because the pool is seven: a run holds one per declared group,
+ * of which there are at least two, plus the segment that became
+ * paragraph 0.  Five spare at the very best, and a .CMD with more than
+ * four groups is refused by i86place() before this is asked.
+ */
+#define I86XSEG	4
+
+static int	xsegn[I86XSEG];
+static char	*xsegb[I86XSEG];
+static int	nxseg;
+
+static char *xsegget()
+{
+	long xa;
+	int s;
+
+	if (nxseg >= I86XSEG)
+		return ((char *) 0);
+	s = (int) segcall(SEG_GET, 0L);
+	if (s == 0)
+		return ((char *) 0);
+	xa = SEGBASE(s);
+	xsegn[nxseg] = s;
+	xsegb[nxseg] = (char *) xa;
+	return (xsegb[nxseg++]);
+}
+
+static int xsegput(b)
+char *b;
+{
+	register int i;
+
+	for (i = 0; i < nxseg; i++)
+		if (xsegb[i] == b) {
+			segcall(SEG_PUT, (long) xsegn[i]);
+			xsegn[i] = xsegn[nxseg - 1];
+			xsegb[i] = xsegb[nxseg - 1];
+			nxseg--;
+			return (1);
+		}
+	return (0);
+}
+
 /* ------------------------------------------------------------------ */
 /* small output helpers -- libcpm.c has cputs/putdec and nothing hex   */
 
@@ -223,6 +272,8 @@ static VOID putsegs()
 {
 	register int i;
 
+	while (nxseg > 0)
+		xsegput(xsegb[nxseg - 1]);
 	for (i = ngseg - 1; i >= 0; i--)
 		if (gseg[i])
 			segcall(SEG_PUT, (long) gseg[i]);
@@ -513,6 +564,8 @@ char *argv[];
 
 	i86ninsn = i86nflag = 0;
 	i86nsegslow = i86nsegbad = 0;
+	i86segget = xsegget;
+	i86segput = xsegput;
 	i86bdosinit(&G);
 
 	limit = 20000000L;

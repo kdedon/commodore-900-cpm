@@ -338,7 +338,17 @@ char *s, *f;
 }
 
 /* Build the data group's (or code-only group's) 256-byte base page:
- * eight paragraph base/length pairs, FCBs at 0x5c/0x6c, tail at 0x80. */
+ * eight SIX-byte group descriptors, FCBs at 0x5c/0x6c, tail at 0x80.
+ *
+ * Six, not four, and the length is a byte count and not a paragraph
+ * count.  DRI's DDT86 is the witness: it copies 0x30 bytes out of a
+ * loaded program's base page and indexes them by six (DDT86.CMD 06F0h),
+ * taking the word at +3 as the group's base PARAGRAPH -- which is also
+ * where its own startup reads the code group's base, at 0003h, and the
+ * extra group's at 000Fh -- and forming the group's last address from
+ * the word at +0 with the byte at +2 as its paragraph carry.  Nothing
+ * else in the corpus indexes the table, which is how a four-byte
+ * spelling survived this long. */
 int i86bpage(c, m, slot, tail)
 struct i86cmd *c;
 struct i86 *m;
@@ -356,18 +366,26 @@ char *tail;
 		g = &c->g[i];
 		if (g->form == G_NONE || g->form > G_AUX4)
 			continue;
-		e = (g->form - 1) * 4;		/* code is first	*/
-		if (e > 0x1c)
+		e = (g->form - 1) * 6;		/* code is first	*/
+		if (e > 0x2a)
 			continue;
+		/* The length in bytes: a group of 4096 paragraphs is a
+		 * whole 64 KB and does not fit in the word, which is what
+		 * the third byte is for. */
+		m->sb[slot][e] = (char)(((g->npar & 0x0fff) << 4) & 0xff);
+		m->sb[slot][e + 1] = (char)((g->npar >> 4) & 0xff);
+		m->sb[slot][e + 2] = (char)((g->npar >> 12) & 0xff);
 		/* g->par, not m->sr[g->seg]: an auxiliary group has a
 		 * paragraph and no segment register, and the base page
 		 * is the ONLY way its program can learn that paragraph.
 		 * For every group that does have a register the two are
 		 * the same value, so nothing below the large model moves. */
-		m->sb[slot][e] = (char)(g->par & 0xff);
-		m->sb[slot][e + 1] = (char)((g->par >> 8) & 0xff);
-		m->sb[slot][e + 2] = (char)(g->npar & 0xff);
-		m->sb[slot][e + 3] = (char)((g->npar >> 8) & 0xff);
+		m->sb[slot][e + 3] = (char)(g->par & 0xff);
+		m->sb[slot][e + 4] = (char)((g->par >> 8) & 0xff);
+		/* The 8080 model, in the byte DDT86 tests before it will
+		 * start a program at 0100h rather than at zero. */
+		if (g->form == G_CODE && c->model == M_8080)
+			m->sb[slot][e + 5] = 1;
 	}
 	n = 0;
 	if (tail) {

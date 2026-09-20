@@ -154,6 +154,11 @@ ARXMAX ?= 2000000000
 # TRUNCB writes 1160 records and reads 769 back across four files, which
 # does not fit the default budget.
 TRUNCBMAX ?= 1500000000
+# GENCMD sizes its work from the base page: it scans its whole data group
+# once per output record, and that group is a full 64 KB.  1.9 million
+# interpreted 8086 instructions in one of the four programs verify-i86
+# runs is past the default budget.
+I86MAX ?= 1500000000
 
 # ---- CP/M 3 V1 wave function tests (44, 45, 42/43/98/107-112, fn 10) ----
 # One program per cold boot, then one scripted editing session, all onto a
@@ -738,7 +743,7 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	$(MKDISK) $(I86IMG) $(CPMSYS) $(I86CPMA) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(I86IMG)) \
 		--input="$(I86VERIFYIN)" \
-		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		--max=$(I86MAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(I86LOG))
 	@$(EMUOK)
 	@# ONE HIGHER SINCE C10.  A session runs on console
@@ -757,20 +762,22 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		|| { echo "verify-i86: FAIL -- the loader did not read PIP's real header"; exit 1; }
 	@grep -q 'i86: place: ok' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the groups were not bound to segments"; exit 1; }
-	@grep -q '0000: 00 10 00 10 00 20 80 08' $(I86LOG) \
+	@grep -q '0000: 00 00 01 00 10 00 00 88 00 00 20 00' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the base page's segment table is not in"; \
-		     echo "            the guest's data segment (code 0x1000/4096 para,"; \
-		     echo "            data 0x2000/2176 para -- PIP's header asks for"; \
-		     echo "            G-Max 0 and 2176, and src/cmd/i86load.c galloc()"; \
-		     echo "            grants the ask, not the G-Min floor)"; exit 1; }
+		     echo "            the guest's data segment.  Six bytes to an entry:"; \
+		     echo "            a 24-bit length in BYTES then the base paragraph,"; \
+		     echo "            so code is 0x010000 bytes at 0x1000 and data is"; \
+		     echo "            0x008800 at 0x2000 -- PIP's header asks for G-Max"; \
+		     echo "            0 and 2176, and src/cmd/i86load.c galloc() grants"; \
+		     echo "            the ask, not the G-Min floor"; exit 1; }
 	@grep -q '0080: 15 20 49 38 36 4F 55 54' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the command tail did not reach DS:0080"; exit 1; }
 	@grep -q '0000: 9C 58 FA 8C D9 8E D1 8D 26 84 01' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- PIP's own prologue is not in the code segment"; exit 1; }
-	@grep -q 'i86: 9476 instructions, 63 BDOS calls' $(I86LOG) \
+	@grep -q 'i86: 9248 instructions, 58 BDOS calls' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the target run did not take the same path"; \
-		     echo "            through PIP as the host run (9,476 instructions,"; \
-		     echo "            63 BDOS calls -- tests/i86test.c section 8b)"; exit 1; }
+		     echo "            through PIP as the host run (9,248 instructions,"; \
+		     echo "            58 BDOS calls -- tests/i86test.c section 8b)"; exit 1; }
 	@grep -q 'i86: slow segment resolutions 0, refused 0' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- PIP wrote a segment register we never handed"; \
 		     echo "            out; K3's static census said it would not"; exit 1; }
@@ -790,9 +797,9 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		     echo "            page.  src/cmd/i86load.c galloc() grants"; \
 		     echo "            min(G-Max, CMD_MAXPAR); this says it did not."; exit 1; } \
 		|| true
-	@grep -q 'i86: 75554 instructions, 38 BDOS calls' $(I86LOG) \
+	@grep -q 'i86: 1911554 instructions, 38 BDOS calls' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the target run of GENCMD did not"; \
-		     echo "            take the same path as the host run (75,554"; \
+		     echo "            take the same path as the host run (1,911,554"; \
 		     echo "            instructions, 38 BDOS calls -- tests/i86test.c"; \
 		     echo "            section 8d)"; exit 1; }
 	@grep -q 'RECORDS WRITTEN 04' $(I86LOG) \
@@ -7655,8 +7662,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 930 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1557 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1557 of its"; \
+	@grep -q 'i86test: 1587 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1587 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason
@@ -7666,8 +7673,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		|| { echo "verify-shim: FAIL -- DUMP no longer takes the 14,314/605/872 path"; \
 		     echo "             verify-z80 gates on.  Read the divergence; do not"; \
 		     echo "             relax this."; exit 1; }
-	@grep -q 'i86test: PIP ran 9476 instructions, 63 BDOS calls' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- PIP no longer takes the 9,476/63 path"; \
+	@grep -q 'i86test: PIP ran 9248 instructions, 58 BDOS calls' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- PIP no longer takes the 9,248/58 path"; \
 		     echo "             verify-i86 gates on."; exit 1; }
 	@echo "verify-shim: PASS -- both shims, compiled with the guest region's"
 	@echo "             bounds instrumented: a 2-record transfer from 0xff80"

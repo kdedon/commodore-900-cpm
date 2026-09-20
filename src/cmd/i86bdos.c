@@ -152,7 +152,7 @@ static i8 pmap[53] = {
 	P_BYTE,		/* 46 get disk free space -> the DMA buffer	*/
 	P_NO,		/* 47 chain to program				*/
 	P_NONE,		/* 48 flush buffers				*/
-	P_NO,		/* 49 get/set SCB: ours, not CP/M-86's		*/
+	P_NO,		/* 49 get/set SCB -- handled before this table	*/
 	P_NO,		/* 50 direct BIOS call				*/
 	P_WORD,		/* 51 set DMA base -- handled before this table	*/
 	P_NO		/* 52 get DMA base				*/
@@ -303,6 +303,241 @@ i16 *offp;
 	return (1);
 }
 
+/* ------------------------------------------------------------------ */
+/* functions 57 and 59: the program a guest loads			       */
+
+/*
+ * The whole of CP/M-86's memory group that DDT86 reaches for, and no
+ * more.  Function 59 is a .CMD load with the GUEST's FCB, answered with
+ * the paragraph of the base page it built; function 57 gives the
+ * segments back.
+ *
+ * One loaded program at a time.  That is not a simplification of
+ * CP/M-86 so much as a statement of what the pool can hold: seven
+ * segments on the machine, of which a run already holds one per group
+ * plus paragraph 0, and a debuggee wants one per group again.  A second
+ * function 59 therefore frees the first program before it loads
+ * anything, so an `E' command repeated cannot leak a segment however the
+ * guest keeps its own books.
+ */
+char	*(*i86segget)();
+int	(*i86segput)();
+
+static int	plfirst;		/* first pool slot the program holds */
+static int	plnseg;			/* how many; 0 when none is loaded */
+static i16	plpar[CMD_NGRP];	/* the paragraphs, for the MCB	*/
+static char	*plmem[CMD_NGRP];	/* and the segments behind them	*/
+static i16	plbase;			/* its base page paragraph	*/
+
+/*
+ * plfree -- the segments back to the platform and the slots off the end
+ * of the pool.  The slots ARE off the end: nothing else appends to
+ * i86spar[] while a guest runs, so the program's are the last ones and
+ * dropping i86nseg back is enough to make them unaddressable again.
+ */
+static int plfree()
+{
+	register int i;
+
+	if (plnseg == 0)
+		return (0);
+	if (i86segput)
+		for (i = plnseg - 1; i >= 0; i--)
+			(*i86segput)(plmem[i]);
+	if (i86nseg == plfirst + plnseg)
+		i86nseg = plfirst;
+	plnseg = 0;
+	plbase = 0;
+	return (1);
+}
+
+/* Is `par' a paragraph the loaded program was given?  Zero is CP/M-86's
+ * "all of it", which a guest with nothing loaded may well ask for. */
+static int plowns(par)
+i16 par;
+{
+	register int i;
+
+	if (plnseg == 0)
+		return (0);
+	if (par == 0 || par == plbase)
+		return (1);
+	for (i = 0; i < plnseg; i++)
+		if (par == plpar[i])
+			return (1);
+	return (0);
+}
+
+/*
+ * pload -- function 59, with `f' the guest's FCB.  Answers the base page
+ * paragraph, or zero, having left nothing acquired.
+ *
+ * The file is read a record at a time into a buffer of our own and
+ * scattered into the groups by file offset, rather than staged in a
+ * whole spare segment the way the gate stages a program at startup: the
+ * gate had a segment to spare before the guest existed and this does
+ * not.  Record 0 is the header, which is exactly 128 bytes.
+ */
+static i16 pload(m, f)
+struct i86 *m;
+char *f;
+{
+	static char fcb[I86FCB];
+	static char rec[I86DMA];
+	static char hdr[CMD_HDR];
+	static struct i86cmd c;
+	static struct i86 pm;
+	register struct i86grp *g;
+	char *savbase[I86NSEG];
+	i16 savpar[I86NSEG];
+	char *base[CMD_NGRP];
+	i16 par[CMD_NGRP], sdgpar, mx, bpar;
+	i32 sdgtop, flen, off, lo, hi, k;
+	int savnseg, i, rc, ng, slot;
+
+	plfree();
+	bpar = 0;
+	for (i = 0; i < I86FCB; i++)
+		fcb[i] = f[i];
+	fcb[12] = fcb[13] = fcb[14] = fcb[15] = 0;
+	fcb[32] = 0;
+	/* The length first, because i86hdr() checks the header against it
+	 * and a truncated .CMD is the one thing a directory can hand us
+	 * that looks like a program and is not.  Our BDOS leaves the
+	 * record count in the random field high byte first. */
+	if ((i86sys(35, (i16)0, fcb) & 0xff) == 0xff)
+		return (0);
+	flen = (((i32)(fcb[33] & 0xff) << 16) | ((i32)(fcb[34] & 0xff) << 8)
+		| (i32)(fcb[35] & 0xff)) * (i32)I86DMA;
+	fcb[12] = fcb[13] = fcb[14] = fcb[15] = 0;
+	fcb[32] = 0;
+	fcb[33] = fcb[34] = fcb[35] = 0;
+	if ((i86sys(15, (i16)0, fcb) & 0xff) == 0xff)
+		return (0);
+
+	/* Our reads are single records, whatever count the guest set with
+	 * function 44: multio() would otherwise write count * 128 bytes
+	 * into a 128-byte buffer. */
+	i86sys(44, (i16)1, (char *)0);
+	i86sys(26, (i16)0, rec);
+	rc = CE_TRUNC;
+	if (i86sys(20, (i16)0, fcb) == 0) {
+		for (i = 0; i < CMD_HDR; i++)
+			hdr[i] = rec[i];
+		rc = i86hdr(hdr, flen, &c);
+	}
+	if (rc != CE_OK)
+		goto done;
+
+	ng = c.ng < 1 ? 1 : c.ng;
+	if (ng > CMD_NGRP || i86nseg + ng > I86NSEG || i86segget == 0)
+		goto done;
+	/* The next free paragraphs, one 64 KB apart from the last segment
+	 * the pool holds, so that a guest that computes one segment value
+	 * from another still lands on a paragraph i86resolve() knows. */
+	mx = 0;
+	for (i = 0; i < i86nseg; i++)
+		if (i86spar[i] > mx)
+			mx = i86spar[i];
+	if ((i32)mx + (i32)ng * 0x1000L > 0xf000L)
+		goto done;
+	for (i = 0; i < ng; i++) {
+		par[i] = (i16)(mx + (i16)((i + 1) * 0x1000));
+		base[i] = (*i86segget)();
+		if (base[i] == (char *)0) {
+			while (--i >= 0)
+				if (i86segput)
+					(*i86segput)(base[i]);
+			goto done;
+		}
+	}
+
+	/*
+	 * i86place() places into i86spar[0..nseg-1], so the program's
+	 * segments are made to BE those slots for the length of the call
+	 * and the running guest's pool is put back afterwards.  The same
+	 * swap covers i86dgpar/i86dgtop, which name the group functions 27
+	 * and 31 answer out of and belong to the guest, not to its
+	 * debuggee.
+	 */
+	savnseg = i86nseg;
+	sdgpar = i86dgpar;
+	sdgtop = i86dgtop;
+	for (i = 0; i < I86NSEG; i++) {
+		savpar[i] = i86spar[i];
+		savbase[i] = i86sbase[i];
+	}
+	for (i = 0; i < ng; i++) {
+		i86spar[i] = par[i];
+		i86sbase[i] = base[i];
+		for (k = 0; k < 0x10000L; k++)
+			base[i][k] = 0;
+	}
+	i86nseg = ng;
+	for (i = 0; i < (int)sizeof pm; i++)
+		((char *)&pm)[i] = 0;
+	pm.fl = F_ONES;
+	pm.lz = LZ_NONE;
+	rc = i86place(&c, &pm, ng);
+	if (rc == CE_OK) {
+		/* The images, out of the file and into the groups.  The
+		 * tail is empty: function 59 loads a program, and filling
+		 * the base page's tail and default FCBs is the caller's
+		 * to do -- DDT86 does it for the program it debugs. */
+		off = CMD_HDR;
+		while (off < c.need && i86sys(20, (i16)0, fcb) == 0) {
+			for (i = 0; i < CMD_NGRP; i++) {
+				g = &c.g[i];
+				if (g->form == G_NONE || g->form > G_AUX4)
+					continue;
+				lo = g->foff > off ? g->foff : off;
+				hi = g->foff + (i32)g->len * (i32)CMD_PARA;
+				if (hi > off + (i32)I86DMA)
+					hi = off + (i32)I86DMA;
+				for (k = lo; k < hi; k++)
+					base[g->sidx][k - g->foff]
+						= rec[k - off];
+			}
+			off += (i32)I86DMA;
+		}
+		slot = c.model == M_8080 ? S_CS : S_DS;
+		i86bpage(&c, &pm, slot, (char *)0);
+		bpar = i86dgpar;
+	}
+
+	i86dgpar = sdgpar;
+	i86dgtop = sdgtop;
+	for (i = 0; i < I86NSEG; i++) {
+		i86spar[i] = savpar[i];
+		i86sbase[i] = savbase[i];
+	}
+	i86nseg = savnseg;
+	if (bpar == 0) {
+		for (i = ng - 1; i >= 0; i--)
+			if (i86segput)
+				(*i86segput)(base[i]);
+		goto done;
+	}
+	/* Appended, never inserted: paragraph 0 keeps its place ahead of
+	 * them, so a paragraph inside a group still resolves to that
+	 * group, and plfree() can drop them by shortening the pool. */
+	plfirst = savnseg;
+	for (i = 0; i < ng; i++) {
+		i86spar[savnseg + i] = par[i];
+		i86sbase[savnseg + i] = base[i];
+		plpar[i] = par[i];
+		plmem[i] = base[i];
+	}
+	i86nseg = savnseg + ng;
+	plnseg = ng;
+	plbase = bpar;
+done:
+	i86sys(16, (i16)0, fcb);
+	i86sys(44, (i16)i86mult, (char *)0);
+	setdma(m);
+	return (bpar);
+}
+
 /* The five functions src/bdos/bdosrw.c multio() shells. */
 static int ismulti(fn)
 int fn;
@@ -323,6 +558,7 @@ struct i86 *m;
 	i86dmaseg = m->sr[S_DS];
 	i86dmaoff = 0x80;
 	i86mult = 1;		/* src/bdos/bdosmisc.c:171		*/
+	plfree();
 	i86bdosfn = -1;
 	breason = BR_NONE;
 	onbuf = 0;
@@ -447,13 +683,56 @@ struct i86 *m;
 		return (B_RUN);
 	}
 
+	if (fn == 49) {
+		/* Get/set SCB.  There is no CP/M-86 system control block
+		 * behind this seam to hand out or to alter, and 0FFFFh is
+		 * what a caller reads as "there is none": DDT86 asks for
+		 * the block's address once at startup, compares the answer
+		 * with 0FFFFh and carries on without it.  Refusing instead
+		 * stopped it on its ninth BDOS call. */
+		m->r[R_AX] = (i16)0xffff;
+		m->r[R_BX] = (i16)0xffff;
+		return (B_RUN);
+	}
+	if (fn == 57) {
+		/* Free memory.  The MCB names a base paragraph, a length
+		 * and an extent byte; the only memory this seam ever hands
+		 * a guest is the program it loaded for it, so the base is
+		 * what is read -- zero being CP/M-86's "all of it" -- and
+		 * the length is not: the segments go back whole or not at
+		 * all.  Freeing nothing is a success, which is what a
+		 * guest that has loaded nothing yet gets. */
+		p = i86addr(m, S_DS, dx, 5L);
+		if (p == (char *)0) {
+			breason = BR_ADDR;
+			return (B_ADDR);
+		}
+		if (plowns((i16)((p[0] & 0xff) | ((p[1] & 0xff) << 8))))
+			plfree();
+		m->r[R_AX] = 0;
+		m->r[R_BX] = 0;
+		return (B_RUN);
+	}
+	if (fn == 59) {
+		/* Program load.  The answer is the base page paragraph,
+		 * and 0FFFFh is the failure DDT86 prints INSUFFICIENT
+		 * MEMORY for -- which covers a file that is not there, a
+		 * header we refuse and a pool with no segment left, all
+		 * three being "you cannot have this program" to a guest. */
+		p = i86addr(m, S_DS, dx, (i32)I86FCB);
+		if (p == (char *)0) {
+			breason = BR_ADDR;
+			return (B_ADDR);
+		}
+		r = (int)pload(m, p);
+		m->r[R_AX] = (i16)(r ? r : 0xffff);
+		m->r[R_BX] = m->r[R_AX];
+		return (B_RUN);
+	}
 	if (fn > 52) {
-		/* 53-58 memory allocation and 59 program load.  Each is
-		 * a real CP/M-86 function and none is in stage one
-		 * (CPM86-STAGE-ONE.md §2.3): allocation is quantised to
-		 * 64 KB here and a guest loading a second guest is a
-		 * design question, not a mapping.  Refusing by name
-		 * beats answering. */
+		/* 53-56 and 58 stay refused: sized allocation is quantised
+		 * to a whole 64 KB segment here and there is nothing
+		 * honest to answer a guest that asks for less. */
 		breason = BR_FN;
 		return (B_FN);
 	}

@@ -1904,14 +1904,17 @@ static void t_loader(void)
 	chk("place ip", m.ip & 0xffff, 0);
 
 	i86bpage(&c, &m, S_DS, "A:VERIFY.OUT=A:VERIFY.IN");
-	chk("bpage code base", (dseg[0] & 0xff) | ((dseg[1] & 0xff) << 8),
+	/* Six bytes to an entry: a 24-bit length in BYTES, then the base
+	 * paragraph.  The code group filled its segment, so its length is
+	 * 0x010000 and only the third byte carries it. */
+	chk("bpage code base", (dseg[3] & 0xff) | ((dseg[4] & 0xff) << 8),
 	    0x1000);
-	chk("bpage code len", (dseg[2] & 0xff) | ((dseg[3] & 0xff) << 8),
-	    4096);
-	chk("bpage data base", (dseg[4] & 0xff) | ((dseg[5] & 0xff) << 8),
+	chk("bpage code len", (dseg[0] & 0xff) | ((dseg[1] & 0xff) << 8)
+	    | ((long)(dseg[2] & 0xff) << 16), 4096L * 16);
+	chk("bpage data base", (dseg[9] & 0xff) | ((dseg[10] & 0xff) << 8),
 	    0x2000);
-	chk("bpage data len", (dseg[6] & 0xff) | ((dseg[7] & 0xff) << 8),
-	    2176);
+	chk("bpage data len", (dseg[6] & 0xff) | ((dseg[7] & 0xff) << 8)
+	    | ((long)(dseg[8] & 0xff) << 16), 2176L * 16);
 	chk("bpage tail len", dseg[0x80] & 0xff, 24);
 	ntest++;
 	if (memcmp(dseg + 0x81, "A:VERIFY.OUT=A:VERIFY.IN", 24) != 0)
@@ -1974,15 +1977,18 @@ static long mg(char *h, const int *forms, const int *lens,
 	return (flen);
 }
 
-/* One group-table entry of the base page: base paragraph and length. */
+/* One six-byte group-table entry of the base page: a 24-bit length in
+ * bytes, then the base paragraph.  `len' is still stated in paragraphs,
+ * because that is what the header asks for and what galloc() grants. */
 static void chkbp(const char *what, const char *ds, int e, int base, int len)
 {
 	char w[64];
 
 	sprintf(w, "%s base", what);
-	chk(w, (ds[e] & 0xff) | ((ds[e + 1] & 0xff) << 8), base);
+	chk(w, (ds[e + 3] & 0xff) | ((ds[e + 4] & 0xff) << 8), base);
 	sprintf(w, "%s paragraphs", what);
-	chk(w, (ds[e + 2] & 0xff) | ((ds[e + 3] & 0xff) << 8), len);
+	chk(w, (ds[e] & 0xff) | ((ds[e + 1] & 0xff) << 8)
+	    | ((long)(ds[e + 2] & 0xff) << 16), (long)len * 16);
 }
 
 static void t_multi(void)
@@ -2073,16 +2079,16 @@ static void t_multi(void)
 	if (i86sbase[c.g[4].sidx] != seg[4])
 		fail("large aux1 host segment", 1, 0);
 	/* ... so the base page is the only way the guest can learn it,
-	 * which is what the group table at 0x00-0x1F is for. */
+	 * which is what the group table at 0x00-0x2F is for. */
 	i86bpage(&c, &m, S_DS, "");
 	chkbp("large bpage code", seg[1], 0x00, 0x1000, 4096);
-	chkbp("large bpage data", seg[1], 0x04, 0x2000, 100);
-	chkbp("large bpage extra", seg[1], 0x08, 0x3000, 200);
-	chkbp("large bpage stack", seg[1], 0x0c, 0x4000, 4096);
-	chkbp("large bpage aux1", seg[1], 0x10, 0x5000, 300);
-	/* and the four entries no group filled are still zero */
-	chkbp("large bpage aux2", seg[1], 0x14, 0, 0);
-	chkbp("large bpage aux4", seg[1], 0x1c, 0, 0);
+	chkbp("large bpage data", seg[1], 0x06, 0x2000, 100);
+	chkbp("large bpage extra", seg[1], 0x0c, 0x3000, 200);
+	chkbp("large bpage stack", seg[1], 0x12, 0x4000, 4096);
+	chkbp("large bpage aux1", seg[1], 0x18, 0x5000, 300);
+	/* and the three entries no group filled are still zero */
+	chkbp("large bpage aux2", seg[1], 0x1e, 0, 0);
+	chkbp("large bpage aux4", seg[1], 0x2a, 0, 0);
 	/* A paragraph in the table resolves even though no register
 	 * holds it -- this is what the guest's `mov es,[0x10]' does. */
 	ntest++;
@@ -2129,11 +2135,11 @@ static void t_multi(void)
 	chk("code+aux2 paragraph", c.g[1].par & 0xffff, 0x2000);
 	chk("code+aux2 has no register", c.g[1].seg, S_NONE);
 	chk("code+aux2 ds is the code group", m.sr[S_DS] & 0xffff, 0x1000);
-	/* aux2's table entry is the SECOND of the four, at 0x14 */
+	/* aux2's table entry is the SECOND of the four, at 0x1e */
 	memset(seg[0], 0, 256);
 	i86bpage(&c, &m, S_CS, "");
 	chkbp("code+aux2 bpage code", seg[0], 0x00, 0x1000, 4096);
-	chkbp("code+aux2 bpage aux2", seg[0], 0x14, 0x2000, 64);
+	chkbp("code+aux2 bpage aux2", seg[0], 0x1e, 0x2000, 64);
 
 	/* ---- eight groups: the format's ceiling, which the HOST can
 	 * place and this machine cannot.  Seven logical segments exist
@@ -2336,6 +2342,39 @@ static char lseg[CMD_NGRP][65536];
  * segment it staged the file in for this (src/cmd/i86.c). */
 static char zseg[65536];
 
+/*
+ * The spare end of lseg[]: whatever a placed program did not need is
+ * what BDOS function 59 can give a program the guest loads.  The
+ * machine's pool is seven segments and this one is eight, so the host
+ * is the wider of the two and the seam's own ceiling -- I86NSEG slots
+ * in i86spar[] -- is what either of them runs into first.
+ */
+static int lstaken[CMD_NGRP];
+
+static char *hsegget(void)
+{
+	int i;
+
+	for (i = 0; i < CMD_NGRP; i++)
+		if (!lstaken[i]) {
+			lstaken[i] = 1;
+			return (lseg[i]);
+		}
+	return ((char *)0);
+}
+
+static int hsegput(char *b)
+{
+	int i;
+
+	for (i = 0; i < CMD_NGRP; i++)
+		if (lseg[i] == b) {
+			lstaken[i] = 0;
+			return (1);
+		}
+	return (0);
+}
+
 static int ldread(const char *path, struct ld *L)
 {
 	FILE *fp;
@@ -2393,7 +2432,11 @@ static int ldplace(struct ld *L, const char *tail)
 	n = L->c.ng < 1 ? 1 : L->c.ng;
 	if (n > CMD_NGRP)
 		n = CMD_NGRP;
+	memset(lstaken, 0, sizeof lstaken);
+	i86segget = hsegget;
+	i86segput = hsegput;
 	for (i = 0; i < n; i++) {
+		lstaken[i] = 1;
 		memset(lseg[i], 0, sizeof lseg[i]);
 		i86spar[i] = (i16)(0x1000 * (i + 1));
 		i86sbase[i] = lseg[i];
@@ -2581,7 +2624,9 @@ static void t_corpus(const char *dir)
 		/* the base page the guest will read, over a real header */
 		chk(nm(r->name, "bpage data paragraphs"),
 			(L.m.sb[S_DS][6] & 0xff)
-			| ((L.m.sb[S_DS][7] & 0xff) << 8), r->dnpar);
+			| ((L.m.sb[S_DS][7] & 0xff) << 8)
+			| ((long)(L.m.sb[S_DS][8] & 0xff) << 16),
+			(long)r->dnpar * 16);
 		ldsweep(&L, &ninsn, &nbad, &nunimp);
 		chk(nm(r->name, "instructions"), ninsn, r->ninsn);
 		chk(nm(r->name, "undecodable bytes"), nbad, 0);
@@ -3184,15 +3229,16 @@ static void t_seam(void)
 	chk("dma off past limit", bcall(26, (i16)0xff81), B_ADDR);
 
 	/* The functions stage one refuses by name, each for a reason in
-	 * the file's own comment: two are MP/M's, and the four above 40
-	 * are CP/M-86's own memory and load calls.  27 and 31 are not
-	 * among them any more -- see section 8e. */
+	 * the file's own comment: two are MP/M's, and the sized memory
+	 * calls have nothing honest to answer with while allocation is a
+	 * whole segment.  27, 31, 49, 57 and 59 are not among them any
+	 * more -- see sections 8e and 8f. */
 	bsetup(); chk("fn 38 refused", bcall(38, (i16)0), B_FN);
 	bsetup(); chk("fn 50 refused", bcall(50, (i16)0), B_FN);
 	bsetup(); chk("fn 52 refused", bcall(52, (i16)0), B_FN);
 	bsetup(); chk("fn 53 refused", bcall(53, (i16)0), B_FN);
-	bsetup(); chk("fn 59 refused", bcall(59, (i16)0), B_FN);
-	chk("refused fn recorded", i86bdosfn, 59);
+	bsetup(); chk("fn 56 refused", bcall(56, (i16)0), B_FN);
+	chk("refused fn recorded", i86bdosfn, 56);
 
 	/* Any other interrupt is a refusal that says which, and vector 0
 	 * -- the divide error i86exec.c raises -- is distinguished from
@@ -3833,6 +3879,135 @@ static void t_dparms(void)
 }
 
 /*
+ * BDOS functions 59 and 57: the program a guest loads, and gives back.
+ *
+ * The guest here is bsetup()'s synthetic small-model program -- two
+ * segments and nothing else in the pool -- and the program it loads is
+ * DRI's own PIP.CMD, read off the corpus into the stub's file system.
+ * That combination is the point: the same loader the gate runs at
+ * startup, driven from behind the seam by a guest's FCB, against a real
+ * header.
+ */
+static int lsheld(void)
+{
+	int i, n;
+
+	for (i = n = 0; i < CMD_NGRP; i++)
+		if (lstaken[i])
+			n++;
+	return (n);
+}
+
+static void t_pload(const char *dir)
+{
+	char path[512];
+	struct sfile *fp;
+	FILE *f;
+	int i;
+
+	sprintf(path, "%s/PIP.CMD", dir);
+	f = fopen(path, "rb");
+	if (f == 0) {
+		printf("i86test: %s unreadable -- section 8f skipped\n", path);
+		return;
+	}
+
+	bsetup();
+	sysmode = SYS_CPM;
+	memset(sdisk, 0, sizeof sdisk);
+	fp = &sdisk[0];
+	smkname(fp->name, "PIP.CMD");
+	fp->used = 1;
+	fp->len = (long)fread(fp->d, 1, sizeof fp->d, f);
+	fclose(f);
+	memset(lstaken, 0, sizeof lstaken);
+	i86segget = hsegget;
+	i86segput = hsegput;
+
+	/* The guest's FCB, where a base page keeps the first one. */
+	memcpy(&bseg[0x5c + 1], "PIP     CMD", 11);
+
+	/* The pool holds 0x1000 and 0x2000, so the program's two groups
+	 * are the next two paragraphs up, and the base page is in the
+	 * data group -- which is what the answer names. */
+	chk("fn 59 answered", bcall(59, (i16)0x5c), B_RUN);
+	chk("fn 59 base page", bm.r[R_AX] & 0xffff, 0x4000);
+	chk("fn 59 answers BX too", bm.r[R_BX] & 0xffff, 0x4000);
+	chk("fn 59 took two segments", lsheld(), 2);
+	chk("fn 59 grew the pool", i86nseg, 4);
+	chk("fn 59 code paragraph", i86spar[2] & 0xffff, 0x3000);
+	chk("fn 59 data paragraph", i86spar[3] & 0xffff, 0x4000);
+
+	/* The base page says where the groups are, and the groups ARE
+	 * there: PIP's own first instruction is at the code paragraph
+	 * the table names, and DS:0 is the base page itself. */
+	chk("fn 59 base page code base",
+		(i86sbase[3][3] & 0xff) | ((i86sbase[3][4] & 0xff) << 8),
+		0x3000);
+	chk("fn 59 base page data base",
+		(i86sbase[3][9] & 0xff) | ((i86sbase[3][10] & 0xff) << 8),
+		0x4000);
+	ntest++;
+	if (memcmp(i86resolve((i16)0x3000), "\234X\372\214\331", 5) != 0)
+		fail("fn 59 code image at the paragraph named", 1, 0);
+	/* The data group's image, not its base page: the 256 bytes the
+	 * base page occupies are the loader's, the rest is the file's. */
+	ntest++;
+	if (memcmp(i86resolve((i16)0x4000) + 0x100, fp->d + 128
+		+ 379L * 16 + 0x100, 16) != 0)
+		fail("fn 59 data image behind the base page", 1, 0);
+
+	/* A second load over the first takes no more memory: the guest
+	 * keeps its own books, and an `E' repeated must not spend a
+	 * segment either way. */
+	chk("second fn 59 answered", bcall(59, (i16)0x5c), B_RUN);
+	chk("second fn 59 base page", bm.r[R_AX] & 0xffff, 0x4000);
+	chk("second fn 59 leaked nothing", lsheld(), 2);
+	chk("second fn 59 left the pool alone", i86nseg, 4);
+
+	/* Function 57.  The MCB's base is zero, which is CP/M-86's "all
+	 * of it", and all of it is the program. */
+	memset(&bseg[0x1400], 0, 5);
+	bseg[0x1404] = (char)0xff;
+	chk("fn 57 answered", bcall(57, (i16)0x1400), B_RUN);
+	chk("fn 57 gave the segments back", lsheld(), 0);
+	chk("fn 57 shortened the pool", i86nseg, 2);
+	chk("fn 57 with nothing loaded", bcall(57, (i16)0x1400), B_RUN);
+
+	/* No segment left: the load is refused with 0FFFFh in both of
+	 * CP/M-86's result places, and nothing is half-acquired. */
+	for (i = 0; i < CMD_NGRP; i++)
+		hsegget();
+	chk("fn 59 with an empty pool", bcall(59, (i16)0x5c), B_RUN);
+	chk("... refuses with 0FFFFh", bm.r[R_AX] & 0xffff, 0xffff);
+	chk("... in BX as well", bm.r[R_BX] & 0xffff, 0xffff);
+	chk("... and the pool is as it was", i86nseg, 2);
+	for (i = 0; i < CMD_NGRP; i++)
+		hsegput(lseg[i]);
+
+	/* A file that is not there is the same refusal. */
+	memcpy(&bseg[0x5c + 1], "NOSUCH  CMD", 11);
+	chk("fn 59 for a file that is not there", bcall(59, (i16)0x5c),
+		B_RUN);
+	chk("... refuses with 0FFFFh", bm.r[R_AX] & 0xffff, 0xffff);
+	chk("... and took no segment", lsheld(), 0);
+
+	/* Function 49 is answered, not refused: DDT86 asks for a system
+	 * control block once before it does anything else, and reads
+	 * 0FFFFh as there being none. */
+	chk("fn 49 answered", bcall(49, (i16)0x20), B_RUN);
+	chk("... with 0FFFFh in BX", bm.r[R_BX] & 0xffff, 0xffff);
+
+	/* And the group that is still refused by name. */
+	chk("fn 55 still refused", bcall(55, (i16)0), B_FN);
+	chk("fn 58 still refused", bcall(58, (i16)0), B_FN);
+
+	i86segget = 0;
+	i86segput = 0;
+	sysmode = SYS_REC;
+}
+
+/*
  * The gate's own command, on the host: copy a file with PIP, then
  * compare.  The input is 1,024 bytes -- a whole number of CP/M records,
  * so a correct copy is byte-identical with no ^Z padding to argue
@@ -4130,12 +4305,14 @@ static void t_submit(const char *dir)
  *     would prove nothing; a header DRI's own GENCMD wrote, out of hex
  *     WE supplied, and that our loader then reads and RUNS, closes the
  *     loop through code neither end wrote.
- *   - it is the binary that reads the base page's paragraph count and
- *     ACTS on it.  PIP and SUBMIT read the count and buffer against it;
- *     GENCMD reads it, decides it is too small, prints "INSUFFICIENT
- *     MEMORY TO CREATE CMD FILE" and quits after 790 instructions.  It
- *     is the reason galloc() had to grow a group toward G-Max, and it is
- *     the only witness in the tree that the growth is not cosmetic.
+ *   - it is the binary that reads the base page's data group size and
+ *     ACTS on it, comparing the top of its own buffer against the word
+ *     at DS:6 before every byte it stores (GENCMD.CMD 08A0h).  PIP and
+ *     SUBMIT read the size and buffer against it; GENCMD reads it,
+ *     decides it is too small, prints "INSUFFICIENT MEMORY TO CREATE CMD
+ *     FILE" and quits after 790 instructions.  It is the reason galloc()
+ *     had to grow a group toward G-Max, and the reason the group table's
+ *     length is a byte count -- see i86bpage().
  *
  * Its input is build/cmdfix/I86HEX.H86, built by tools/mkcmdfix.py
  * p_hex(): a real hex file with real checksums around eleven bytes of
@@ -4240,7 +4417,7 @@ static void t_gencmd(const char *dir, const char *fixdir)
 	 * something we do not implement -- GENCMD is the only one of the
 	 * four corpus binaries that runs to completion. */
 	chk("gencmd exited cleanly", brc, B_EXIT);
-	chk("gencmd instructions", nstep, 75554L);
+	chk("gencmd instructions", nstep, 1911554L);
 	chk("gencmd BDOS calls", (long)i86nbdos, 38L);
 	chk("gencmd no slow segments", (long)i86nsegslow, 0);
 	chk("gencmd no refused segments", (long)i86nsegbad, 0);
@@ -5031,6 +5208,7 @@ char **argv;
 	t_fcb();
 	t_seam();
 	t_dparms();
+	t_pload(argv[1]);
 	t_pip(argv[1]);
 	t_submit(argv[1]);
 	t_gencmd(argv[1], argv[2]);

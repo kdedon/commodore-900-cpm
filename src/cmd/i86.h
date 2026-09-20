@@ -245,6 +245,16 @@ extern i32 i86nsegbad;		/* ... and the ones it could not cover	*/
  * in i86spar/i86sbase. Null means no allocation policy is installed. */
 extern char *(*i86segnew)();
 
+/* Spare 64 KB segments, for the program a guest loads with BDOS function
+ * 59.  i86segget() answers a host base or zero when the pool is empty;
+ * i86segput() hands one back.  Only the platform knows where segments
+ * come from -- BIOS function 25 on the target, static arrays in the host
+ * tests -- so the seam asks through these and refuses when neither is
+ * installed.  They are NOT i86segnew: that one is asked about a paragraph
+ * the guest named, this one about a segment nobody has named yet. */
+extern char *(*i86segget)();
+extern int (*i86segput)();
+
 /* Host address of `len' guest bytes at slot:off, or 0 when they do not
  * all lie inside the host segment covering that slot.  The seam hands
  * FCBs and DMA buffers to the native BDOS by address, so this is the
