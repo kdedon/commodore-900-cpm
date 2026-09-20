@@ -4252,8 +4252,19 @@ static void t_scb(void)
 	chk("... and its seconds",
 		(long)(gmem[FAKESCB + 0x5c] & 0xff), 0x27L);
 
-	chk("fn 50 DEVTBL is refused by name", bioscall(20, 0, 0), B_BIOS);
+	chk("fn 50 DEVTBL runs", bioscall(20, 0, 0), B_RUN);
 	chk("... naming the vector", z80biosfn, 20);
+	/* The vector answers in HL, so the whole address has to survive
+	 * the function-50 result convention and not its low byte. */
+	chk("... answering the table's address in HL",
+		(long)G.rp[P_HL], (long)FAKEDEV);
+	chk("... with A the low half of it", (long)(G.a & 0xff),
+		(long)(FAKEDEV & 0xff));
+	chk("... and B the high half", z80getr(&G, R_B),
+		(FAKEDEV >> 8) & 0xff);
+	chk("fn 50 DEVINI is still refused by name",
+		bioscall(21, 0, 0), B_BIOS);
+	chk("... naming the vector", z80biosfn, 21);
 	chk("fn 50 SELDSK is refused by name", bioscall(9, 0, 0), B_BIOS);
 	chk("fn 50 warm boot terminates", bioscall(1, 0, 0), B_EXIT);
 	z80hookno = HOOK_BDOS;
@@ -4269,6 +4280,115 @@ static void t_scb(void)
 	chk("fn 60 runs", z80bdos(&G), B_RUN);
 	chk("... answering 0FFh: nothing handled it", (long)G.a, 0xffL);
 	chk("... and the same in HL", (long)G.rp[P_HL], 0xffL);
+
+	sysmode = SYS_REC;
+}
+
+/*
+ * BIOS vector 20's device table, and the five SCB words that say where
+ * each logical device goes.  The table is the third guest-resident
+ * structure, after the disk parameter block and the SCB copy, and it is
+ * held to the same two rules: it lives above the memory the guest was
+ * given, and it does not overlap the furniture already there.
+ */
+static void t_devtbl(void)
+{
+	static char img[8];
+
+	sreset();
+	sysmode = SYS_CPM;
+	img[0] = (char)0xc3;
+	z80load(&G, gmem, img, 1L);
+	z80bdosinit(&G);
+
+	chk("the device table is above the TPA",
+		(long)(FAKEDEV >= GUESTTOP), 1L);
+	chk("... clear of the BIOS table and its stubs",
+		(long)(FAKEDEV >= FAKEBIOS + 7 * NBIOSV), 1L);
+	chk("... clear of the SCB copy",
+		(long)(FAKEDEV >= FAKESCB + SCBIMGLEN), 1L);
+	chk("... and ends inside the guest",
+		(long)(FAKEDEV + FAKEDEVLEN <= 0x10000L), 1L);
+
+	z80hookno = HOOK_BIOS + 20;
+	chk("vector 20 runs", z80bdos(&G), B_RUN);
+	chk("... answering the table's address", (long)G.rp[P_HL],
+		(long)FAKEDEV);
+
+	chk("the first entry is the console",
+		memcmp(gmem + FAKEDEV, "CRT   ", 6), 0);
+	chk("... which takes input and output",
+		(long)(gmem[FAKEDEV + 6] & 0xff),
+		(long)(DEVM_IN | DEVM_OUT));
+	chk("... is not serial", (long)(gmem[FAKEDEV + 6] & DEVM_SERIAL),
+		0L);
+	chk("... and reports no baud rate",
+		(long)(gmem[FAKEDEV + 7] & 0xff), 0L);
+
+	chk("the second entry is the auxiliary line",
+		memcmp(gmem + FAKEDEV + DEVENTLEN, "SIO   ", 6), 0);
+	chk("... which takes input and output over a serial channel",
+		(long)(gmem[FAKEDEV + DEVENTLEN + 6] & 0xff),
+		(long)(DEVM_IN | DEVM_OUT | DEVM_SERIAL));
+	chk("... whose rate no guest may set",
+		(long)(gmem[FAKEDEV + DEVENTLEN + 6] & DEVM_SOFTBAUD), 0L);
+	chk("... and which reports no baud rate either",
+		(long)(gmem[FAKEDEV + DEVENTLEN + 7] & 0xff), 0L);
+
+	chk("a zero name byte ends the list",
+		(long)(gmem[FAKEDEV + 2 * DEVENTLEN] & 0xff), 0L);
+
+	/* The rate is the BIOS's, so there is nothing for vector 21 to do
+	 * but say so. */
+	z80hookno = HOOK_BIOS + 21;
+	chk("vector 21 is refused by name", z80bdos(&G), B_BIOS);
+	chk("... naming the vector", z80biosfn, 21);
+
+	/* ---- the assignment vectors. */
+
+	chk("fn 49 @CIVEC is answered", scbcall(0x22, 0, 0), B_RUN);
+	chk("... naming the console", (long)G.rp[P_HL],
+		(long)DEVBIT(DEV_CRT));
+	chk("fn 49 @COVEC names the console too", scbcall(0x24, 0, 0),
+		B_RUN);
+	chk("... and it is the console", (long)G.rp[P_HL],
+		(long)DEVBIT(DEV_CRT));
+	chk("fn 49 @LOVEC is answered", scbcall(0x2a, 0, 0), B_RUN);
+	chk("... naming the console, where LIST goes", (long)G.rp[P_HL],
+		(long)DEVBIT(DEV_CRT));
+	chk("fn 49 @AIVEC is answered", scbcall(0x26, 0, 0), B_RUN);
+	chk("... naming the auxiliary line", (long)G.rp[P_HL],
+		(long)DEVBIT(DEV_SIO));
+	chk("fn 49 @AOVEC names it too", scbcall(0x28, 0, 0), B_RUN);
+	chk("... and it is the auxiliary line", (long)G.rp[P_HL],
+		(long)DEVBIT(DEV_SIO));
+
+	/* Our BIOS cannot redirect, so a write is a refusal and not an
+	 * acceptance that does nothing. */
+	chk("@COVEC takes no write", scbcall(0x24, 0xfe, 0x4000), B_FN);
+	chk("... by name", strcmp(z80berr(),
+		"a device assignment this BIOS cannot redirect"), 0);
+	chk("... and the answer is unchanged", scbcall(0x24, 0, 0), B_RUN);
+	chk("... still the console", (long)G.rp[P_HL],
+		(long)DEVBIT(DEV_CRT));
+	chk("@LOVEC takes no write either",
+		scbcall(0x2a, 0xff, 0x40), B_FN);
+	chk("the high byte of a vector is refused", scbcall(0x25, 0, 0),
+		B_FN);
+
+	/* The copy carries them as well, for a guest reading through the
+	 * address 0x3A hands out. */
+	scbcall(0x3a, 0, 0);
+	chk("the SCB copy carries @CIVEC", (long)gword(FAKESCB + 0x22),
+		(long)DEVBIT(DEV_CRT));
+	chk("... and @AOVEC", (long)gword(FAKESCB + 0x28),
+		(long)DEVBIT(DEV_SIO));
+	/* A guest writing one into the copy must not reach the native
+	 * SCB on the next function 49. */
+	gmem[FAKESCB + 0x24] = 0x40;
+	scbcall(0x05, 0, 0);
+	chk("a vector written in the copy is put back",
+		(long)gword(FAKESCB + 0x24), (long)DEVBIT(DEV_CRT));
 
 	sysmode = SYS_REC;
 }
@@ -4505,6 +4625,7 @@ char **argv;
 	t_random();
 	t_dmabound();
 	t_scb();
+	t_devtbl();
 	t_rsx(argv[1]);
 
 	printf("z80test: %d checks, %d failures\n", ntest, nfail);

@@ -191,15 +191,76 @@ static z8 scbaddr[] = {
 #define Z80SCBSRCH 0x47
 #define Z80SCBMXTPA 0x62
 
-static int scbaddrfld(off)
+/*
+ * The SCB offsets holding a device assignment vector.  Our BDOS holds
+ * zero in all five and never reads one (src/bdos/scb.c:48-52): character
+ * I/O goes to the console, the list device follows the console and the
+ * auxiliary line is the AUX channel, with no redirection anywhere.  So
+ * these words are the shim's to answer, and a guest writing one is
+ * refused rather than told a change took.
+ *
+ * Offsets from src/bdos/scb.h; both bytes of each word are entered, and
+ * only the even one has an answer, exactly as scbaddr[] above.
+ */
+static z8 scbdev[] = {
+	0x22, 0x23,		/* @CIVEC				*/
+	0x24, 0x25,		/* @COVEC				*/
+	0x26, 0x27,		/* @AIVEC				*/
+	0x28, 0x29,		/* @AOVEC				*/
+	0x2a, 0x2b		/* @LOVEC				*/
+};
+
+#define Z80SCBCIVEC 0x22
+#define Z80SCBCOVEC 0x24
+#define Z80SCBAIVEC 0x26
+#define Z80SCBAOVEC 0x28
+#define Z80SCBLOVEC 0x2a
+
+static int inlist(off, t, n)
 int off;
+z8 *t;
+int n;
 {
 	register int i;
 
-	for (i = 0; i < (int)(sizeof scbaddr / sizeof scbaddr[0]); i++)
-		if (off == (int)scbaddr[i])
+	for (i = 0; i < n; i++)
+		if (off == (int)t[i])
 			return (1);
 	return (0);
+}
+
+static int scbaddrfld(off)
+int off;
+{
+	return (inlist(off, scbaddr,
+		(int)(sizeof scbaddr / sizeof scbaddr[0])));
+}
+
+static int scbdevfld(off)
+int off;
+{
+	return (inlist(off, scbdev,
+		(int)(sizeof scbdev / sizeof scbdev[0])));
+}
+
+/*
+ * The assignment this shim's character path actually makes, or -1 when
+ * `off' is not the low byte of a vector.  CONIN, CONOUT and LIST are the
+ * console, because BIOS vectors 2, 3, 4 and 5 all end at it; the two
+ * auxiliary vectors are the AUX channel, which is where functions 3 and
+ * 4 go.
+ */
+static long scbdevvec(off)
+int off;
+{
+	switch (off) {
+	case Z80SCBCIVEC:
+	case Z80SCBCOVEC:
+	case Z80SCBLOVEC:	return ((long)DEVBIT(DEV_CRT));
+	case Z80SCBAIVEC:
+	case Z80SCBAOVEC:	return ((long)DEVBIT(DEV_SIO));
+	}
+	return (-1L);
 }
 
 /*
@@ -220,6 +281,18 @@ int off;
 	return (-1L);
 }
 
+/* Every word in the copy the shim fills in itself rather than from the
+ * native SCB. */
+static long scbown(off)
+int off;
+{
+	register long v;
+
+	if ((v = scbguestaddr(off)) >= 0)
+		return (v);
+	return (scbdevvec(off));
+}
+
 /* Reason codes, so a caller can print one sentence. */
 #define BR_NONE	0
 #define BR_FN	1
@@ -227,6 +300,7 @@ int off;
 #define BR_BIOS	3
 #define BR_HOOK	4
 #define BR_SCB	5
+#define BR_DEV	6
 
 static int breason;
 
@@ -239,6 +313,7 @@ char *z80berr()
 	case BR_BIOS:	return ("BIOS vector not mapped in stage one");
 	case BR_HOOK:	return ("a hook number this shim never planted");
 	case BR_SCB:	return ("an SCB field whose value is a host address");
+	case BR_DEV:	return ("a device assignment this BIOS cannot redirect");
 	}
 	return ("unknown");
 }
@@ -433,7 +508,7 @@ struct z80 *m;
 		m->m[(z16)(FAKESCB + off + 1)] = (char)((v >> 8) & 0xff);
 	}
 	for (off = 0; off < SCBIMGLEN; off++) {
-		a = scbguestaddr(off);
+		a = scbown(off);
 		if (a < 0)
 			continue;
 		m->m[(z16)(FAKESCB + off)] = (char)(a & 0xff);
@@ -453,7 +528,7 @@ struct z80 *m;
 	z32 n;
 
 	for (off = 0; off < Z80SCBMAX; off++) {
-		if (scbaddrfld(off))
+		if (scbaddrfld(off) || scbdevfld(off))
 			continue;
 		v = m->m[(z16)(FAKESCB + off)] & 0xff;
 		if (v == (int)scbsnap[off])
@@ -477,6 +552,44 @@ struct z80 *m;
 
 /* ------------------------------------------------------------------ */
 
+/*
+ * devtbl -- build the character-device table vector 20 answers with.
+ *
+ * Two entries, because two character devices is what our BIOS has.  CRT
+ * is the machine's console, which BIOS vectors 2, 3, 4 and 5 all reach
+ * (src/bios/bios900.c cases 2-5), and it is neither serial nor
+ * flow-controlled from a guest's side: the ROM console is a keyboard and
+ * a screen, and a console bound to a spare serial line is bound by BIOS
+ * function 28 and not from here.  SIO is the auxiliary line functions 3
+ * and 4 go to (src/bios/bios900.c cases 6-7), which IS a serial channel;
+ * it is not called AUX because AUX is one of CP/M 3's own LOGICAL device
+ * names, and a physical device sharing it is read as the logical one.
+ *
+ * Both baud codes are zero, which is CP/M 3's "no rate to report".  The
+ * serial channel runs at 38,400 (bios900.c sccinit) and CP/M 3's codes
+ * stop at 19,200, so there is no honest code to put there; DEVM_SOFTBAUD
+ * is off on both because the rate is the BIOS's and a guest cannot
+ * change it, which is also why vector 21 stays refused by name.
+ */
+static devtbl(m)
+struct z80 *m;
+{
+	static z8 dtb[FAKEDEVLEN] = {
+		'C', 'R', 'T', ' ', ' ', ' ', DEVM_IN | DEVM_OUT, 0,
+		'S', 'I', 'O', ' ', ' ', ' ',
+			DEVM_IN | DEVM_OUT | DEVM_SERIAL, 0,
+		0, 0, 0, 0, 0, 0, 0, 0
+	};
+	register int i;
+
+	for (i = 0; i < FAKEDEVLEN; i++)
+		m->m[(z16)(FAKEDEV + i)] = (char)dtb[i];
+	return (0);
+}
+
+/* Set when the vector just serviced answers in HL rather than in A. */
+static int bioshl;
+
 /* Map character BIOS vectors onto native BDOS character calls.
  * Disk BIOS vectors are refused because their DPH/translation pointers
  * would require a guest representation of native disk structures. */
@@ -488,6 +601,7 @@ int v;
 	char tbuf[4];
 
 	z80biosfn = v;
+	bioshl = 0;
 	switch (v) {
 	case 0:				/* cold boot			*/
 	case 1:				/* warm boot			*/
@@ -517,6 +631,14 @@ int v;
 		return (B_RUN);
 	case 15:			/* LISTST			*/
 		m->a = 0xff;		/* the list device is always ready */
+		return (B_RUN);
+	case 20:			/* DEVTBL			*/
+		/* The answer is an address, so the table is built inside
+		 * the guest for the reason the DPB and the SCB copy are. */
+		devtbl(m);
+		m->rp[P_HL] = (z16)FAKEDEV;
+		m->a = (z8)(FAKEDEV & 0xff);
+		bioshl = 1;
 		return (B_RUN);
 	case 26:			/* TIME				*/
 		/* C = 0 reads the clock; C = 0FFh would set it, and the
@@ -678,10 +800,16 @@ struct z80 *m;
 		r = biosv(m, p[0] & 0xff);
 		if (r != B_RUN)
 			return (r);
-		/* A BIOS vector answers in A; the BDOS call it came
-		 * through answers in all three places. */
-		m->rp[P_HL] = (z16)(m->a & 0xff);
-		z80setr(m, R_B, 0);
+		/* Most BIOS vectors answer in A, and the BDOS call they
+		 * came through answers in all three places.  A vector
+		 * whose answer is an ADDRESS answers in HL, and widening
+		 * A over it would hand back its low byte. */
+		if (bioshl)
+			z80setr(m, R_B, (m->rp[P_HL] >> 8) & 0xff);
+		else {
+			m->rp[P_HL] = (z16)(m->a & 0xff);
+			z80setr(m, R_B, 0);
+		}
 		return (B_RUN);
 	}
 	if (fn == 60) {
@@ -850,6 +978,17 @@ struct z80 *m;
 		} else if (scbaddrfld(off)) {
 			breason = BR_SCB;
 			return (B_FN);
+		} else if (scbdevfld(off)) {
+			/* A read is the assignment this shim's character
+			 * path makes; a write would be a redirection our
+			 * BIOS has no way to perform, so it is refused
+			 * rather than accepted and dropped. */
+			ga = scbdevvec(off);
+			if (set || ga < 0) {
+				breason = BR_DEV;
+				return (B_FN);
+			}
+			r = (int)ga;
 		} else {
 			r = z80sys(fn, (z16)0, p);
 			/* The second door to the multi-sector count.

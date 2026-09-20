@@ -299,6 +299,26 @@ extern int z80ww();		/* (m, addr, v)				*/
 #define FAKEDPB		0xe410	/* GDPB_LEN bytes			*/
 #define FAKEALV		0xe430	/* at most FAKEBIOS - FAKEALV bytes	*/
 
+/* BIOS vector 20's character-device table, above the SCB copy for the
+ * reason the SCB copy is above the TPA.  CP/M 3's form is eight bytes an
+ * entry -- six of name, a mode byte, a baud code -- and a zero first
+ * name byte ends the list. */
+#define FAKEDEV		0xf380
+#define DEVENTLEN	8	/* bytes per entry			*/
+#define NFAKEDEV	2	/* the console, and the auxiliary line	*/
+#define FAKEDEVLEN	((NFAKEDEV + 1) * DEVENTLEN)
+
+/* Mode-byte bits, and the device index each table entry has.  A bit in
+ * an assignment vector names an entry from the top down. */
+#define DEVM_IN		0x01
+#define DEVM_OUT	0x02
+#define DEVM_SOFTBAUD	0x04	/* vector 21 can set the rate		*/
+#define DEVM_SERIAL	0x08
+#define DEVM_XONXOFF	0x10
+#define DEV_CRT		0
+#define DEV_SIO		1
+#define DEVBIT(n)	(0x8000 >> (n))
+
 /* FAKEBDOS is GUESTTOP + 6 and the 6 is load-bearing.  A CP/M-80
  * program finds the top of the TPA by reading the ADDRESS FIELD of the
  * `JMP' at 5 -- `LHLD 6' -- and subtracting nothing: the word at 6 is
