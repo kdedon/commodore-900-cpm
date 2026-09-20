@@ -3,28 +3,26 @@
  * SPDX-License-Identifier: MIT
  */
 /*
- * concl.c - THE LOCK HOLDER THAT IS NOT ALSO A CREATOR, which is the one
- *	     thing F4's verify-concr could not have and the reason it could
- *	     not tell src/bdos/proc.c's PS_RSVD reservation from its
- *	     absence.  src/cmd/concr.c is the creators and the ballast.
+ * concl.c - THE LOCK HOLDER THAT IS NOT ALSO A CREATOR, without which
+ *	     the PS_RSVD reservation cannot be told from its absence.
+ *	     CONCR is the creators and the ballast.
  *
- * THE DEFECT (F4, P1 #7).  pcrgen() picks a free process descriptor and
+ * THE DEFECT.  pcrgen() picks a free process descriptor and
  * then calls plock(), which PARKS the caller whenever another process
  * holds the file-system lock.  The slot is claimed with PS_RSVD BEFORE
  * that yield; without the claim a second creator resuming in the window
  * found the same slot still PS_FREE, picked it, and both of them built a
  * process in it.
  *
- * WHY THE HOLDER HAS TO BE A THIRD PROCESS.  verify-concr's CONCM is the
- * holder AND the second creator, so when its close() releases the lock the
- * dispatcher hands the machine to the parked creator at that call's own
- * gate return -- the parked creator COMPLETES, and CONCM then searches and
- * finds the slot live.  It is told 5 with the reservation and 5 without it.
- * Both creators have to have SEARCHED before either resumes, and that
- * needs somebody else to be holding the lock.
+ * WHY THE HOLDER HAS TO BE A THIRD PROCESS.  If the holder is also the
+ * second creator, its close() releases the lock and the dispatcher hands
+ * the machine to the parked creator at that call's own gate return; the
+ * parked creator COMPLETES, and the holder then searches and finds the
+ * slot live either way.  Both creators have to have SEARCHED before
+ * either resumes, and that needs somebody else holding the lock.
  *
- * THE ARRANGEMENT, which needs five live processes and a spare descriptor
- * -- constructible only since PNPROC became 6:
+ * THE ARRANGEMENT, which needs five live processes and a spare
+ * descriptor, so PNPROC must be at least 6:
  *
  *   1. the cold-boot session on console 1 holds one descriptor for as
  *      long as the machine is up, and this program is the foreground, so

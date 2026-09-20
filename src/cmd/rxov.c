@@ -121,7 +121,7 @@ char *argv[];
 		return (1);
 	}
 
-	/*  C10: console 1 has an OWNER -- the session the cold boot starts
+	/*  Console 1 has an OWNER -- the session the cold boot starts
 	    there -- and function 148 does not make this process it.  Both
 	    bursts below are read through function 6, which CONSUMES
 	    characters, so a session still sitting in getch() on this

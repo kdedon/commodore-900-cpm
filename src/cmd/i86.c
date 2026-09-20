@@ -375,8 +375,7 @@ char *argv[];
 	 * The header into a ZEROED buffer of its own, with the file's
 	 * real length handed to i86hdr(): a file shorter than 128 bytes
 	 * is not a header, and the bytes that are not there must not be
-	 * whatever the segment held last.  Same three calls the host
-	 * test puts the corpus through (tests/i86test.c ldread).
+	 * whatever the segment held last.
 	 */
 	for (i = 0; i < CMD_HDR; i++)
 		hdr[i] = 0;

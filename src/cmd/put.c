@@ -10,7 +10,7 @@
  * The mirror of src/cmd/get.c, and everything that file's header says
  * about the module, the attach and v3's sub-function numbers applies
  * here with PUT's numbers: 133 stops and closes, 134 asks whether the
- * module is there (ref/cpm3/putrsx.asm, get.plm/put.plm).
+ * module is there (putrsx.asm, get.plm/put.plm).
  *
  * WHAT IS AND IS NOT IMPLEMENTED.  [ECHO] and [NO ECHO] are: with
  * echoing on -- v3's default -- the console sees the output as well as
@@ -41,7 +41,7 @@
 #define	RSX_ATTACH	127
 #define	BDOS_CALLRSX	60
 
-/* the module's sub-functions -- ref/cpm3/getrsx.asm:92-104 */
+/* the module's sub-functions -- getrsx.asm:92-104 */
 #define	PUT_KILL	133
 #define	PUT_FCB		134
 
@@ -298,7 +298,7 @@ char *argv[];
 		}
 		/*  The module hands back what BDOS function 16 gave it, and
 		    a successful close is a DIRECTORY CODE 0..3, not a zero
-		    (ref/cpm3/bdos30.asm; src/cmd/cpm.h BDOS_CLOSE).  Only
+		    (bdos30.asm; cpm.h BDOS_CLOSE).  Only
 		    0FFh is a failure.  */
 		if (subfn(PUT_KILL) == 0xff) {
 			say("PUT: the file did not close cleanly\r\n");

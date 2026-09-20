@@ -139,20 +139,11 @@ char	*argv[];
 	ck(__bdos(X_POLL, 1L) == 0, "131 says console output is not ready");
 	ck(__bdos(X_POLL, 2L) == 0, "131 says the list device is not ready");
 	ck(__bdos(X_POLL, 3L) == XFAIL, "131 accepted device 3");
-	/*  DEVICE 0 IS NOT ASKED HERE, and the reason is worth stating
-	    rather than leaving as a gap somebody rediscovers.  Function
-	    131 on the console keyboard blocks until a key is there, and
-	    a scripted session cannot promise one: the emulator's input
-	    feeder hands a byte over when it judges the guest ready for
-	    it (commodore-900-emulator/src/bus.c's pacing), not when a
-	    program asks whether one is waiting.  A test that called it
-	    would either hang or pass by luck.
-
-	    What it would prove is proved elsewhere.  Device 0's wait is
-	    the same pyield() spin that functions 132 and 137 use --
-	    xdos.c has one waiting mechanism, not three -- and
-	    verify-xdos2 measures that mechanism directly, by counting
-	    how many times the other process ran while it was waiting. */
+	/*  DEVICE 0 IS NOT ASKED HERE.  Function 131 on the console
+	    keyboard blocks until a key is there, and a scripted session
+	    cannot promise one, so the call would hang or pass by luck.
+	    Device 0 waits on the same pyield() spin as functions 132 and
+	    137, which are measured above. */
 
 	/* ---- 132/133: what the flags refuse ---- */
 

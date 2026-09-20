@@ -4,10 +4,10 @@
  */
 /*
  * concm.c - TWO CREATORS, ONE FREE DESCRIPTOR, AND A YIELD IN THE MIDDLE
- *	     OF CREATION.  The lock holder half; src/cmd/conco.c is the
- *	     other creator.
+ *	     OF CREATION.  The lock holder half; CONCO is the other
+ *	     creator.
  *
- * src/bdos/proc.c pcrgen() picks a free process descriptor and then calls
+ * pcrgen() picks a free process descriptor and then calls
  * plock(), which PARKS the caller whenever another process holds the
  * filesystem lock (proc.c plock -> pwait(PW_LOCK) -> pyield).  Until the
  * slot was claimed before that yield, a second creator resuming in the
@@ -17,15 +17,14 @@
  * command tail.  The first creator then came back and loaded the other
  * program's file into its own child's page.
  *
- * THE ARRANGEMENT, which is verify-conclk's plus a second creator:
+ * THE ARRANGEMENT:
  *
  *   1. this program creates CONCO.Z8K -- done while the lock is free,
  *      because a creation cannot complete while it is held;
- *   2. it closes a file whose FCB says read-only, which is the one
- *      operator prompt that comes up UNDER the lock (src/bdos/fileio.c
- *      close, src/bdos/bdosmisc.c filero).  The answer is held back by
- *      the emulator until CONCO says it is ready, so this process parks
- *      at the prompt HOLDING the lock;
+ *   2. it closes a file whose FCB says read-only, the one operator
+ *      prompt that comes up UNDER the lock.  The answer is held back
+ *      until CONCO says it is ready, so this process parks at the
+ *      prompt HOLDING the lock;
  *   3. CONCO asks for a process, finds the lock held, and parks inside
  *      pcrgen() -- with the descriptor it picked;
  *   4. the answer arrives, the close finishes, the lock is released, and
@@ -42,20 +41,18 @@
  * creator's request or its slot had been taken from under it, CONCB would
  * run instead and MHELLO would not.
  *
- * WHAT THIS ARRANGEMENT CANNOT REACH is the race itself, and
- * tests/verify.mk verify-concr says so at length: both creators would have
- * to pick the same free slot before either resumed, which needs a THIRD
- * process to be the lock holder.  This program is the holder AND a
- * creator, which is as close as four descriptors got.
+ * WHAT THIS ARRANGEMENT CANNOT REACH is the race itself: both creators
+ * would have to pick the same free slot before either resumed, which
+ * needs a THIRD process to be the lock holder.  This program is the
+ * holder AND a creator, which is as close as four descriptors got.
  *
- * THAT TEST NOW EXISTS ELSEWHERE.  PNPROC became 6 (F14), and
- * src/cmd/concl.c plus src/cmd/concr.c build the discriminating version --
- * a holder that creates nothing, two creators, ballast enough that exactly
- * one descriptor is free, and the release printed by a fourth process so
- * that neither racer's own output ends the window.  verify-concr2 FAILS
- * with the reservation removed; this target does not, and it stays exactly
- * what it honestly is: the regression that a creator parked inside
- * pcrgen() resumes with its own program and nothing deadlocks.
+ * THAT TEST NOW EXISTS ELSEWHERE.  With PNPROC at 6, CONCL and CONCR
+ * build the discriminating version -- a holder that creates nothing, two
+ * creators, ballast enough that exactly one descriptor is free, and the
+ * release printed by a fourth process so that neither racer's own output
+ * ends the window.  This program stays what it honestly is: the
+ * regression that a creator parked inside pcrgen() resumes with its own
+ * program and nothing deadlocks.
  */
 
 #include "cpm.h"
@@ -172,9 +169,9 @@ char *argv[];
 	    tail's, because this program cannot see PNPROC and the target
 	    that runs it can: at PNPROC 4 it was zero and the arrangement
 	    was implicit in the constant, which is exactly why raising
-	    PNPROC to 6 broke this target (F14).  CONCR W is filler that
-	    never prints anything until it is over, so it cannot disturb
-	    the --input-mark this target releases its prompt on.  */
+	    PNPROC to 6 broke this.  CONCR W is filler that never prints
+	    anything until it is over, so it cannot disturb the mark this
+	    arrangement releases its prompt on.  */
 	for (i = 0; i < nball; i++) {
 		mkreq("CONCR.Z8K", " W");
 		k = __bdos(BDOS_CREATEPROC, (long) &req) & 0xff;

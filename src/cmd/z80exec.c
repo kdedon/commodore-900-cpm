@@ -60,8 +60,8 @@ z16 a, v;
  * The 8080 r-field: 0 B, 1 C, 2 D, 3 E, 4 H, 5 L, 6 the byte at (HL),
  * 7 A.  Pairs are held as whole words with the 8080's high byte in the
  * high half, so B is the top of rp[0] and C the bottom -- which is what
- * makes the pair a native word for DAD, INX and PUSH, and what the
- * study's §2 says costs nothing on the target.
+ * makes the pair a native word for DAD, INX and PUSH, at no cost on the
+ * target.
  *
  * Done arithmetically rather than by overlaying a char array on the pair
  * file, because the host and the Z8000 disagree about which end of a
@@ -106,9 +106,8 @@ int r, v;
 /* flags								*/
 
 /* PF is EVEN parity of the byte: set when the number of set bits is
- * even.  Written as a loop rather than a 256-byte table because on the
- * target the table is what the study's §4.1 already budgets a register
- * and a segment for, and here correctness is the only thing owed. */
+ * even.  A loop rather than a 256-byte table: the table costs a register
+ * and a segment on the target, and this path only owes correctness. */
 static int par8(v)
 int v;
 {
@@ -208,9 +207,8 @@ struct z80 *m;
 	case LZ_ROT:
 		/* The whole CB rotate/shift group: CY is the bit that
 		 * left the byte, H and N are cleared, and P/V is
-		 * PARITY -- not overflow, which is the one place the
-		 * CB group agrees with the 8080's own RLC/RRC and the
-		 * one place §4's parity gap is not a gap. */
+		 * PARITY, the one place the CB group agrees with the
+		 * 8080's own RLC/RRC. */
 		if (m->lc)
 			f |= F_CY;
 		break;
@@ -247,9 +245,7 @@ struct z80 *m;
 		 * was no half borrow), not the Z80's, so that the bit
 		 * means one thing throughout: a DAA reached after a
 		 * block compare would otherwise read a half-carry with
-		 * the opposite sense from every other subtract here.
-		 * That is an extension of Z80-STAGE-ONE.md §6 K4's
-		 * divergence, not a new kind of one. */
+		 * the opposite sense from every other subtract here. */
 		f &= ~F_PA;
 		if (m->lc)
 			f |= F_PA;
@@ -282,10 +278,9 @@ int cls, a, b, r, c;
 		 * ONE materialisation and not 4,096.
 		 *
 		 * The identical argument holds for a run of INR/DCR and
-		 * is deliberately NOT made there: it would move both of
-		 * the counts verify-z80 and verify-z80pip assert, and a
-		 * change to those is its own measurement and its own
-		 * commit, not a side effect of adding CB and ED. */
+		 * is deliberately NOT made there: it would move the
+		 * asserted instruction counts, which is a change worth
+		 * measuring on its own. */
 		if (m->lz != (z8)cls)
 			z80flags(m);
 	}
@@ -415,11 +410,9 @@ struct z80 *m;
 /*
  * The four rotates.  Only CY is affected; S, Z, AC and P survive, which
  * is why the pending lazy record is folded first and then edited rather
- * than replaced.  Note the naming trap the study's §4.2 flags from the
- * other side: the 8080's RAL/RAR rotate THROUGH carry and its RLC/RRC do
- * not, and the Z8000 spells the same two the other way round.  Nothing
- * here depends on that, but the next person to write the assembly path
- * will meet it.
+ * than replaced.  A naming trap waits for the assembly path: the 8080's
+ * RAL/RAR rotate THROUGH carry and its RLC/RRC do not, and the Z8000
+ * spells the same two the other way round.
  */
 static int rot(m, which)
 struct z80 *m;
@@ -647,13 +640,10 @@ struct z80in *in;
 		 * lazy record already knows how to make CY (set unless
 		 * A was zero), AC and the rest of it.
 		 *
-		 * Which means P/V here is THIS FILE's parity and not
-		 * the Z80's overflow -- NEG shares the byte subtract
-		 * record with SUB, SBB and CMP, and §4's parity gap is
-		 * the same gap for all four.  That is
-		 * Z80-STAGE-ONE.md §6 K4's divergence unchanged, not a
-		 * new one; the 16-bit ADC/SBC above are overflow
-		 * because they share nothing with an 8080 form. */
+		 * Which means P/V here is parity and not the Z80's
+		 * overflow -- NEG shares the byte subtract record with
+		 * SUB, SBB and CMP.  The 16-bit ADC/SBC above are
+		 * overflow, sharing nothing with an 8080 form. */
 		lazy(m, LZ_SUB, 0, v, r, 0);
 		return (X_OK);
 	}
@@ -864,9 +854,8 @@ struct z80in *in;
 		m->iff = 0;
 		break;
 
-	/* ---- the four Z80 base-map opcodes stage one executes.  Every
-	 * one of them is in the corpus (Z80-STAGE-ONE.md §1.2) and none
-	 * of them costs a register or a table. */
+	/* ---- the four Z80 base-map opcodes, none of which costs a
+	 * register or a table. */
 	case Z_JR:
 		if (in->x == 4 || z80cond((int)z80flags(m), (int)in->x))
 			m->pc = in->imm;
@@ -918,12 +907,9 @@ struct z80in *in;
 		m->pc = pc0;
 		return (X_HALT);
 
-	/* ---- decoded, deliberately not executed in stage one.  Each of
-	 * these is a line in Z80-STAGE-ONE.md §2.3's "no" column, and
-	 * refusing loudly is the whole point of decoding them: a corpus
-	 * sweep that says "PIP.COM reaches four ED instructions at these
-	 * four addresses" is a worklist, and a core that quietly did
-	 * something else there is a wrong answer. */
+	/* ---- decoded but not executed; decoding them buys a refusal
+	 * that names the instruction and its address instead of a core
+	 * that quietly does something else. */
 	case Z_ED:
 		/* The implemented half returns X_OK; the rest is a
 		 * refusal that names itself, and PC goes back so that

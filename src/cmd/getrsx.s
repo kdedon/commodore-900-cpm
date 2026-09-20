@@ -4,9 +4,9 @@
 /
 /	getrsx.s -- GET.RSX, console input served from a file.
 /
-/	This is v3's GET.RSX (ref/cpm3/getrsx.asm) in the shape the
-/	Z8001 RSX mechanism gives us: a prefix (src/bdos/rsxhdr.h),
-/	entry from the SC #2 gate (src/bdos/bdosglue.s rsxenter) in
+/	This is v3's GET.RSX (getrsx.asm) in the shape the
+/	Z8001 RSX mechanism gives us: a prefix (rsxhdr.h),
+/	entry from the SC #2 gate (bdosglue.s rsxenter) in
 /	the caller's mode on the caller's stack with r5 = the BDOS
 /	function and rr6 = the parameter, `sc 2' to pass a call down
 /	the chain, `ret' to answer it with the result in r7.
@@ -19,11 +19,10 @@
 /
 /	WHY THE CCP FEELS IT.  On the 8080 GET works on the command
 /	line because location 5 is the RSX and the CCP calls it like
-/	anything else.  Here the CCP is a TRANSIENT (src/ccp/ccprun.c)
-/	and reaches the BDOS through the same `sc 2' as any program,
-/	so it goes through the chain too -- which is what makes
-/	`GET FILE cmds.txt' able to feed commands to A>.  src/bdos/rsx.c's
-/	header records that; CPM3-UTILITIES.md used to deny it.
+/	anything else.  Here the CCP is a TRANSIENT and reaches the
+/	BDOS through the same `sc 2' as any program, so it goes through
+/	the chain too -- which is what makes `GET FILE cmds.txt' able
+/	to feed commands to A>.
 /
 /	THE CALLER'S DMA.  Reading a record moves the DMA address, and
 /	the program whose console call we are serving owns it.  So each
@@ -37,13 +36,12 @@
 /
 /	OUR OWN BDOS CALLS.  A module's `sc 2' is routed by the gate to
 /	the module ABOVE it, never to itself, so the opens and reads
-/	below cannot recurse into this code.  That is the property
-/	verify-rsx2 proves.
+/	below cannot recurse into this code.
 /
-/	FIXED ADDRESS, FIXED FIELDS.  There is no relocator
-/	(src/bdos/rsxhdr.h note 3): GETORG here, the link address in
-/	the Makefile and the `org' word in the prefix must agree, and
-/	tools/mkrsx.py fails the build when they do not.  GET.Z8K
+/	FIXED ADDRESS, FIXED FIELDS.  There is no relocator: GETORG
+/	here, the link address in the Makefile and the `org' word in
+/	the prefix must agree, and the build fails when they do not.
+/	GET.Z8K
 /	patches two things into the image before it attaches it, at
 /	offsets it knows because they are fixed here, immediately after
 /	the 32-byte prefix:
@@ -68,7 +66,7 @@
 
 	.globl	rsxbase
 
-/ ***** the prefix (src/bdos/rsxhdr.h; ref/cpm3/getrsx.asm:124-137) *****
+/ ***** the prefix (rsxhdr.h; getrsx.asm:124-137) *****
 
 rsxbase:
 	.word	0, 0, 0			/ 00 serial, filled in on attach
@@ -262,7 +260,7 @@ e1x:
 /
 / The LF of a CR LF pair is not a character.  A console line ends at the
 / CR, and every reader in the tree stops there -- function 10 above, and
-/ INITDIR's askchar() (src/cmd/initdir.c:70), which reads function 1
+/ INITDIR's askchar(), which reads function 1
 / until a CR.  Leave the LF in the stream and it becomes the ANSWER to
 / the next question the file was supposed to answer.  So the pair is
 / folded here, once, where every one of the four intercepted functions

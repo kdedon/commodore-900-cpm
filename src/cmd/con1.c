@@ -25,10 +25,10 @@ char *argv[];
 	register int	k;
 
 	/*  With any argument at all, CON1 is just a TRANSIENT: it prints
-	    one line on whatever console it was started from and exits.
-	    verify-sess uses it that way -- it needs a program that runs
-	    and reaches the warm boot on console 1, to show that the
-	    session there survives its own transients.  It must not touch
+	    one line on whatever console it was started from and exits --
+	    a program that runs and reaches the warm boot on console 1,
+	    showing that the session there survives its own transients.
+	    It must not touch
 	    the console number in that mode, which is the whole reason
 	    this is one line and not a second program.  */
 	if (argc > 1) {
@@ -54,11 +54,11 @@ char *argv[];
 
 	printstr("CON1: on 1\r\n$");		/* console 1 -- the wire */
 
-	/*  C10: MOVING IS NOT READING.  Function 148 above put this
+	/*  MOVING IS NOT READING.  Function 148 above put this
 	    process on console 1; it does not give it the right to take a
-	    character there, because a console now has an OWNER, and at
-	    cold boot console 1's owner is the session sitting on it
-	    (src/bdos/proc.c, pcoldses() and pconatt()).  So ask for it --
+	    character there, because a console has an OWNER, and at cold
+	    boot console 1's owner is the session sitting on it.
+	    So ask for it --
 	    function 146, which BLOCKS until that session detaches.
 
 	    The line above is printed BEFORE the block on purpose: output
@@ -88,10 +88,10 @@ char *argv[];
 	gotbuf[14] = 0;
 	printstr(gotbuf);			/* console 1 */
 
-	/*  Give console 1 back before leaving it (C10, function 147).  The
-	    warm boot would have done it anyway -- src/bdos/proc.c
-	    procdead() releases everything a program held, which is what
-	    makes a ^C'd program harmless -- but a program that takes a
+	/*  Give console 1 back before leaving it, with function 147.  The
+	    warm boot would have done it anyway -- procdead() releases
+	    everything a program held, which is what makes a ^C'd program
+	    harmless -- but a program that takes a
 	    console and returns it is the shape every program should have,
 	    and this one is the example.			*/
 	__bdos(BDOS_DETCON, 0L);

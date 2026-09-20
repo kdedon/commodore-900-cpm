@@ -102,10 +102,8 @@ long a;
  * z80rsxhdr -- parse a GENCOM-bound .COM's 256-byte header record.
  *
  * Returns 0 if the image does not begin with one, 1 with *r filled in
- * if it does.  Every field is DRI's own, from cpm8000/ref/cpm3/
- * loader3.asm:96-100 and :234 -- see the struct comrsx comment in
- * z80.h, which also records that the layout was read back out of the
- * five files that carry one and agreed.
+ * if it does.  Every field is DRI's own, from loader3.asm:96-100 and
+ * :234 -- see the struct comrsx comment in z80.h.
  */
 int z80rsxhdr(img, n, r)
 char *img;
@@ -461,8 +459,8 @@ int e;
  *
  * `mem' is 65,536 bytes the caller owns.  On the target it is a whole
  * host segment, and the guest's 16-bit address is its offset with no
- * arithmetic at all (Z80-SHIM-FEASIBILITY.md §1.1); on the host it is an
- * array, and the (z16) casts in z80exec.c give it the same wraparound.
+ * arithmetic at all; on the host it is an array, and the (z16) casts in
+ * z80exec.c give it the same wraparound.
  */
 int z80load(m, mem, img, n)
 struct z80 *m;

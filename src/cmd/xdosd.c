@@ -20,12 +20,9 @@
 
 #define	XFAIL	0x00ff
 
-#define	DTICKS	10		/* tick periods to sleep for.  Ten is
-				   100 ms of a 100 Hz tick and, on the
-				   emulator's instruction-scaled CT3, a
-				   few dozen trips round the robin --
-				   comfortably more than the threshold
-				   the verify target asserts.	*/
+#define	DTICKS	10		/* tick periods to sleep for: 100 ms of
+				   a 100 Hz tick, a few dozen trips
+				   round the robin		*/
 #define	XFLAG	3		/* the flag E sets and D waits on	*/
 
 struct pcreq {
@@ -99,15 +96,14 @@ char	*name;
  * ONE cputs() FOR A WHOLE LINE, and it is not a tidy-up.
  *
  * These two lines used to be `cputs(tag); putdec(n); cputs("\r\n")' --
- * three BDOS calls -- and verify-xdos2 greps for the finished text
+ * three BDOS calls -- against a transcript grepped for the finished text
  * `XDOSD: live=2'.  A process is only ever switched away from AT a BDOS
  * gate or by the tick in Normal mode, so the gaps BETWEEN those three
  * calls are switch points: the other process's next line can land inside
- * `XDOSD: live=' and `2', and once C5 moved the dispatcher's cost by a
- * few instructions it did (`XDOSD: live=XDOSE: alive' / `2').
+ * `XDOSD: live=' and `2', and it did.
  *
- * That splice is correct behaviour and the target is right to grep for
- * the whole string.  So the program stops offering a gap: the line is
+ * That splice is correct behaviour, so the program stops offering a gap
+ * instead: the line is
  * composed here and printed by one call, which no switch can cut because
  * nothing switches a process that is inside the BDOS.
  */
@@ -215,11 +211,9 @@ char	*argv[];
 	    and then terminates -- so wait for it, one tick at a time
 	    and never for ever.  A bound rather than a spin because a
 	    test that cannot finish cannot report.	*/
-	/*  "this is the only process left" was written on a machine where
-	    it was.  Since C10 the cold boot starts a session on every other
-	    console (src/bdos/proc.c pcoldses), so what E's Terminate has to
-	    produce is ONE FEWER than the count printed above, not the
-	    literal 1.  The bound is unchanged.		*/
+	/*  The cold boot starts a session on every other console, so what
+	    E's Terminate has to produce is ONE FEWER than the count
+	    printed above, not the literal 1.		*/
 	for (i = 0; i < 200
 	     && (int)(__bdos(X_PROCCNT, 0L) & 0xff) >= live0; i++)
 		__bdos(X_DELAY, 1L);

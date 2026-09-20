@@ -11,7 +11,7 @@
 /	list of functions.
 /
 /	WHAT IT INTERCEPTS.  v3's PUT.RSX takes function 2 and function
-/	9 (ref/cpm3/putrsx.asm).  Ours must take function 111 as well,
+/	9 (putrsx.asm).  Ours must take function 111 as well,
 /	and that is not a liberty: this tree's cputs() sends a whole
 /	string through function 111 and only conputs() goes character
 /	by character through function 2 (src/cmd/libcpm.c says why).
@@ -54,7 +54,7 @@
 
 	.globl	putbase
 
-/ ***** the prefix (src/bdos/rsxhdr.h; ref/cpm3/getrsx.asm:124-137) *****
+/ ***** the prefix (rsxhdr.h; getrsx.asm:124-137) *****
 
 putbase:
 	.word	0, 0, 0			/ 00 serial, filled in on attach

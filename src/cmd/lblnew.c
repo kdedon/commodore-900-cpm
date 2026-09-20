@@ -46,10 +46,9 @@ char *argv[];
 		   (bdos30.asm:3119-3126, `if not BANKED / ani 7fh').  We
 		   used to be that build and are not any more.
 
-		   The image this runs on is labelled by
-		   tools/mkcpmfs.py --label-mode ...,password, and the
-		   Makefile proves host-side that the bit really is on
-		   the medium -- otherwise this would pass on any disk. */
+		   The image this runs on is built with a password
+		   label, and the bit is checked on the medium
+		   host-side -- otherwise this would pass on any disk. */
 		r = getlabel();
 		cputs("LBLNEW: fn 101 on a password-labelled drive -> ");
 		puthex(r);

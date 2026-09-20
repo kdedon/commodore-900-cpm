@@ -17,9 +17,9 @@
 #define	BDOS_CREATEPROC	144		/* XDOS create process		*/
 #define	BDOS_PROCCNT	145		/* how many processes are live	*/
 
-#define	POLLCON		1		/* the console fn 131 is proved on --
-					   the wire, never the emulator's own
-					   scripted console 0 input	*/
+#define	POLLCON		1		/* the console fn 131 is proved on:
+					   the wire, never scripted
+					   console 0 input		*/
 
 struct pcreq {
 	struct fcb	pq_fcb;
@@ -113,7 +113,7 @@ char *argv[];
 		return (1);
 	}
 
-	/*  C10: console 1 has an OWNER, and 148 did not make this process
+	/*  Console 1 has an OWNER, and 148 did not make this process
 	    it.  That matters twice here.  Function 131 only PEEKS, so it
 	    would return on a byte the session then read instead of this
 	    program; and the function 1 below CONSUMES, so it would block
@@ -131,10 +131,9 @@ char *argv[];
 		return (1);
 	}
 
-	/*  Console 1 from here on -- the wire.  This line is what
-	    verify-xdospoll5's wake half anchors its injected byte to: sent
-	    only once this has been seen, which is what makes "the call
-	    genuinely waited for it" provable rather than assumed.  */
+	/*  Console 1 from here on -- the wire.  The injected byte is sent
+	    only once this line has been seen, which is what makes "the
+	    call genuinely waited for it" provable rather than assumed.  */
 	cputs("XDOSPOL: waiting\r\n");
 
 	__bdos(BDOS_XPOLL, 0L);		/* fn 131, device 0: blocks until

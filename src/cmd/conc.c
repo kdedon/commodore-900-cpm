@@ -13,7 +13,7 @@
 #define	BDOS_PROCCNT	145		/* how many are live	*/
 
 /*  A OUTLIVES B, and the count had to grow when the tick started
-    preempting (S5).  Six was enough while the only switch point was a
+    preempting.  Six was enough while the only switch point was a
     BDOS call: A and B alternated line for line, so B's three lines and
     its 4 KB self-check were done by A's second or third.  Under
     preemption B does that 4 KB WHILE A prints -- the machine is shared

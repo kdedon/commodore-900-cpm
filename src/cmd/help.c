@@ -93,12 +93,11 @@ static VOID hrewind()
  * hgetc() -- one byte of the file, -1 at end.
  *
  * A 1Ah ends the file: that is the CP/M text-EOF byte the last partial
- * record of a text file is padded with.  So does a NUL, because
- * tools/mkcpmfs.py pads by EXTENSION (TEXT_EXTS, mkcpmfs.py:155) and
- * .HLP is not on that list -- HELP.HLP is zero-padded on the image.
- * Adding HLP to that list would have re-padded SDB.HLP too and so
- * changed $(CPMAIMG), which verify-rtc's alignment is pinned to; taking
- * both bytes here costs one comparison and moves nothing.
+ * record of a text file is padded with.  So does a NUL: the image
+ * builder pads by extension and .HLP is not on its text list, so
+ * HELP.HLP is zero-padded on the image.  Adding HLP there would repad
+ * every .HLP and move the image; taking both bytes here costs one
+ * comparison and moves nothing.
  */
 
 static int hgetc()

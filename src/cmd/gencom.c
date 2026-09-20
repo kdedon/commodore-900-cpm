@@ -510,7 +510,7 @@ char *argv[];
 	    rename below then failed because the file was still there, that
 	    test passed too, and GENCOM printed `GENCOM completed.' over a
 	    program it had not touched and a TEMP.$$$ it left lying about.
-	    Observed on an armed drive; verify-repl is the test.  */
+	    Observed on an armed drive.  */
 	if ((__bdos(BDOS_DELETE, (long) &pfcb) & 0xff) == 255)
 		die("cannot replace the program file");
 	/*  Function 23 matches the directory on the FIRST 16 bytes and

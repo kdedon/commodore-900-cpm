@@ -35,10 +35,8 @@ long p1, p2;
 /*
  * z80sys -- the native BDOS, reached the way every other transient
  * program reaches it.  `addr' non-null means the function's parameter is
- * that address; otherwise it is the 16-bit value.  On the host this is
- * the recorder or the stub CP/M (tests/z80test.c); here it really is one
- * line around __bdos(), which is what the plan claimed and this is the
- * claim being cashed.
+ * that address; otherwise it is the 16-bit value.  The host tests
+ * substitute a recorder or a stub CP/M for this.
  */
 int z80sys(fn, val, addr)
 int fn;
@@ -70,9 +68,8 @@ int v;
 /*
  * putdec() takes an unsigned, and an instruction count does not fit in
  * one -- PIP's is 15,763 today but the limit below is twenty million.
- * The gate asserts the count EXACTLY, against the host's, so it has to
- * be printed exactly: `15k instructions' cannot tell a matching path
- * from one that diverged by five hundred instructions.
+ * The count is compared exactly against the host's, so `15k
+ * instructions' would not tell a matching path from one that diverged.
  */
 static VOID pdecl(v)
 long v;

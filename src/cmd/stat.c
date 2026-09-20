@@ -1723,9 +1723,9 @@ display()					/*   (STAT afn [SIZE])	    */
 	/* (`kblks +=', `tall +=') and prints them on the Total: line.  The   */
 	/* totals are therefore whatever the stack held on entry to display() */
 	/* plus the real sum -- the same shape of bug as PIP's `nsbuf +=      */
-	/* exten' (src/cmd/pip.c, since fixed), and DRI's, not this           */
-	/* port's: cpm8k13/STAT.C:1665 and ref/newos/stat.c:1672-1673 both    */
-	/* declare them uninitialised.  Observed: a drive holding one 1-record*/
+	/* exten' (since fixed), and DRI's, not this port's: both of      */
+	/* their STAT sources declare them uninitialised.  Observed: a    */
+	/* drive holding one 1-record                                     */
 	/* file reported `Total: 5k ... 5-1k blocks' against a per-file line  */
 	/* of 1k, at 0x2022 and at 0x2031 alike.                              */
 	kblks = tall = 0;

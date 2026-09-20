@@ -17,10 +17,8 @@
 
 #define	XFLAG	3
 
-/*  The counting loop's ceiling.  It is not a timeout: D stops the loop
-    with a message, and this only exists so that a broken delay -- one
-    that never returns -- ends the session with a transcript instead of
-    running to the emulator's instruction limit with none.  */
+/*  The counting loop's ceiling, so that a delay which never returns
+    still ends the session with a transcript.  */
 #define	ELIMIT	400
 
 struct xqopen {
@@ -58,8 +56,7 @@ char	*name;
 static int n;
 
 /*  One line, ONE BDOS call: cputs() is function 111, so the unit of
-    interleaving is a line rather than a character.  verify-conc's
-    banner makes the same point about the same thing.  */
+    interleaving is a line rather than a character.  */
 
 static VOID eline()
 {

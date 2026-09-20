@@ -196,7 +196,7 @@ extern int i86dec();
 #define X_HALT		4	/* HLT					*/
 #define X_SEGESC	5	/* a segment-register write named a	*/
 				/* paragraph the slow path could not	*/
-				/* cover either (K3)			*/
+				/* cover either				*/
 #define X_WINDOW	6	/* a reference through a slow-path	*/
 				/* segment ran past the end of the host	*/
 				/* segment covering it -- see setsr()	*/
@@ -216,9 +216,8 @@ extern i16 i86segbad;		/* paragraph that caused X_SEGESC	*/
 
 /* Segment-slot resolution.  The shim hands out a small set of 64 KB
  * paragraphs and every segment-register write is checked against it --
- * on the WRITE, never on the instruction that computed the value, which
- * is what CPM86-SHIM-FEASIBILITY.md §1.3 requires after WordStar was
- * seen stashing an absolute segment in a variable first.  Returns the
+ * on the WRITE, never on the instruction that computed the value, since
+ * WordStar stashes an absolute segment in a variable first.  Returns the
  * host base for a known paragraph, or 0. */
 extern char *i86resolve();
 
@@ -237,7 +236,7 @@ extern char *i86resolve();
 extern i16 i86spar[];		/* guest paragraph			*/
 extern char *i86sbase[];	/* the host segment it names		*/
 extern int i86nseg;
-extern i32 i86nsegslow;		/* K3's counter: slow-path resolutions	*/
+extern i32 i86nsegslow;		/* slow-path resolutions		*/
 extern i32 i86nsegbad;		/* ... and the ones it could not cover	*/
 
 /* Optional hook for resolving an unowned paragraph. Returns a host base
@@ -262,9 +261,8 @@ extern int (*i86segput)();
  * writing 128 bytes into the segment next door. */
 extern char *i86addr();
 
-/* K2's instruments: instructions executed, and lazy records actually
- * materialised.  Their ratio is the flag-read rate CPM86-STAGE-ONE.md
- * §6 asks to be measured on the host before any target code exists. */
+/* Instructions executed, and lazy records actually materialised.  Their
+ * ratio is the flag-read rate. */
 extern i32 i86ninsn, i86nflag;
 
 extern char *i86mnem();		/* mnemonic of a decoded instruction	*/
@@ -275,7 +273,7 @@ extern char *i86mnem();		/* mnemonic of a decoded instruction	*/
 /* What servicing an interrupt did.  Only B_RUN resumes the guest. */
 #define B_RUN	0		/* serviced; carry on			*/
 #define B_EXIT	1		/* function 0: the guest terminated	*/
-#define B_FN	2		/* a function stage one does not map	*/
+#define B_FN	2		/* a function the shim does not map	*/
 #define B_ADDR	3		/* its parameter left the guest segment	*/
 #define B_SEG	4		/* a DMA base we never handed out	*/
 #define B_VEC	5		/* an interrupt with no guest handler	*/
@@ -299,10 +297,9 @@ extern i16 i86ver;		/* what function 12 tells the guest	*/
  * `addr' is a HOST pointer into a guest segment when the function takes
  * an address and 0 otherwise, in which case `val' is the byte or word
  * parameter.  The target's main() is one line -- our BDOS takes a LONG
- * whose value is the XADDR, which on this pipeline is what a far
- * pointer already is (src/cmd/cpm.h:5-13) -- and the host tests supply a
- * stub, which is what lets `make i86test' exercise the whole mapping
- * with no toolchain and no emulator (CPM86-STAGE-ONE.md §5.2 rule 3).
+ * whose value is the XADDR, which is what a far pointer already is on
+ * this pipeline -- and the host tests supply a stub, so the whole
+ * mapping can be exercised without a toolchain.
  */
 extern int i86sys();
 
@@ -359,22 +356,20 @@ struct i86cmd {
 	i16	entry;		/* initial IP				*/
 };
 
-/* i86hdr() return values.  Every one of them is a loud refusal; none of
- * them is a fallback.  CE_BASE and CE_BIG are kill criterion K1
- * (CPM86-STAGE-ONE.md §6): three corpora and 15 DRI files show zero
- * hits, so this is a check that should never fire and must still be
- * here, because when it does fire the alternative is silent corruption. */
+/* i86hdr() return values, every one a loud refusal.  CE_BASE and CE_BIG
+ * never fire on real .CMD files, but the alternative when they do is
+ * silent corruption. */
 #define CE_OK		0
 #define CE_NOCODE	1	/* no code group			*/
-#define CE_BASE		2	/* K1: A-Base nonzero -- not relocatable */
-#define CE_BIG		3	/* K1: a group wants over 64 KB		*/
+#define CE_BASE		2	/* A-Base nonzero -- not relocatable	*/
+#define CE_BIG		3	/* a group wants over 64 KB		*/
 #define CE_FORM		4	/* a group form we do not place		*/
 #define CE_TRUNC	5	/* the file is shorter than its descriptors */
 #define CE_EMPTY	6	/* a group that needs nothing at all	*/
 #define CE_DUP		7	/* two descriptors with the same form	*/
 #define CE_NSEG		8	/* more groups than the caller has 64 KB	*/
-				/* segments to put them in.  NOT K1 and	*/
-				/* not a property of the file: it is what	*/
+				/* segments to put them in.  Not a	*/
+				/* property of the file: it is what	*/
 				/* THIS machine's segment pool can do --	*/
 				/* seven segments, one of them staging,	*/
 				/* so six groups.  See i86place().	*/

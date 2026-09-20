@@ -34,7 +34,7 @@
 #define	BDOS_WRITERAN	34	/* random write(fcb)			*/
 #define	BDOS_SETRAN	36	/* set random record from cur_rec	*/
 
-/* CP/M 3 additions (V1 wave) */
+/* CP/M 3 additions */
 #define	BDOS_RESET	13	/* reset disk system			*/
 #define	BDOS_SELDSK	14	/* select disk (0 = A:)			*/
 #define	BDOS_CURDSK	25	/* return current disk			*/
@@ -70,13 +70,13 @@
  * five-word block: the BIOS function code in one word, then two LONG
  * parameters.  The result is a LONG, so it comes back through
  * __bdosl(); 0FFFFFFFFh means the BDOS refused the code.  Which codes
- * are allowed, and why the rest are not, is sys/iosys.c bioscl().
+ * are allowed, and why the rest are not, is bioscl().
  *
  * C900 deviation: CP/M 3's function 50 takes an 8080 register block
  * (bdos30.asm:4734-4740, "de -> function, a value, bc value, de value,
  * hl value"), which has no meaning on a Z8001.  This block is
- * CP/M-8000's own form and predates the port -- sys/bdosglue.s
- * `bioscall' has decoded it since M4.
+ * CP/M-8000's own form and predates the port; bdosglue.s `bioscall'
+ * decodes it.
  */
 #define	BDOS_BIOSCALL	50
 
@@ -121,14 +121,13 @@ struct biospb {
 
 /*
  * BIOCOST-only codes, NOT reachable through function 50: bioscl()
- * (sys/iosys.c) refuses 2-7 outright, and these two do not even exist
- * there -- they are read through the raw SC #3 gate instead (biossc.s
- * __bios(), bdosglue.s `biosgate'), which every stock DRI BIOS trap
- * uses and which bioscl's refusal list has no say over.  Added to
- * src/bios/bios900.c's dispatch purely so src/cmd/biocost.c can reach,
- * one at a time, the two BIOS-internal primitives concost.c cannot:
- * the ROM's own glyph renderer and the direct video-RAM store that
- * bypasses it.  BIOS_CONOUT (4) is the stock CONOUT code, listed here
+ * refuses 2-7 outright, and these two do not even exist there -- they
+ * are read through the raw SC #3 gate instead (__bios(), bdosglue.s
+ * `biosgate'), which every stock DRI BIOS trap uses and which bioscl's
+ * refusal list has no say over.  They exist so BIOCOST can reach, one
+ * at a time, the two BIOS-internal primitives CONCOST cannot: the ROM's
+ * own glyph renderer and the direct video-RAM store that bypasses it.
+ * BIOS_CONOUT (4) is the stock CONOUT code, listed here
  * only as the SC #3 counterpart of BDOS function 2.
  */
 #define	BIOS_CONOUT	4	/* console output(char) -- SC #3 only	*/

@@ -41,9 +41,9 @@
  *      halfway in BOTH runs would leave two identical truncated files and
  *      the comparison below would prove nothing.
  *
- * tests/verify.mk verify-split runs both and compares STARTUP.OBJ byte for
- * byte.  The assembler's output is the object; this program's transcript
- * only says that the attempt happened and what it was told.
+ * The two runs' STARTUP.OBJ are compared byte for byte afterwards; this
+ * program's transcript only says that the attempt happened and what it
+ * was told.
  */
 
 #include "cpm.h"
@@ -52,19 +52,17 @@
 #define	BDOS_PROCCNT	145		/* how many are live		*/
 #define	BDOS_DELAY	141		/* XDOS delay, in ticks		*/
 
-/*  Ticks before the second attempt.  The assembler has to be past its own
-    start-up and into the source file; 200 is about two seconds of emulated
-    time against an assembly that runs for many, so it is margin rather
-    than calibration.  If it were short the two runs would still have to
-    match -- an interference that lands before the assembler has any state
-    is an interference that proves nothing, and the target says so by
-    checking that the assembly ran for longer than this.  */
+/*  Ticks before the second attempt.  The assembler has to be past its
+    own start-up and into the source file; 200 is about two seconds
+    against an assembly that runs for many, so it is margin rather than
+    calibration.  An interference landing before the assembler has any
+    state would prove nothing.  */
 
 #define	SETTLE		200
 
 /*  Watching the assembler finish: a tick count per look and a bound on
-    the number of looks, so a job that never ends fails this program
-    rather than the emulator's cycle budget.  */
+    the number of looks, so a job that never ends fails here rather than
+    running forever.  */
 
 #define	WATCH		20
 #define	WATCHMAX	20000

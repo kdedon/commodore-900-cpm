@@ -23,10 +23,9 @@
  *      picked when B's own descriptor search runs -- and nothing has yet
  *      released the lock, because only Z can do that.  The lock is
  *      therefore still held, by a THIRD process, at the instant B
- *      searches, which is the one thing verify-concr could not arrange
- *      (docs/cpm/docs/run/F4.md: there CONCM was the holder AND the
- *      second creator, so the gate-return dispatch served the parked
- *      creator before CONCM had searched at all).
+ *      searches.  With the holder doubling as the second creator, the
+ *      gate-return dispatch serves the parked creator before the holder
+ *      has searched at all, and the window never opens.
  *   Z  BALLAST, AND THE RELEASE.  It makes the number of FREE descriptors
  *      exactly one -- two free and the creators take one each and never
  *      contend, none free and both are refused before they reach the
@@ -135,9 +134,9 @@ char *argv[];
 	tagline(role, "alive");
 
 	if (role == 'W') {
-		/*  BALLAST AND NOTHING ELSE, for verify-concr, whose
-		    release is CONCO's own print and which therefore wants
-		    a filler that never speaks.  */
+		/*  BALLAST AND NOTHING ELSE, for the arrangement whose
+		    release is CONCO's own print and which therefore
+		    wants a filler that never speaks.  */
 		__bdos(BDOS_DELAY, (long)BALLAST);
 		tagline(role, "ballast done");
 		return (0);
@@ -145,24 +144,20 @@ char *argv[];
 	if (role == 'Z') {
 		/*  BALLAST, AND THE STARTER'S PISTOL.  It holds a
 		    descriptor so that exactly one is free, and it prints
-		    the line that is the emulator's --input-mark -- which
-		    is the whole reason the release is not B's own print.
+		    the mark that releases the prompt.
 
 		    THE BDOS GATE DISPATCHES ON EVERY CALL RETURN when
-		    more than one process is live (src/bdos/bdosglue.s
-		    tests `psched' at the SC return and calls pdisp_
-		    unconditionally; the quantum gates the TIMER path, not
-		    this one).  So a creator that prints the mark itself
-		    loses the machine at that print's own gate return, the
-		    lock holder takes the answer that has just arrived,
-		    releases the lock, and the creator already parked
-		    COMPLETES -- all before the printer's own descriptor
-		    search has run.  That was measured, not reasoned
-		    about: with the mark on B's `asking' line this target
-		    passed even with PS_RSVD removed, which is F4's dead
-		    end in a new place.  Releasing from a fourth process
-		    that is not racing decouples the two, and then both
-		    creators are certainly parked when the lock goes.  */
+		    more than one process is live: bdosglue.s tests
+		    `psched' at the SC return and calls pdisp_
+		    unconditionally, the quantum gating the TIMER path
+		    and not this one.  So a creator that printed the mark
+		    itself would lose the machine at that print's gate
+		    return, the lock holder would take the answer,
+		    release the lock, and the already-parked creator
+		    would complete before the printer had even searched.
+		    Releasing from a fourth process that is not racing
+		    leaves both creators certainly parked when the lock
+		    goes.  */
 		__bdos(BDOS_DELAY, (long)ZDELAY);
 		tagline(role, "releasing the prompt now");
 		__bdos(BDOS_DELAY, (long)BALLAST);

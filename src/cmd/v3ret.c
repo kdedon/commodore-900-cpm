@@ -51,7 +51,7 @@ char *argv[];
 	int		i, k;
 	unsigned	blm, dsm, alvlen;
 	long		recs, freerecs;
-	static char	diverted[SECLEN];	/* G6: fn 26's decoy DMA target */
+	static char	diverted[SECLEN];	/* fn 26's decoy DMA target */
 
 	if (argc > 1 && argv[1][0] == 'P') {
 		/* ---- phase 2: only reachable by fn 47's chain ---- */
@@ -78,7 +78,7 @@ char *argv[];
 
 	cputs("V3RET: BDOS function return-value shapes (V3)\r\n");
 
-	/* ---- G7: fn 32, get/set user number ---- */
+	/* ---- fn 32, get/set user number ---- */
 	startuser = __bdos(BDOS_SETUSER, 0xffL) & 0xff;
 	__bdos(BDOS_SETUSER, 0L);
 	check("fn 32 set 0, returns 0", __bdos(BDOS_SETUSER, 0L) & 0xffff, 0);
@@ -92,27 +92,24 @@ char *argv[];
 	      0x14 & 0x0f);
 	__bdos(BDOS_SETUSER, 0L);	/* back to 0 for the rest of this run */
 
-	/* ---- G10: fns 38/39, MP/M-only, func$ret -> 0 outside MP/M ---- */
+	/* ---- fns 38/39, MP/M-only, func$ret -> 0 outside MP/M ---- */
 	check("fn 38 (get/set process descr, MP/M-only)", __bdos(38, 0L), 0);
 	check("fn 39 (get/set priority, MP/M-only)", __bdos(39, 0L), 0);
 
-	/* ---- G9: fn 41, lret$eq$ff -> 00FFh ---- */
+	/* ---- fn 41, lret$eq$ff -> 00FFh ---- */
 	check("fn 41 (outer environment, not a v3 call)", __bdos(41, 0L),
 	      0x00ff);
 
-	/* ---- G11: the default arm ----
+	/* ---- the default arm ----
 	   51-97 and 113-127 -> 00FFh; 128 and up -> 0.  Pick numbers
 	   this BDOS does not otherwise implement (55/90, 115/120,
 	   146/200) so the probe lands in the default arm and not on a
 	   real function.
 
-	   146 was 130 until src/bdos/xdos.c implemented 128-141: a
-	   probe of a number that has since acquired a meaning tests
-	   that meaning, not the default arm.  146 is MP/M's Attach
-	   Console, which this BDOS does not implement and which
-	   XDOS-CALL-PLAN.md puts out of scope, so it is a number in
-	   the range with nothing behind it -- which is what this
-	   check needs.  */
+	   146 was 130 until 128-141 acquired meanings: probing a number
+	   that has since been implemented tests that function, not the
+	   default arm.  146 is MP/M's Attach Console, which this BDOS
+	   does not implement, so nothing is behind it.  */
 	check("fn 55  (51-97 gap)", __bdos(55, 0L), 0x00ff);
 	check("fn 90  (51-97 gap)", __bdos(90, 0L), 0x00ff);
 	check("fn 115 (113-127 gap)", __bdos(115, 0L), 0x00ff);
@@ -120,10 +117,9 @@ char *argv[];
 	check("fn 146 (>=128, XDOS/MP/M)", __bdos(146, 0L), 0);
 	check("fn 200 (>=128, XDOS/MP/M)", __bdos(200, 0L), 0);
 
-	/* ---- G6: fn 13 resets the DMA address to base page + 0x80 ----
-	   (V2, docs/run/V2.md).  src/bdos/proc.h's pd_dma0 is set once
-	   at load by src/bdos/pgmld.c and is what bdosmain.c's fn 13
-	   restores GBL.dmaadr to.  The property, not a snapshot: move
+	/* ---- fn 13 resets the DMA address to base page + 0x80 ----
+	   pd_dma0 is set once at load and is what fn 13 restores
+	   GBL.dmaadr to.  The property, not a snapshot: move
 	   the DMA away with fn 26, reset with fn 13, and require an
 	   actual READ to land at _base->buff -- this process's own base
 	   page + 0x80 (basepage.h) -- and nowhere else.  Poisoning both
@@ -163,7 +159,7 @@ char *argv[];
 	mkfcb("V2TMP.TXT", &f);
 	__bdos(BDOS_DELETE, (long) &f);	/* clean up */
 
-	/* ---- G5: fn 27 copies out the allocation vector ----
+	/* ---- fn 27 copies out the allocation vector ----
 	   It answers the way function 31 does, because neither structure
 	   is addressable from a transient: the caller names a buffer, the
 	   BDOS fills it and returns that address.  The length is the one
@@ -208,7 +204,7 @@ char *argv[];
 	check("fn 46 counts the same free records",
 	      (recs == freerecs) ? 1 : 0, 1);
 
-	/* ---- G12: a file reached through the user-0 fallback is
+	/* ---- a file reached through the user-0 fallback is
 	   read-only, 03FFh plus the console message, not a bare 3.
 	   Built entirely on this run's own disk: create a SYS file in
 	   user 0, switch to a nonzero user, and let the BDOS's own
@@ -306,9 +302,9 @@ char *argv[];
 	__bdos(BDOS_SETUSER, (long) startuser);	/* leave the user number as
 						   we found it		 */
 
-	/* ---- G8: fn 47, E=0FFh sets bit 40h of ccp$flgs.  It always
-	   ends the calling program (bdos30.asm:4665-4670,
-	   bdosmain.c:629-639), so the only way to see the bit is from the
+	/* ---- fn 47, E=0FFh sets bit 40h of ccp$flgs.  It always
+	   ends the calling program (bdos30.asm:4665-4670), so the only
+	   way to see the bit is from the
 	   NEXT program -- chain to ourselves with "PHASE2" on the
 	   command line.  Park this phase's bad count in fn 108 first,
 	   since GBL.retcode -- unlike everything local to this

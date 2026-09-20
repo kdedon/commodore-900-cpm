@@ -247,9 +247,8 @@ static VOID countdir()
 	}
 }
 
-/* The lowest still-free non-4th slot, or -1.  host/mkcpmfs.py's
-   free_slot() rescans the live buffer each time and so returns exactly
-   this sequence: relocation only ever consumes free slots, never
+/* The lowest still-free non-4th slot, or -1.  Rescanning the live buffer
+   each time is enough: relocation only ever consumes free slots, never
    creates one. */
 static int freeslot()
 {
@@ -278,8 +277,8 @@ register char *dst, *src;
  * done in place, which also makes the whole conversion of that record
  * a single write.
  *
- * Any stale SFCB sub-record at the destination is zeroed, matching
- * mkcpmfs.py's clear_sfcb() after the same move.  Entry dst's SFCB is
+ * Any stale SFCB sub-record at the destination is zeroed.  Entry dst's
+ * SFCB is
  * entry (dst | 3), which is always in dst's own record, so this never
  * needs a third buffer.  The entry being moved brings no stamps with
  * it: it was sitting in a 4th slot, which is the SFCB's own slot, so

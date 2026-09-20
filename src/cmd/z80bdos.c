@@ -64,7 +64,7 @@ z16	z80ver = 0x0031;
 #define P_A6	7		/* DE, six bytes (fn 107)		*/
 #define P_CCB	8		/* DE, a character control block	*/
 #define P_SCB	9		/* DE, function 49's parameter block	*/
-#define P_NO	10		/* not mapped in stage one		*/
+#define P_NO	10		/* not mapped				*/
 #define P_DPB	11		/* fns 27 and 31: the answer is an address */
 
 #define Z80BPB	8		/* fn 50: {func, A, BC, DE, HL}		*/
@@ -350,9 +350,9 @@ z32 len;
  *
  * PUBLIC because the seam is not the only way a run can end: the caller's
  * loop also stops on a bad instruction, a HALT or its own step limit, and
- * none of those comes through here.  z80.c and tests/z80test.c call it
- * once when their loop ends, so a guest that crashes mid-line still gets
- * the line it had written.
+ * none of those comes through here.  Every caller calls it once when its
+ * loop ends, so a guest that crashes mid-line still gets the line it had
+ * written.
  */
 int z80oflush()
 {

@@ -175,7 +175,7 @@ int main()
 	    with PROT resident has been through `delete guard' the file
 	    survives into the next run, and the BDOS now answers a make
 	    onto an existing name with error 8 (file$exists,
-	    ref/cpm3/bdos30.asm:4371-4372).  That is the right answer and
+	    bdos30.asm:4371-4372).  That is the right answer and
 	    it costs this program nothing -- the file exists either way,
 	    which is all the open needs -- but under the default error
 	    mode it would put a `File Exists' report in the middle of the

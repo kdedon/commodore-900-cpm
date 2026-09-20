@@ -18,8 +18,8 @@
  *   (d) function 103 was in neither dispatcher preflight group, so it
  *	 wrote an XFCB onto a drive the program had marked read-only.
  *
- * ROT MAKE lays the files down on an ordinary image (mkcpmfs.py can add
- * an XFCB to a finished image but not a file, exactly as PASST MAKE).
+ * ROT MAKE lays the files down on an ordinary image: the image builder
+ * can add an XFCB to a finished image but not a file, as with PASST.
  * ROT then runs on the armed image and ROT NONE on the control image
  * whose label differs in the password bit alone.
  */

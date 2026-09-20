@@ -26,8 +26,8 @@ int conin()
    the same per-character cookdout() handling (tab expansion, ^S/^Q,
    column tracking) that fn 2 gave conout() -- prt_blk() (conbdos.c)
    calls cookdout() in its own byte loop, exactly as DRI's FUNC111 calls
-   TABOUT in a loop (ref/incoming/cpm3src/CONBDOS.ASM:856-869), so this
-   is not a behavior change, only fewer gate crossings. */
+   TABOUT in a loop (CONBDOS.ASM:856-869), so this buys fewer gate
+   crossings and nothing else. */
 VOID cputs(s)
 register char *s;
 {
@@ -46,12 +46,10 @@ register char *s;
    the gate crossings cputs() was changed to save -- so it exists for the
    one reason that difference is observable: a Resident System Extension
    hooks the BDOS entry, and fn 111 is served by prt_blk() INSIDE the
-   BDOS, below the chain.  A module that folds fn 2 (user/ucrsx.s) sees
-   conputs() and cannot see cputs(), which is also true of DRI's own
-   CP/M 3.  The RSX test rig and MHELLO's argument echo -- the text
-   verify-rsx and verify-rsx2 read back upper-cased as their proof that a
-   module intercepted anything -- therefore speak fn 2 deliberately.
-   Everything else in this tree wants cputs(). */
+   BDOS, below the chain.  A module that folds fn 2 sees conputs() and
+   cannot see cputs(), which is also true of DRI's own CP/M 3.  The RSX
+   test rig and MHELLO's argument echo therefore speak fn 2
+   deliberately; everything else in this tree wants cputs(). */
 VOID conputs(s)
 register char *s;
 {

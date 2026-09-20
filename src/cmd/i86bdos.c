@@ -13,7 +13,7 @@
 /* what the seam reports to its caller				       */
 
 int	i86bdosfn;		/* function of the last call, for a message */
-i32	i86nbdos;		/* K2's third instrument: calls serviced	*/
+i32	i86nbdos;		/* calls serviced			*/
 
 i16	i86dmaoff;		/* the guest's DMA offset (fn 26)	*/
 i16	i86dmaseg;		/* ... and base paragraph (fn 51)	*/
@@ -55,9 +55,9 @@ static struct {			/* the native CCB for the batch		*/
  *
  * PUBLIC because the seam is not the only way a run can end: the
  * caller's loop also stops on a bad instruction, a HLT or its own step
- * limit, and none of those comes through here.  i86.c and
- * tests/i86test.c call it once when their loop ends, so a guest that
- * crashes mid-line still gets the line it had written.
+ * limit, and none of those comes through here.  Every caller calls it
+ * once when its loop ends, so a guest that crashes mid-line still gets
+ * the line it had written.
  */
 int i86oflush()
 {
@@ -76,9 +76,9 @@ int i86oflush()
  * in CP/M-86 guests.
  *
  * BOTH bytes matter, and for different reasons.  The low byte is 0x22
- * because our BDOS's own 0x31 made our PIP silently truncate a copy
- * (PLAN.md D1, CPM86-STAGE-ONE.md §6 K4).  The high byte is ZERO
- * because a guest reads it as the machine type: DRI's TOD.CMD accepts
+ * because our BDOS's own 0x31 made our PIP silently truncate a copy.
+ * The high byte is ZERO because a guest reads it as the machine type:
+ * DRI's TOD.CMD accepts
  * 0x0022 and refuses 0x2022, 0x0122, 0x1422 and 0x0031 outright, so a
  * non-zero high byte is not a harmless decoration here.
  */
@@ -93,10 +93,10 @@ i16	i86ver = 0x0022;
 #define P_FCB	3		/* DS:DX, a 36-byte FCB			*/
 #define P_STR	4		/* DS:DX, a `$'-terminated string	*/
 #define P_BUF	5		/* DS:DX, a console read buffer		*/
-#define P_NO	6		/* not mapped in stage one		*/
+#define P_NO	6		/* not mapped				*/
 #define P_DPB	7		/* fns 27 and 31: the answer is an address */
 
-#define I86FCB	36		/* sizeof(struct fcb) -- src/cmd/cpm.h	*/
+#define I86FCB	36		/* sizeof(struct fcb)			*/
 #define I86REN	52		/* fn 23: old FCB at 0, new at 16	*/
 #define I86DMA	128		/* one CP/M record			*/
 
@@ -160,7 +160,7 @@ static i8 pmap[53] = {
 
 /* Reason codes for the refusals, so a caller can print one sentence. */
 #define BR_NONE	0
-#define BR_FN	1		/* a function stage one does not map	*/
+#define BR_FN	1		/* a function the shim does not map	*/
 #define BR_ADDR	2		/* the parameter left its segment	*/
 #define BR_SEG	3		/* the DMA base is a paragraph we lack	*/
 #define BR_VEC	4		/* an interrupt with no handler and no seam */
@@ -211,8 +211,8 @@ struct i86 *m;
 	/* The base is a paragraph, and it is subject to exactly the check
 	 * a segment-register write is subject to: we can only form an
 	 * address inside a segment we hold.  A guest DMA base we never
-	 * handed out is the same finding as K3's, arriving through a
-	 * different door, so it is reported as one. */
+	 * handed out is the same failure as a bad segment-register write,
+	 * arriving through a different door, and is reported as one. */
 	p = (char *)0;
 	for (i = 0; i < i86nseg; i++) {
 		if (i86dmaseg == i86spar[i]) {

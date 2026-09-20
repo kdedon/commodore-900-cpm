@@ -56,10 +56,9 @@ char *argv[];
 		putrec(__bdos(BDOS_READRAN, (long) &f) & 0xff);
 
 		/* ---- and it is read-only: error 3 through set$aret,
-		   which is 03FFh, not a bare 3 (bdos30.asm:2485-2494,
-		   CPM3-V3-DELTA.md G12) -- and it prints the CP/M 3
-		   long-form message below, which is why the transcript
-		   grows a "CP/M Error On" block here			*/
+		   which is 03FFh, not a bare 3, and it prints the CP/M 3
+		   long-form message, hence the "CP/M Error On" block in
+		   the transcript				*/
 		f.cur_rec = 0;
 		buf[0] = 'X';
 		r = __bdos(BDOS_WRITESEQ, (long) &f) & 0xffff;

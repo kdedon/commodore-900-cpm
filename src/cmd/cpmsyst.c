@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: MIT
  */
 /*
- * cpmsyst.c - exercises src/cmd/cpmsys.c, the system-call layer under the
- * src/app programs, and is linked the way they are (mk/programs.mk).
- * tests/a3chk.py checks what it prints and writes.
+ * cpmsyst.c - exercises cpmsys.c, the system-call layer under the app
+ * programs, and is linked the way they are.
  *
  *   CPMSYST ARGS arg...	print each argument on a line of its own,
  *				as _cstart expanded them

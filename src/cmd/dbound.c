@@ -20,10 +20,9 @@
  * again, and B: is not logged in a second time, so nothing but the scan of
  * A: can have moved it.  b1 != b0 is the finding.
  *
- * The corrupt entry is put there by tests/dirpoke.py when the image is
- * built, and that script fails the build of the image -- not the build of
- * the system -- if it cannot find an entry to corrupt, so this program
- * cannot pass by being handed a clean disk.
+ * The corrupt entry is put there when the image is built, and that step
+ * fails the image build if it cannot find an entry to corrupt, so this
+ * program cannot pass by being handed a clean disk.
  */
 
 #include "cpm.h"

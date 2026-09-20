@@ -162,9 +162,9 @@ char *argv[];
 	}
 
 	/*  THE ERASE.  This parks inside dirscan at filero()'s prompt; the
-	    answer is held by the harness until CONCG has printed that it
-	    logged drive B: in (`make verify-concerr' --input-mark), so the
-	    ordering is the test's and not the scheduler's.  */
+	    answer is held back until CONCG has printed that it logged
+	    drive B: in, so the ordering is the test's and not the
+	    scheduler's.  */
 	mkfcb(TARGET, &f);
 	__bdos(BDOS_DELETE, (long) &f);
 

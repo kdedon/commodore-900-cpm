@@ -43,7 +43,7 @@
 #define	RSX_ATTACH	127
 #define	BDOS_CALLRSX	60
 
-/* the module's sub-functions -- ref/cpm3/getrsx.asm:92-104 */
+/* the module's sub-functions -- getrsx.asm:92-104 */
 #define	GET_KILL	129
 #define	GET_FCB		130
 

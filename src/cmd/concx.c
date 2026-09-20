@@ -12,10 +12,9 @@
 #define	BIOS_TICK	24		/* bios900.c case 24	*/
 
 /*  The unit of computation, shared with concy.c by being the same code
-    with a different repeat count.  220*200 long adds is concq.c's `gap',
-    which is a known quantity in this tree: about a million instructions,
-    and the emulator's tick lands roughly every 15,500 (S1's measurement,
-    CONCURRENT-EXTENSIONS-PLAN.md 7.2), so one unit is scores of ticks.  */
+    with a different repeat count.  220*200 long adds is concq.c's `gap':
+    about a million instructions, and a tick lands roughly every 15,500,
+    so one unit is scores of ticks.  */
 
 #define	CONCXUNITS	1
 

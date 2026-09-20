@@ -9,7 +9,7 @@
  *	DATE SET		prompt for the date and the time
  *	DATE MM/DD/YY HH:MM:SS	set it from the command line
  *
- * Behaviour follows ref/cpm3/date.plm; the display is v3's
+ * Behaviour follows DRI's date.plm; the display is v3's
  * "Www MM/DD/YY HH:MM:SS".
  *
  * The clock is reached through BIOS function 23 (TIME, the C900 addition),

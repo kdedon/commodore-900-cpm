@@ -17,8 +17,8 @@
  * is held as ONE 16-bit word with the 8080's high byte in the high half
  * -- B over C, D over E, H over L -- because that is how the machine's
  * own 16-bit operations (DAD, INX, PUSH) see it, and because it is what
- * makes the pair a native Z8001 word needing no byte swap at all
- * (Z80-SHIM-FEASIBILITY.md §2).  Byte access goes through getr()/setr(),
+ * makes the pair a native Z8001 word needing no byte swap at all.
+ * Byte access goes through getr()/setr(),
  * never through a char overlay, since the host and the Z8000 disagree
  * about which end of a word a byte lives at. */
 #define P_BC	0
@@ -93,13 +93,8 @@ struct z80 {
 	z16	pc;
 
 	/* The Z80 additions.  IX/IY and the alternate set are declared
-	 * here because the loader and the state dump have to be stable
-	 * across the stage that fills them in; stage one writes AF' and
-	 * reads it back (EX AF,AF' is in the corpus) and touches nothing
-	 * else.  Z80-SHIM-FEASIBILITY.md §3 notes that IX/IY fit the
-	 * target's R8/R9 and the alternate set does not; that is a
-	 * register-allocation problem for the assembly path and no
-	 * problem at all here. */
+	 * here so the loader and the state dump stay stable even though
+	 * only AF' is written and read back today. */
 	z16	ix, iy;
 	z16	arp[3];		/* BC' DE' HL'				*/
 	z8	aa, af;		/* A' F'				*/
@@ -162,19 +157,16 @@ struct z80 {
 #define Z_EI		37
 #define Z_DI		38
 #define Z_HLT		39
-/* --- the Z80 base-map additions.  These eight opcodes are the whole of
- * the Z80 that DRI's own CP/M 3 corpus reaches (Z80-STAGE-ONE.md §1.2 --
- * 395 JR, one DJNZ, two EX AF,AF', no EXX, and no CB/ED/DD/FD at all,
- * over 50,800 statically reachable instructions in 22 binaries), which
- * is why they are here and the CB/ED/DD/FD groups below are not. */
+/* --- the Z80 base-map additions.  These are the only Z80 opcodes DRI's
+ * own CP/M 3 binaries reach: JR, one DJNZ, a pair of EX AF,AF', and no
+ * CB/ED/DD/FD at all.  Hence these and not the groups below. */
 #define Z_JR		40	/* .x = 4 unconditional, else cc 0..3	*/
 #define Z_DJNZ		41
 #define Z_EXAF		42	/* EX AF,AF'				*/
 #define Z_EXX		43
-/* --- decoded for their LENGTH and their name, never executed in stage
- * one.  A decoder that stopped at "the forms PIP uses" could not tell an
- * instruction we have not implemented from bytes that are not an
- * instruction, and those are different findings. */
+/* --- decoded for their LENGTH and their name, never executed.  Without
+ * them a refusal could not tell an unimplemented instruction from bytes
+ * that are not an instruction at all. */
 #define Z_CB		44	/* CB xx:  rotates and bit operations	*/
 #define Z_ED		45	/* ED xx:  block moves, 16-bit arithmetic */
 #define Z_IX		46	/* DD/FD xx: the index-register overlay	*/
@@ -233,13 +225,9 @@ extern int z80step();		/* decode + execute one instruction	*/
 extern z8 z80flags();		/* materialise and return F		*/
 extern int z80hookno;		/* hook left by X_HOOK			*/
 
-/* Instruments.  Instructions executed, and lazy records actually
- * materialised.  Their ratio is the flag-read rate: the study's §4 calls
- * parity the one genuine gap and costs a fix-up at 27 target cycles on
- * every arithmetic instruction, so how often a flag is READ rather than
- * written is what decides whether that cost is paid or deferred.
- * Z80-STAGE-ONE.md §6 K2 asks for the number; these are how it is taken,
- * on the host, before any target code exists. */
+/* Instructions executed, and lazy records actually materialised.  Their
+ * ratio is the flag-read rate, which decides whether a parity fix-up --
+ * 27 cycles on every arithmetic instruction -- is worth paying eagerly. */
 extern z32 z80ninsn, z80nflag;
 
 /* Byte and pair access, exported because the loader, the seam and the
@@ -271,9 +259,9 @@ extern int z80ww();		/* (m, addr, v)				*/
 #define PZ_FCB2		0x006c
 #define PZ_DMA		0x0080	/* command tail, and the default DMA	*/
 
-/* Where the shim's own furniture lives inside the guest segment.  Chosen
- * to leave the guest a TPA larger than a Kaypro's (study §1.3): 0x0100
- * to GUESTTOP is 57.6 KB. */
+/* Where the shim's own furniture lives inside the guest segment.  Placed
+ * to leave the guest a TPA larger than a Kaypro's: 0x0100 to GUESTTOP is
+ * 57.6 KB. */
 #define GUESTTOP	0xe400	/* first byte the guest TPA does not own */
 #define FAKEBDOS	0xe406	/* the CALL 5 target: an ED FE 00 hook	*/
 #define FAKEBIOS	0xf200	/* one JMP per CP/M 3 BIOS vector	*/
@@ -337,10 +325,8 @@ extern int z80ww();		/* (m, addr, v)				*/
  * clean exit. */
 #define FAKEEXIT	GUESTTOP
 
-/* z80load() return values.  Every one is a loud refusal; none is a
- * fallback.  CL_RSX is the 0xC9 prefix described above -- kill criterion
- * K1 (Z80-STAGE-ONE.md §6), and unlike CP/M-86's K1 it is a check that
- * DOES fire, on six real files we hold. */
+/* z80load() return values, every one a loud refusal.  CL_RSX is the
+ * 0xC9 prefix described above, and it does fire on real files. */
 #define CL_OK		0
 #define CL_EMPTY	1	/* a zero-length file			*/
 #define CL_BIG		2	/* the image does not fit under GUESTTOP */
@@ -355,7 +341,7 @@ extern char *z80lerr();		/* the refusal text for a CL_* code	*/
 extern int z80tail();		/* build the tail and the two FCBs	*/
 extern int z80furn();		/* plant the fake BDOS/BIOS and page zero */
 
-/* GENCOM header layout follows cpm8000/ref/cpm3/loader3.asm:
+/* GENCOM header layout follows loader3.asm:
  * program size at 1, SCB setup at 3, descriptors at 0x10 with 0x10 stride.
  * A zero descriptor offset ends the list; RET at image offset 0x100
  * identifies an RSX-only file. */
@@ -458,10 +444,10 @@ extern int z80furn();
 /* What servicing a hook did.  Only B_RUN resumes the guest. */
 #define B_RUN	0		/* serviced; carry on			*/
 #define B_EXIT	1		/* the guest terminated			*/
-#define B_FN	2		/* a BDOS function stage one does not map */
+#define B_FN	2		/* a BDOS function the shim does not map */
 #define B_ADDR	3		/* its parameter ran off the top of the	*/
 				/* guest's 64 KB			*/
-#define B_BIOS	4		/* a BIOS vector stage one does not map	*/
+#define B_BIOS	4		/* a BIOS vector the shim does not map	*/
 #define B_HOOKNO 5		/* a hook number we never planted	*/
 
 extern int z80bdos();		/* service the pending z80hookno	*/
@@ -493,7 +479,7 @@ extern char *z80addr();
  * `addr' is a HOST pointer into the guest's 64 KB when the function
  * takes an address and 0 otherwise, in which case `val' is the byte or
  * word parameter.  The target's main() is one line around __bdos(), and
- * the host tests supply a stub, which is what lets `make z80test'
- * exercise the whole mapping with no toolchain and no emulator.
+ * the host tests supply a stub, so the whole mapping can be exercised
+ * without a toolchain.
  */
 extern int z80sys();

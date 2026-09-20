@@ -3,15 +3,14 @@
  * SPDX-License-Identifier: MIT
  */
 /*
- * conco.c - The creator that PARKS INSIDE CREATION.  src/cmd/concm.c is
- *	     the other half and its banner describes the whole
- *	     arrangement.
+ * conco.c - The creator that PARKS INSIDE CREATION.  CONCM is the other
+ *	     half and its banner describes the whole arrangement.
  *
  * This program waits for CONCM to be parked at its operator prompt
- * holding the filesystem lock, says so (which is the emulator's cue to
- * release the answer CONCM is waiting for), and then asks for a process.
- * pcrgen() picks a descriptor, finds the lock held and parks there --
- * which is the window the whole target is about.
+ * holding the filesystem lock, prints to say so -- the cue to release
+ * the answer CONCM is waiting for -- and then asks for a process.
+ * pcrgen() picks a descriptor, finds the lock held and parks there,
+ * which is the window under test.
  *
  * THE WAIT IS ONE-SIDED, so it is not a timing constant in the usual
  * sense: CONCM's prompt is unanswered until this program prints, so it

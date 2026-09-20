@@ -186,9 +186,9 @@ struct z80in *in;
 		 * executes an undefined ED pair as two NOPs and no
 		 * assembler emits one -- so it can be spent on the shim's
 		 * BDOS and BIOS entry points without taking an encoding
-		 * away from the guest.  See the HOOK_* comment in z80.h
-		 * for why the study's choice of an 8080-undefined byte
-		 * does not survive contact with the Z80. */
+		 * away from the guest.  An 8080-undefined byte would not
+		 * have survived contact with the Z80; see HOOK_* in
+		 * z80.h. */
 		if (sub == 0xfe) {
 			in->op = Z_HOOK;
 			in->x = (z8)fb(m, pc, 2);
@@ -346,13 +346,10 @@ struct z80in *in;
 	case 0x37: in->op = Z_STC; break;
 	case 0x3f: in->op = Z_CMC; break;
 
-	/* ---- the Z80 base-map opcodes an 8080 leaves undefined.
-	 * Z80-STAGE-ONE.md §1.2 measures that DRI's own CP/M 3 corpus
-	 * reaches these and nothing else in the Z80 -- 395 JR, one DJNZ,
-	 * two EX AF,AF' and no EXX across 50,800 statically reachable
-	 * instructions in 22 binaries, and zero CB, ED, DD or FD.  That
-	 * measurement is the reason they are executable here and the
-	 * prefix groups are not. */
+	/* ---- the Z80 base-map opcodes an 8080 leaves undefined.  DRI's
+	 * own CP/M 3 binaries reach these and nothing else in the Z80,
+	 * which is why they are executable here and the prefix groups
+	 * are not. */
 	case 0x08: in->op = Z_EXAF; break;
 	case 0xd9: in->op = Z_EXX; break;
 	case 0x10:
@@ -478,14 +475,12 @@ int sub;
 }
 
 /*
- * z80mnem -- the mnemonic for a decoded instruction, for the corpus
- * sweep and for a refusal message.  Not on any execution path; kept here
- * so the names sit next to the encodings that produce them.
+ * z80mnem -- the mnemonic for a decoded instruction, for a refusal
+ * message.  Kept here so the names sit next to the encodings.
  *
- * The 8080 spelling is used, not the Zilog one, because that is what
- * every source in this tree is written in and what the study quotes --
- * `mov' not `ld', `jz' not `jp z'.  The four Z80 base opcodes have no
- * 8080 spelling and keep Zilog's.
+ * The 8080 spelling is used, to match the rest of this tree -- `mov'
+ * not `ld', `jz' not `jp z'.  The four Z80 base opcodes have no 8080
+ * spelling and keep Zilog's.
  */
 char *z80mnem(in)
 struct z80in *in;

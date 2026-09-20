@@ -40,8 +40,8 @@ char *argv[];
 	int	r;
 
 	/*  PASST MAKE runs FIRST, on an ordinary image, and lays down the
-	    three files the XFCBs will name.  mkcpmfs.py can add an XFCB to
-	    a finished image but cannot add a file to one, so the files
+	    three files the XFCBs will name.  The image builder can add an
+	    XFCB to a finished image but not a file, so the files
 	    have to come from a session -- and a session on an unarmed
 	    drive, because there is nothing to arm yet.	*/
 	if (argc > 1 && (argv[1][0] & 0x5f) == 'M') {

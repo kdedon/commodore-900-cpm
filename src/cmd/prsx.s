@@ -22,7 +22,7 @@
 
 	.globl	protbase
 
-/ ***** the prefix (sys/rsxhdr.h; ref/cpm3/getrsx.asm:124-137) *****
+/ ***** the prefix (rsxhdr.h; getrsx.asm:124-137) *****
 
 protbase:
 	.word	0, 0, 0			/ 00 serial, filled in on attach

@@ -14,30 +14,24 @@ i16	i86segbad;		/* paragraph that caused X_SEGESC	*/
 
 /*
  * The assigned-paragraph set.  The shim hands out one 64 KB host
- * segment per guest group and records the pair here; every write to a
- * segment register is checked against it.  The check sits on the WRITE
- * and not on the instruction that computed the value, because WordStar
- * was observed capturing an absolute segment into a variable and
- * reloading ES from it later (CPM86-SHIM-FEASIBILITY.md §1.3) -- a
- * check on the arithmetic would have missed that and a check on the
- * write cannot.
+ * segment per guest group and records the pair here.  The check sits on
+ * the WRITE to a segment register, not on the arithmetic that produced
+ * the value: WordStar stashes an absolute segment in a variable and
+ * reloads ES from it much later.
  */
 i16	i86spar[I86NSEG];	/* guest paragraph			*/
 char	*i86sbase[I86NSEG];	/* the host segment we gave it		*/
 int	i86nseg;
-i32	i86nsegslow;		/* K3's counter: slow-path resolutions	*/
+i32	i86nsegslow;		/* slow-path resolutions		*/
 i32	i86nsegbad;		/* ... and the writes it could not cover	*/
 
-/* E1s's one policy question, left to whoever owns the segments.  Null
- * by default: an unresolvable paragraph is then a refusal, which is what
- * the host tests want and what a target build without a spare segment
- * has to do anyway. */
+/* Hook for handing out a segment on demand.  Null by default, so an
+ * unresolvable paragraph is a refusal -- the only answer a build with no
+ * spare segment can give. */
 char	*(*i86segnew)();
 
-/* K2's instruments.  Two counters, no branches on the hot path, and
- * they are what turns §6's threshold from an argument into a
- * measurement.  On the target they cost two long increments; when that
- * matters they go behind a build flag, which is not yet. */
+/* Two counters, no branches on the hot path.  They cost a long
+ * increment each on the target. */
 i32	i86ninsn;		/* instructions executed		*/
 i32	i86nflag;		/* times a lazy record was materialised	*/
 
@@ -133,11 +127,10 @@ int v;
  * i86addr -- the same arithmetic, for the seam rather than for an
  * instruction: the host address of `len' guest bytes, or 0 if they do
  * not all fit in the window.  The BDOS seam hands FCBs and DMA buffers
- * to the native BDOS BY ADDRESS and never copies them
- * (CPM86-SHIM-FEASIBILITY.md §7.2), so this is the only thing standing
- * between a guest DMA offset of 0xFFC0 and our BDOS writing 128 bytes
- * into whatever host segment follows.  len 0 asks only that the offset
- * itself is inside.
+ * to the native BDOS by address and never copies them, so this is the
+ * only thing between a guest DMA offset of 0xFFC0 and our BDOS writing
+ * 128 bytes into whatever host segment follows.  len 0 asks only that
+ * the offset itself is inside.
  */
 char *i86addr(m, s, off, len)
 struct i86 *m;
@@ -693,7 +686,7 @@ struct i86in *in;
 }
 
 /* ------------------------------------------------------------------ */
-/* segment-register writes: K3's check				       */
+/* segment-register writes					       */
 
 /* Resolve a paragraph inside an assigned segment by storing its byte
  * bias. Otherwise consult i86segnew if installed, then refuse. */
@@ -1190,8 +1183,8 @@ struct i86in *in;
 		 * Division truncates toward zero on the 8086.  C89
 		 * leaves the sign of a negative quotient to the
 		 * implementation; every compiler this has to run under
-		 * truncates toward zero, and tests/i86test.c asserts it
-		 * with -100/7 rather than assuming it.
+		 * truncates toward zero, and the tests assert it with
+		 * -100/7 rather than assuming it.
 		 */
 		a = rmrd(m, in, e);
 		i86flags(m);
@@ -1278,11 +1271,10 @@ struct i86in *in;
 		break;
 
 	divzero:
-		/* A divide error is INT 0, and on an 8086 the pushed
-		 * address is the one AFTER the divide -- but stage one
-		 * has no interrupt machinery, so the caller is handed
-		 * the vector with IP back at the instruction, which is
-		 * the address a refusal has to be able to name. */
+		/* A divide error is INT 0.  An 8086 pushes the address
+		 * AFTER the divide; with no interrupt machinery here the
+		 * caller gets the vector with IP back at the instruction,
+		 * the address a refusal has to name. */
 		m->ip = ip0;
 		m->lz = LZ_NONE;
 		i86intno = 0;
@@ -1364,9 +1356,8 @@ struct i86in *in;
 		strop(m, in);
 		break;
 
-	/* ---- decoded, deliberately not executed in stage one.  Each
-	 * of these is a line in CPM86-STAGE-ONE.md §2.3's "no" column;
-	 * refusing loudly is the whole point of decoding them. */
+	/* ---- decoded but not executed; decoding them buys a loud
+	 * refusal that names the instruction. */
 	case I_INTO:				/* no overflow trap	*/
 	case I_ESC:				/* no 8087		*/
 	case I_IO:				/* no PC hardware	*/
@@ -1375,12 +1366,10 @@ struct i86in *in;
 		m->ip = ip0;
 		return (X_UNIMP);
 	}
-	/* A window fault is detected at the reference and reported here,
-	 * so the instruction that caused it has already had whatever
-	 * effect it had before the escaping byte.  That is honest for a
-	 * refusal -- the guest is not resumed -- and it is why the fault
-	 * carries the slot and offset that escaped rather than only a
-	 * status. */
+	/* A window fault is caught at the reference and reported here, so
+	 * the instruction has already had its effect up to the escaping
+	 * byte.  The guest is not resumed, and the fault carries the slot
+	 * and offset so the refusal can name them. */
 	if (m->fault) {
 		m->ip = ip0;
 		return (X_WINDOW);

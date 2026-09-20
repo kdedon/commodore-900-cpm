@@ -9,9 +9,8 @@
 #include "cpm.h"
 
 /*  Eight rounds: enough that CONCD gets several walks of its own inside
-    them (each of these is about ninety BDOS calls and every one of them
-    is a switch point), and few enough to stay well inside the emulator's
-    instruction budget.  */
+    them -- each round is about ninety BDOS calls and every one is a
+    switch point -- and few enough to keep the run short.  */
 
 #define	EROUNDS	8
 

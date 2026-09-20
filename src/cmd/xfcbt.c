@@ -66,9 +66,8 @@ char *argv[];
 	   and the second is the one with teeth now that passwords are
 	   enforced: an XFCB must not shadow the FCB it names, AND this
 	   drive's directory label does not have the password-enable bit,
-	   so nothing on it is enforced at all.  That makes this image a
-	   second witness for the property verify-pass's control run is
-	   about -- an XFCB on an unarmed medium costs nothing. ---- */
+	   so nothing on it is enforced at all: an XFCB on an unarmed
+	   medium costs nothing. ---- */
 	mkfcb(PROTECTED, &f);
 	setdma(buf);
 	r = __bdos(BDOS_OPEN, (long) &f) & 0xff;

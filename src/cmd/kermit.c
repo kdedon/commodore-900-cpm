@@ -52,16 +52,16 @@
   POSSIBILITY OF SUCH DAMAGE.
 */
 /*
- * PORTING NOTE (Commodore 900 CP/M-8000, task N2, 2026-09-07).
+ * PORTING NOTE (Commodore 900 CP/M-8000).
  *
- * This is E-Kermit 1.8 as shipped in c900oses/elks/src/elkscmd/ekermit/,
- * with the BSD-3 licence above INTACT and unmodified, changed in exactly
- * one mechanical way: ANSI function prototypes and ANSI function
- * definitions have been rewritten in K&R form.
+ * This is E-Kermit 1.8, with the BSD-3 licence above INTACT and
+ * unmodified, changed in exactly one mechanical way: ANSI function
+ * prototypes and ANSI function definitions have been rewritten in K&R
+ * form.
  *
  * That is not a preference.  This port's compiler is the Mark Williams
- * cc0/cc1/cc2 of 1985 (commodore-900-toolchain), which is strictly
- * pre-ANSI: it cannot parse a parameter list that carries types, in a
+ * cc0/cc1/cc2 of 1985, which is strictly pre-ANSI: it cannot parse a
+ * parameter list that carries types, in a
  * declaration, in a definition, or in a function-pointer member of a
  * struct.  The unmodified file does not reach the first code generator
  * pass -- it stops in the first fifty lines.  The transformation is:
@@ -77,8 +77,7 @@
  * is touched, and the argument-passing ABI is unchanged: K&R default
  * promotions push the same words for every parameter type used here, and
  * this toolchain binds a byte parameter to the low-order byte of its
- * word slot (see the toolchain's docs/PATCHES.md, TASK #321 -- a bug
- * found, as it happens, by a kermit that could not send a character).
+ * word slot.
  *
  * Nothing else in this file differs from the E-Kermit 1.8 original.
  */

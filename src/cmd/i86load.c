@@ -89,13 +89,13 @@ struct i86cmd *c;
 			return (CE_DUP);
 		seen[g->form] = 1;
 		c->ng++;
-		/* K1, first half: a nonzero A-Base says the group is not
+		/* A nonzero A-Base says the group is not
 		 * relocatable and must load where it says.  We do not
 		 * honour absolute bases -- we cannot, without giving up
 		 * the identity between guest and host offsets. */
 		if (g->base != 0)
 			return (CE_BASE);
-		/* K1, second half: more than one 64 KB host segment. */
+		/* More than one 64 KB host segment. */
 		if (g->len > CMD_MAXPAR || g->min > CMD_MAXPAR)
 			return (CE_BIG);
 		if (g->max != 0 && g->max > CMD_MAXPAR)
