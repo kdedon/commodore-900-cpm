@@ -23,8 +23,8 @@
  * stack).  A push-type write is routed by its post-decrement address
  * plus the operand width, i.e. by the pre-push SP.
  *
- * Emulated forms = every form the offline scan (host/splitchk.c) found
- * in the DRI dev-pack binaries, plus the cheap neighbors: LOAD/STORE/
+ * Emulated forms = every form found in the DRI dev-pack binaries, plus
+ * the cheap neighbors: LOAD/STORE/
  * STIMM/CLR, ALU read (ADD/SUB/OR/AND/XOR/CP), memory RMW (COM/NEG/
  * TSET/INC/DEC/SET/RES), flag reads (TEST/TESTL/BIT/CP-imm), EX, MULT/
  * MULTL/DIV/DIVL, LDM load/store, PUSH/PUSHL/POP/POPL/PUSH-immediate,
@@ -32,8 +32,7 @@
  * CPSx string compares and TRxB translates were not found in any binary
  * and return SPE_UNIMP (the gate panics loudly, never silently).
  *
- * Flag semantics mirror the Zilog data book (cross-checked against the
- * project emulator's ALU); host/splittest.c covers each form.
+ * Flag semantics mirror the Zilog data book.
  *
  * Compiles for the target (MWC, int = 16) and the host (-DHOSTCC) with
  * identical behavior; memory is accessed bytewise big-endian.

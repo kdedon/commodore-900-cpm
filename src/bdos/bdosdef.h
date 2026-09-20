@@ -100,7 +100,7 @@ EXTERN UBYTE	kbchar[CONBUFS];
 
 /* XFCBs carry the file name, mode and an eight-byte password stored
  * reversed and XORed with its byte sum. Read protection includes write
- * and delete; write includes delete. Source: ref/cpm3/xfcb.lit. */
+ * and delete; write includes delete. Source: xfcb.lit. */
 
 #define XF_MODE	  12		/* the password mode byte		*/
 #define XF_KEY	  13		/* checksum of the password = XOR key	*/
@@ -121,7 +121,7 @@ EXTERN UBYTE	kbchar[CONBUFS];
 #define STAMPLEN  4		/* date word + BCD hour + BCD minute	*/
 
 /* fcb s2 bit 6: this open file's update stamp has already been written
-   (ref/cpm3/bdos30.asm:2469-2471 set$filewf, tested at :3349)	*/
+   (bdos30.asm:2469-2471 set$filewf, tested at :3349)	*/
 #define UPDSTAMPED 0x40
 
 
@@ -194,10 +194,10 @@ struct	dph			/* disk parameter header	*/
 
 /*  Console paging (src/bdos/conbdos.c pagelf).  page$mode is a byte
     whose ZERO means paging is ON, which reads backwards until you see
-    that v3 defines it that way (ref/cpm3/ccp3.asm:196) so that the
+    that v3 defines it that way (ccp3.asm:196) so that the
     cleared byte is the configured system's normal state.  PM_OFF is
     0FFh because that is the value v3's own utilities write into it
-    (ref/cpm3/dump.asm:374-380).					*/
+    (dump.asm:374-380).						*/
 
 #define	PM_ON		0x00	/* pause at the foot of each page	*/
 #define	PM_OFF		0xff	/* do not					*/
@@ -259,7 +259,7 @@ struct stvars
 	UBYTE	pagemode;	/* Console page mode (page$mode, SCB 2Ch): */
 				/* 0 = pause at the foot of each page,	   */
 				/* non-zero = do not.  v3's sense exactly   */
-				/* (ref/cpm3/ccp3.asm:196, "0=on, 0ffH=off")*/
+				/* (ccp3.asm:196, "0=on, 0ffH=off")	   */
 	UBYTE	pmdefault;	/* What a warm boot resets pagemode to	   */
 				/* (pm$default, SCB 2Dh).  v3's CCP does	   */
 				/* this reset per command, ccp3.asm:603-614 */

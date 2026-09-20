@@ -29,8 +29,8 @@
 /* Split-I/D slow-path module: cmain.c copies its linked image from resident
  * data to SPLITMSEG at cold boot. The descriptor limit excludes ROM state
  * at physical 0x0FE400 on a 512 KB machine.
- * The fixed interface offsets are defined by splitent.s and checked by
- * mkblob.py; implementation entry addresses remain internal to the module. */
+ * The fixed interface offsets are defined by splitent.s and checked at
+ * build time; implementation entry addresses stay internal to the module. */
 #define	SPLITMSEG	0x37		/* relocated shim slow path */
 #define	SPLITMBASE	0x37000000L
 #define	SPLITMPAGE	0x0f00		/* phys 0x0F0000 (mapseg base page) */
@@ -70,19 +70,17 @@
  * THE POOL MUST NOT OVERLAP THE ROM'S VIDEO DESCRIPTORS.  It used to run
  * 0x38..0x3E, which INCLUDES logical segments 0x3A and 0x3B -- the ROM's
  * two display planes (crsr.c writes character cells in 0x3a and homes the
- * HR bitmap through 0x3b; rom_source/display_re.c:46,47 names them
- * VRAM_A_CHAR and VRAM_A_ATTR).  pgalloc() mapseg()s the segment it hands
+ * HR bitmap through 0x3b).  pgalloc() mapseg()s the segment it hands
  * out, so the third allocation from an empty pool reprogrammed the display
  * descriptor onto a pool page: console writes went into process memory and
- * pgfree() never put the video page back.  No verify target saw it because
- * the emulator's console is serial (crsr.c CK_SER), but on a machine with
- * an LR or HR console the display died at the third allocation and stayed
- * dead.  The pool is therefore moved wholesale, keeping all seven slots --
- * shrinking it would cost the large-model CP/M-86 case, which holds six at
- * once (tests/verify.mk verify-i86).
+ * pgfree() never put the video page back.  A serial console never shows
+ * it; on a machine with an LR or HR console the display died at the third
+ * allocation and stayed dead.  The pool is therefore moved wholesale,
+ * keeping all seven slots -- shrinking it would cost the large-model
+ * CP/M-86 case, which holds six at once.
  *
  * 0x28..0x2E is free: the ROM identity-maps all 64 descriptors at reset
- * (rom_source/reset_re.c:33) and thereafter only ever addresses segments 0,
+ * and thereafter only ever addresses segments 0,
  * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32, 0x33, 0x35..0x37 and
  * 0x3F (crt.s), and nothing in the tree names a segment between 0x02 and
  * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
@@ -93,10 +91,9 @@
  * character RAM at 0x37; pginit() keeps the top RAM page for the ROM, so
  * the largest machine backs pages 0x10..0x35 -- 38 slots.  Their segments:
  * slots 0..7 are 0x28..0x2F, exactly the numbers the first seven always
- * were (verify-i86 names them), and slot 8 onwards counts DOWN from 0x27,
- * which ends at 0x0A.  0x02..0x27 is otherwise unused, for the same reason
- * given above.  pgsize() in pgalloc.c does the sizing; tests/pgtest.c runs
- * it for 512, 1024 and 2560 KB, which the emulator (1 MB, fixed) cannot.
+ * were, and slot 8 onwards counts DOWN from 0x27, which ends at 0x0A.
+ * 0x02..0x27 is otherwise unused, for the same reason given above.
+ * pgsize() in pgalloc.c does the sizing.
  */
 #define	SYSPHYSPAGE	0x08		/* phys 0x080000: CPM.SYS's text */
 /*

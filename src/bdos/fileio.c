@@ -84,7 +84,7 @@ WORD		dirindx;	/* index into directory for *dirp */
 
     /*	The high water mark bounds every later directory scan, so an entry
 	that does not raise it is invisible to the whole system.  v3's login
-	scan (ref/cpm3/bdos30.asm:1296-1325) decides this per type: 21h and
+	scan (bdos30.asm:1296-1325) decides this per type: 21h and
 	E5h jump straight back to initial2 without setcdr, a 20h label goes
 	through drv$lbl -- which records its mode byte -- into initial3, and
 	10h..1Fh reach initial3 directly.  Only entries below 10h also get
@@ -288,7 +288,7 @@ REG WORD set;			/* 0 read the clock, 1 set it	*/
 ****************************************/
 
 /*  Address of one sub-field of the SFCB describing the directory entry
-    at dirindx, or NULL when there is none.  ref/cpm3/bdos30.asm:3314-
+    at dirindx, or NULL when there is none.  bdos30.asm:3314-
     3327: an entry that is itself the 4th item of its record has no
     sub-record, the 4th item must actually hold 21h, and the field is
     then buffa + 96 + 1 + 10*(dcnt & 3) + off.  The record is whatever
@@ -341,7 +341,7 @@ REG UBYTE *p;			/* the field, or NULL for "no SFCB"	*/
 ****************************************/
 
 /*  Is the requested stamp switched on for the current drive?
-    ref/cpm3/bdos30.asm:3331-3334: the label's mode byte is masked, and
+    bdos30.asm:3331-3334: the label's mode byte is masked, and
     when the bit is on the drive is still checked read/write (qstamp1
     tail-calls nowrite).  A read-only drive is silently not stamped --
     it is not an error, and raising one would make opening a file on a
@@ -359,7 +359,7 @@ REG UWORD mask;
 
 
 /*  Is this directory entry the file's FIRST one?  Only that entry is
-    stamped (ref/cpm3/bdos30.asm:3336-3344 qdirfcb1): extent below the
+    stamped (bdos30.asm:3336-3344 qdirfcb1): extent below the
     extent mask and module zero.			*/
 
 MLOCAL BOOLEAN dirfcb1(dirp)
@@ -1031,7 +1031,7 @@ WORD	dirindx;
 	fcbp->extent = fcb_ext;
 	fcbp->s2 |= 0x80;	 /* set hi bit of S2 (write flag)	*/
 	crit_dsk |= 1 << (GBL.curdsk);
-			/* access stamp: ref/cpm3/bdos30.asm:4117-4120,
+			/* access stamp: bdos30.asm:4117-4120,
 			   `mvi c,0100$0000b' then qstamp/stamp1 -- the
 			   access stamp shares the create field	*/
 	if ( dirfcb1(dirp) && stampon(DL_ACCESS)
@@ -1272,7 +1272,7 @@ REG WORD dirindx;		/* index into directory		*/
 	    i -= 1;
 	} while (i);
 	move(fcbp, dirp, sizeof *dirp);	/* move the fcb to the directory */
-			/* ref/cpm3/bdos30.asm:4359-4368 make3a: the create
+			/* bdos30.asm:4359-4368 make3a: the create
 			   field is stamped when EITHER create or access
 			   stamping is on (`mvi c,0101$0000b'), and the
 			   update field as well when update stamping is on

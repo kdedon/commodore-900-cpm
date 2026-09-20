@@ -9,11 +9,8 @@
  * zdecode() classifies exactly one instruction from its first word (and,
  * for the few encodings that need it, the second word): total length in
  * words, whether it references data-space memory, and every operand field
- * the trap-time emulator needs.  Encodings verified against the Zilog
- * Z8000 family data book opcode map (nonsegmented lengths; the project
- * emulator's decode ROM served as a cross-check, and the offline harness
- * host/splitchk.c re-verifies both length and classification over the
- * real DRI binaries).
+ * the trap-time interpreter needs.  Encodings follow the Zilog Z8000
+ * family data book opcode map, nonsegmented lengths.
  *
  * Address-space rules for split I/D (Z8000 data book, MMU EXCV note:
  * execute-only segments admit "instruction fetch and load relative"

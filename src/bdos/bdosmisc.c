@@ -24,7 +24,7 @@ EXTERN UWORD	xbdos();		/* BDOS main routine (C900: was _bdos) */
 EXTERN UBYTE	*traphnd();		/* assembly language trap handler */
 EXTERN		rsxwboot();		/* RSX warm-boot removal (rsx.c)  */
 EXTERN		pcoldses();		/* the SCC-B session at a video
-					   console (C10/D8, proc.c)	  */
+					   console (proc.c)		  */
 EXTERN		initexc();		/* init the exception handler in  */
 					/* exceptn.s			*/
 EXTERN UWORD	dirscan();		/* Directory scanning routine	*/
@@ -112,10 +112,10 @@ bdosinit()
     BTRACE("<8>");		/* GBL block initialised */
     GBL.dirsecn = -1;		/* the directory buffer holds nothing yet.
 				   It was a file-scope static in dskutil.c
-				   with an initialiser (S4 moved it here so
-				   that it travels with the per-process
-				   buffer it describes), and bss-zero would
-				   have claimed record 0 was resident */
+				   with an initialiser; it lives here so it
+				   travels with the per-process buffer it
+				   describes, and bss-zero would have
+				   claimed record 0 was resident */
     BTRACE("<9>");		/* about to call xbdos(13) */
     xbdos(13,0, XNULL);		/* reset disk system function */
     BTRACE("<c>");		/* xbdos(13) returned */
@@ -129,13 +129,12 @@ bdosinit()
     tpa_lt = tpa_lp = segp->low;
     tpa_ht = tpa_hp = tpa_lp + segp->length;
     initexc( &(GBL.excvec[0]) );
-    /*	THE SCC-B SESSION AT A VIDEO CONSOLE (C10, narrowed by D8).  This
-	is the once-per-machine moment: the file system is up, so CCP.Z8K
-	can be loaded, and the first CCP has not run, so nothing is on the
-	consoles yet.  A serial operator gets no session here.  Every
-	refusal is ignored -- src/bdos/proc.c pcoldses() says why -- so a
-	512 KB machine and a disk with no CCP on it behave exactly as they
-	did before this line existed.  */
+    /*	THE SCC-B SESSION AT A VIDEO CONSOLE.  This is the once-per-machine
+	moment: the file system is up, so CCP.Z8K can be loaded, and the
+	first CCP has not run, so nothing is on the consoles yet.  A serial
+	operator gets no session here.  Every refusal is ignored -- see
+	pcoldses() -- so a 512 KB machine and a disk with no CCP on it come
+	up as they always did.  */
     pcoldses();
 }
 

@@ -1157,7 +1157,7 @@ UWORD mode;
 	/* on that drive.  With no PATH the list is the current user	*/
 	/* area plus the BDOS's own user-0 fallback (gsys), which is	*/
 	/* where DRI puts it: v3's CCP restores the user number before	*/
-	/* loading (ref/cpm3/ccp3.asm:1304-1305) exactly because	*/
+	/* loading (ccp3.asm:1304-1305) exactly because		*/
 	/* function 15 does the fallback (bdos30.asm:3940-3974).	*/
 	/*--------------------------------------------------------------*/
 	ng = 0;
@@ -1719,7 +1719,7 @@ UWORD profstart()		/*  is there a PROFILE.SUB to	*/
 				/*  already looked?		*/
 				/*------------------------------*/
 				/* CP/M 3's CCP does this at	*/
-				/* ref/cpm3/ccp3.asm:460-473	*/
+				/* ccp3.asm:460-473		*/
 				/* (`ckboot'): on a cold start	*/
 				/* -- the `coldboot' bit of	*/
 				/* ccpflag3 still clear -- it	*/

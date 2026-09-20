@@ -171,7 +171,7 @@ MLOCAL	struct xq	xq[XNQ];
 
 /*  The function 134 request, and the 135 one, as they arrive from the
     caller's TPA.  Copied in whole, because a far pointer may only be
-    read through cpy_in (tests/farptrcheck.py enforces exactly that).  */
+    read through cpy_in.  */
 
 struct xqmake {
 	UBYTE	qm_name[XQNAME];

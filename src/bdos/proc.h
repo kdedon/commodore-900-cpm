@@ -37,34 +37,24 @@ struct context {
 /*  Descriptor capacity; each process also needs a TPA page and a supervisor
     stack, and both of those are the reason this number is not larger.
 
-    SIX, raised from four by owner decision 2026-09-12, which puts the
-    ceiling at FIVE user processes because the cold-boot session on the
-    second console holds one descriptor for as long as the machine is up.
-    The three things that had to be true for six, all checked rather than
-    assumed:
+    SIX puts the ceiling at FIVE user processes, because the cold-boot
+    session on the second console holds one descriptor for as long as the
+    machine is up.  What bounds it:
 
-      * SUPERVISOR STACKS.  PSTKOF(i) = PSTKTOP - i*PSTKSZ in segment 0x3F,
-	so six stacks run 0xFC00 down to 0x3C00 and the lowest one's frames
-	live in 0x3C00..0x5C00.  Segment 0x3F is a full 64 KB page (crt.s
-	maps it at phys 0x0D0000 with limit 0xFF) and holds NOTHING but
-	these stacks -- the ROM's own routines frame below the running SP in
-	the same segment, which is why the C stack lives there at all -- so
-	0x3C00 of headroom remains under the lowest stack.  SEVEN fit, not
-	eight: 0xFC00/0x2000 is 7.875, so an eighth slot would get 0x1C00.
-	Six is what the decision asked for.
+      * SUPERVISOR STACKS.  PSTKOF(i) = PSTKTOP - i*PSTKSZ in segment
+	0x3F, so six stacks run 0xFC00 down to 0x3C00, leaving 0x3C00 of
+	headroom below the lowest.  The segment is a full 64 KB page and
+	holds nothing else, so seven fit; an eighth would get 0x1C00.
       * TPA PAGES.  One live process owns segment TPASEG and the rest are
 	parked in allocator slots, so six processes need five pool slots.
-	pginit() gives as many slots as RAM backs, up to PGNSLOT (c900cfg.h):
-	seven on the 1024 KB machine the suite runs, where verify-i86 already
-	holds six at once, and 31 on 2560 KB (tests/pgtest.c).
+	pginit() gives as many slots as RAM backs, up to PGNSLOT: seven on
+	a 1024 KB machine, 31 on 2560 KB.
       * DESCRIPTOR INDEX.  Every loop in proc.c is written against PNPROC
-	and pgalloc.c's pgown[] holds pgcur+1 in a char, so an index of 5
-	costs nothing.  No table in the tree is dimensioned by a literal 4
-	and no protocol carries a process count.
+	and pgown[] holds pgcur+1 in a char, so an index of 5 costs
+	nothing.
 
-    Each descriptor costs one struct pdesc of BSS (the struct stvars copy
-    inside it is most of that) and 8 KB of segment 0x3F, which is not
-    resident text.  */
+    Each descriptor costs one struct pdesc of BSS -- mostly the struct
+    stvars copy inside it -- and 8 KB of segment 0x3F.  */
 
 #define	PNPROC		6
 
@@ -99,7 +89,7 @@ struct context {
 #define	PW_CON		5	/* for a character on console pd_wobj	*/
 #define	PW_LOCK		6	/* for the file-system lock to be free	*/
 #define	PW_CATT		7	/* for console pd_wobj to be DETACHED by
-				   whoever owns it (C10).  SIGNALLED, not
+				   whoever owns it.  SIGNALLED, not
 				   polled: the event is another process's
 				   fn 147, or its warm boot, and proc.c
 				   pcondet()/pconrel() hand the console
@@ -132,8 +122,8 @@ struct pdesc {
 	short	pd_sess;	/* session: reload the CCP at warm boot instead of freeing this process */
 	short	pd_prio;	/* MP/M's priority byte.  Recorded, not yet
 				   consulted: the ready list is round robin
-				   and stays that way until preemption (S5)
-				   makes priority mean something.	*/
+				   stays that way until preemption makes
+				   priority mean something.		*/
 	XADDR	pd_dma0;	/* basepage.buff address restored by function 13 */
 	struct pframe pd_f;	/* where it was, and what it was doing	*/
 	struct stvars pd_gbl;	/* the BDOS's per-process state.  DRI factored
@@ -148,8 +138,8 @@ struct pdesc {
 	XADDR	pd_tpalp, pd_tpalt;	/* bdosmain.c's TPA bounds, which  */
 	XADDR	pd_tpahp, pd_tpaht;	/*   rsxfence()/warmboot() move	   */
 	short	pd_stk;		/* THE TOP OF THIS PROCESS'S SUPERVISOR
-				   STACK, an offset in segment 0x3F.  This
-				   is what S4 adds to S3: a process parked
+				   STACK, an offset in segment 0x3F.  A
+				   process parked
 				   INSIDE a BDOS call has live C frames, and
 				   they have to be somewhere the process
 				   that runs next will not write.  Fixed per
@@ -162,21 +152,18 @@ struct pdesc {
 				   returning from pcopark_ (pcoresume_)
 				   rather than by rebuilding pd_f and
 				   IRETing (presume_).  Zero means parked at
-				   the gate, which is S3's only case.	*/
+				   the gate.				*/
 
 	/*  THE WAIT LIST, AND IT IS AT THE END ON PURPOSE.  Every earlier
-	    field was appended in the middle of what came before it, and a
-	    mid-struct insertion is currently under suspicion for a
-	    regression on task/V2 -- nothing in this tree reaches a pdesc
-	    by a hard-coded offset, but the suspicion is cheap to respect
-	    and costs nothing to honour, so these three go last.	*/
+	    field was appended in the middle of what came before it.
+	    Nothing in this tree reaches a pdesc by a hard-coded offset,
+	    but these three cost nothing to keep last.			*/
 
 	short	pd_wait;	/* PW_RUN, or what this process is waiting
-				   for.  Nonzero is what pnext() SKIPS, and
-				   that skip is the whole of C5: a blocked
-				   process is out of the rotation instead
-				   of being handed a slice it will spend
-				   re-testing a condition.		*/
+				   for.  Nonzero is what pnext() SKIPS: a
+				   blocked process is out of the rotation
+				   instead of being handed a slice it will
+				   spend re-testing a condition.	*/
 	short	pd_wobj;	/* which one: the flag number, the queue
 				   id, or the console.			*/
 	long	pd_wtick;	/* PW_TICK's deadline, in tick900.c's own

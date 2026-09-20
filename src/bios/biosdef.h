@@ -10,7 +10,7 @@
  *	long bios(d0, d1, d2)  int d0;  long d1, d2;
  *
  * Function codes and status values follow the standard CP/M-8000 BIOS
- * surface (c900oses/cpm8000/cpm8k13/STDBIO.H).  All arguments are widened to long by
+ * surface.  All arguments are widened to long by
  * these macros -- with a K&R compiler the caller alone fixes argument
  * widths, so never call bios() with a bare int or 0 in d1/d2.
  */

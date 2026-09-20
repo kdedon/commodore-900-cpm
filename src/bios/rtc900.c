@@ -335,8 +335,8 @@ UBYTE *tod;
 
 /*
  * Set the clock from `tod'.  Returns RTC_OK, or RTC_NONE if the chip did
- * not take the value (which is how a machine with no RTC -- or an
- * emulator whose CIO is a plain register file -- reports itself).
+ * not take the value, which is how a machine with no RTC reports
+ * itself.
  *
  * STOP is held high across the reload, as the datasheet requires, and
  * register 13 (the post-stage reset) is written before STOP falls so the

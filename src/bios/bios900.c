@@ -42,8 +42,8 @@
  * ROM console routines also access it. */
 
 /* The console table's size: console 0 and up to three bound lines.  It is
- * NOT the process-descriptor count -- PNPROC has been 6 since F14
- * (src/bdos/proc.h) -- but every console with a session running holds a
+ * NOT the process-descriptor count PNPROC -- but every console with a
+ * session running holds a
  * descriptor, so a larger table costs program slots.  Additional reported
  * channels remain unbound. */
 #define CONMAX		4
@@ -66,13 +66,11 @@ extern int inb();
 extern outb();
 
 /*
- * The video console's keyboard is OURS, not the ROM's (D6's kbd900.h, made
- * the default by C11 after the owner booted it and had working LR input
- * for the first time).  The ROM path it replaces never worked on any
- * machine: romabi.h's claim that the ROM sets the keyboard up at reset is
- * false -- the ROM programs CIO #1 port A lazily, inside its own blocking
- * getchar(), which a BIOS must never call, so kbd_poll() was polling a
- * port nobody had ever initialised.
+ * The video console's keyboard is OURS, not the ROM's.  The ROM path it
+ * replaces never worked on any machine: the ROM does not set the
+ * keyboard up at reset, it programs CIO #1 port A lazily inside its own
+ * blocking getchar(), which a BIOS must never call, so kbd_poll() was
+ * polling a port nobody had ever initialised.
  */
 #include "kbd900.h"
 
@@ -276,7 +274,7 @@ int n, mode;
 }
 
 /************************************************************************/
-/*	AUX -- the spare line as a device, not a terminal (N2)		*/
+/*	AUX -- the spare line as a device, not a terminal		*/
 /************************************************************************/
 
 /* AUX uses a raw, eight-bit serial channel and shares its receive ring.
@@ -1071,7 +1069,7 @@ static coninit()
 	if (convid)
 		kbdinit();
 
-	/*  CHANNEL 0 IS WRITTEN BY US, AND NOBODY MAY HAVE SET IT UP (C12).
+	/*  CHANNEL 0 IS WRITTEN BY US, AND NOBODY MAY HAVE SET IT UP.
 	 *
 	 *  Two paths drive SCC channel 0 without going anywhere near the
 	 *  ROM: crsr.c's crtty() for a serial console, and conout() below
@@ -1102,17 +1100,16 @@ static coninit()
 	}
 	condev[0] = CD_ROM;		/* whatever the ROM chose	   */
 	ncon = 1;
-	/*  The AUX device (N2) starts on the SAME channel console 1 does --
+	/*  The AUX device starts on the SAME channel console 1 does --
 	 *  the first spare port, 0x0120 on this machine.  That is not two
 	 *  owners of one wire by accident: there is only one spare wire, and
 	 *  which of the two owns it is the program's choice, made with
 	 *  function 28 (`CONDEV(1, CD_NONE)') at the moment a transfer
 	 *  starts.  Binding AUX somewhere else, or nowhere, is function 32.  */
 	auxchan = -1;
-	/*  SCC-B as console 1 at a video console (D8).  Not sccinit(): the
-	 *  ROM configured this line, and it stays polled (CONRAW0).  AUX is
-	 *  not moved: it still starts on the first SPARE channel below, 0x0120,
-	 *  which Kermit and N2 rely on.  */
+	/*  SCC-B as console 1 at a video console.  Not sccinit(): the
+	 *  ROM configured this line, and it stays polled (CONRAW0).  AUX
+	 *  still starts on the first SPARE channel below, 0x0120.  */
 	if (convid && (map & 1) != 0) {
 		condev[ncon] = CD_ROM;		/* channel 0, raw: CONRAW0() */
 		ncon++;
@@ -1222,9 +1219,9 @@ long d1, d2;
 		break;
 
 	/*
-	 * PUNCH and READER, on the AUX line (N2).  With no AUX device
-	 * bound they are what they were before N2: a discard and a
-	 * constant EOF.  READER does not block -- see the AUX banner --
+	 * PUNCH and READER, on the AUX line.  With no AUX device bound
+	 * they are a discard and a constant EOF.
+	 * READER does not block -- see the AUX banner --
 	 * so 0x1A means either the reader's EOF or "nothing yet", and
 	 * function 31 is how a caller tells those apart.
 	 */

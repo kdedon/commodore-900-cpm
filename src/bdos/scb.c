@@ -188,7 +188,7 @@ MLOCAL scbpost()
 
     GBL.column = UBWORD(scbimg[SCB_COLUMN]);
     /*	All four paging bytes are writable.  CP/M 3 documents @CONPAGE
-	and page$mode as read/write (ref/cpm3/scb.asm) and @CONLINE as
+	and page$mode as read/write (scb.asm) and @CONLINE as
 	the driver's own, but v3's func49 has no read-only check at all
 	(bdos30.asm:4716-4725) and a program that wants to start a fresh
 	page by zeroing the line count is doing something reasonable, so

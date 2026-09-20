@@ -10,11 +10,11 @@
 / 	Version 0.2 -- September 22, 1982
 / 	Z8000 version -- 821014
 / 
-/ 	C900 translation (M3) of ref/may83/bdos/bdosif.z8k:
+/ 	C900 translation of DRI's Z8000 bdosif:
 / 	  - Zilog asz8k syntax -> as-z8001 (`;' -> `/' comments,
 / 	    .sect -> .shri, .equ -> `=', #imm -> $imm, @Rn -> (RRn))
 / 	  - symbol convention: Zilog prefix `_foo' -> our SUFFIX `foo_'
-/ 	  - D3: the BDOS->BIOS gate is a DIRECT `call bios_' instead of
+/ 	  - the BDOS->BIOS gate is a DIRECT `call bios_' instead of
 / 	    the SC #3 trap; bios1_..bios6_ re-marshal their C stack args
 / 	    into a plain C call  bios_(func, parm1, parm2)  with
 / 	    (WORD func, LONG parm1, LONG parm2).
@@ -291,7 +291,7 @@ callC:
 /
 	ld	rr14(14), r1
 /
-/	THE DISPATCH POINT (src/bdos/proc.c).  The BDOS has returned, its
+/	THE DISPATCH POINT.  The BDOS has returned, its
 /	answer is in the caller's saved r7, and the frame above rr14 is the
 /	whole of this process's supervisor state -- there is no C frame
 /	left, no lock held and nothing below the SP that matters.  That is
@@ -324,12 +324,12 @@ scret:
 
 /
 / Resident System Extensions: hand this call to the chain instead of to
-/ the BDOS (sys/rsx.c has the whole design; rsxhdr.h has the prefix).
+/ the BDOS.
 /
 / The 8080 does this with a jump: location 0005h points at the newest
 / module, so a program's `call 5' lands in the RSX with the return
 / address already on the caller's stack, and the module returns to the
-/ caller when it is done (ref/cpm3/loader3.asm:276-307).  There is no
+/ caller when it is done.  There is no
 / location 5 here, so the gate manufactures the same situation: it
 / pushes the caller's own return address onto the caller's stack and
 / IRETs to the module's entry instead of to the instruction after the
@@ -340,25 +340,24 @@ scret:
 /
 / Two callers are passed straight to the BDOS:
 /   - a System-mode caller: that is the resident CCP, which reaches the
-/     BDOS by C call anyway (src/bios/seam.c:20) and only arrives here
-/     through the fn-50/62 services above;
-/   - a SPLIT-I/D caller.  Its data references are trapped and rewritten
-/     (Option 6), which an RSX's would not be: the module arrives after
-/     the load and is never scanned, so its own data references would
-/     resolve to the TPA rather than to the D bank.  8080 CP/M 3 has no
-/     split I/D to be faithful to.  DEVIATIONS.md #7 records this one as
-/     structural, and it still is.
+/     BDOS by C call anyway and only arrives here through the fn-50/62
+/     services above;
+/   - a SPLIT-I/D caller.  Its data references are trapped and rewritten,
+/     an RSX's are not: the module arrives after the load and is never
+/     scanned, so its own data references would resolve to the TPA
+/     rather than to the D bank.  8080 CP/M 3 has no split I/D, so this
+/     divergence is structural.
 /
 / THAT SECOND TEST USED TO BE FCW BIT 15, and bit 15 is the SEGMENTED
 / bit, not the split bit.  Non-segmented covers two containers, not one:
-/ 0xEE0B (split I/D) and 0xEE03 (non-segmented, combined I/D --
-/ x.out.h:24,26).  Only the first has the trapped-data-reference problem;
+/ 0xEE0B (split I/D) and 0xEE03 (non-segmented, combined I/D).
+/ Only the first has the trapped-data-reference problem;
 / an 0xEE03 program's data is in the TPA, in the same segment the module
 / occupies.  So the bit test excluded DDT.Z8K, SDB.Z8K and every other
 / stock combined-I/D binary for a reason that does not apply to them, and
-/ what it should have asked is what the LOADER knows: `spflag'
-/ (splitld.c:34, set at pgmld.c:375, per-process and saved across a swap
-/ at proc.c:189,202) is exactly "the loaded program is split I/D".
+/ what it should have asked is what the LOADER knows: `spflag' is
+/ per-process, saved across a swap, and means exactly "the loaded
+/ program is split I/D".
 /
 / Letting an 0xEE03 caller in costs one thing the bit test hid.  The gate
 / hands the module control by IRET with the CALLER'S FCW, so the module
@@ -377,15 +376,13 @@ scret:
 / passing the call down, and that is NOT the same thing as a call for
 / the BDOS.  On the 8080 the module jumps to its own `next' field, which
 / holds the module above it and holds the BDOS only in the last module
-/ of the chain (dirlbl.asm:43-45 `lhld NEXTa ! pchl'; loader3.asm:
-/ 294-300 `fixchain1' is what puts the module above into that field).
+/ of the chain.
 / The gate does that here, once, instead of once per module: it finds
 / the module the return address lies in and dispatches through THAT
 / module's `next' field, so a two-module chain passes down through both
-/ and only the last one reaches the BDOS.  v3's
-/ own version of this test is a module comparing the return address page
-/ with its own (getrsx.asm:198-202); made in the gate it also spares
-/ every module the code and cannot be got wrong per module.
+/ and only the last one reaches the BDOS.  CP/M 3 leaves each module to
+/ compare the return address page with its own; making the test in the
+/ gate spares every module the code and cannot be got wrong per module.
 /
 rsxenter:
 	ld	r1, rr14(30)		/ caller's FCW
@@ -550,11 +547,11 @@ rsxback:
 / {code, P1seg, P1off, P2seg, P2off} in caller memory; marshal the call
 / and return the LONG result in the caller's rr6.
 /
-/ The call goes to bioscl_ (sys/iosys.c), not to bios_: this is a gate
+/ The call goes to bioscl_ (iosys.c), not to bios_: this is a gate
 / for USER programs, and which BIOS functions a user program may reach
 / is policy, written down in one place.  bioscl_ answers 0FFFFFFFFh for
 / a code it refuses.  The system's own BDOS->BIOS traffic is direct-
-/ linked (D3) and the SC #3 gate below is the raw one for stock DRI
+/ linked and the SC #3 gate below is the raw one for stock DRI
 / binaries, so neither of those pays for this.
 /
 bioscall:
@@ -598,7 +595,7 @@ dobios:
 	jr	scret
 
 / SC #3: the BIOS gate -- stock binaries' _bios traps this even though
-/ the system's own BDOS->BIOS traffic is direct-linked (D3)
+/ the system's own BDOS->BIOS traffic is direct-linked
 biosgate:
 	clr	mrtusr_			/ see below; cleared for EVERY caller
 					/   so the flag is never left standing
@@ -613,7 +610,7 @@ biosgate:
 /	DDT.Z8K, asking which segment to relocate itself into.  Tell the
 /	BIOS so, because bios() cannot see who called it and the kernel's
 /	own readers of the same function must not be given a segment out
-/	of the pool (src/bios/bios900.c memtab).
+/	of the pool.
 /
 	cp	r3, $18			/ GMRTA
 	jr	ne, 5f
@@ -655,13 +652,13 @@ setsup:
 
 / ***************************************************
 / 
-/  BIOS Interface Routines		== LIVE M3 CODE ==
+/  BIOS Interface Routines
 / 
 /   Note - there are 6 BIOS entry points from the BDOS,
 / 	labelled BIOS1 - BIOS6, depending on the
 / 	parameters passed.
 / 
-/   D3: each re-marshals its stack arguments and makes a DIRECT
+/   Each re-marshals its stack arguments and makes a DIRECT
 /   call  bios_(func, parm1, parm2)   -- func WORD, parms LONG --
 /   instead of the original register-loaded SC #3.  Word parms are
 /   zero-extended to LONG; missing parms are passed as 0L.  The

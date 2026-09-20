@@ -186,9 +186,9 @@ XADDR xlpbp;
 
 	/*  C900: the magic is a SIXTEEN-BIT quantity and x_magic is a signed
 	    short, so it is masked before it is compared.  On the target int
-	    is sixteen bits and the mask changes nothing; off the target
-	    (tests/xouttest.c runs this loader on the host) a wider int would
-	    sign-extend 0xEE03 and no case below would ever match.  */
+	    is sixteen bits and the mask changes nothing; on the host, where
+	    this loader is also compiled, a wider int would sign-extend
+	    0xEE03 and no case below would ever match.  */
 
 	if ((x_hdr.x_magic & 0xffff) == X_GC_MAGIC) {
 		if ((j = ldrsx((int) x_hdr.x_nseg)) != GOOD)
@@ -319,8 +319,8 @@ XADDR xlpbp;
 		    data segment's limit; this arm never did.  The only
 		    reduction written for a segmented image is loadseg's
 		    X_SG_STK case, and it never runs, because lout2cpm
-		    emits exactly COD, DAT and BSS and no stack segment
-		    (tc/tools/lout2cpm/lout2cpm.c).  So a segmented image
+		    emits exactly COD, DAT and BSS and no stack segment.
+		    So a segmented image
 		    whose text+data+bss reached within 0x200 bytes of the
 		    ceiling was loaded on top of the base page and the
 		    stack that setaddr/setbase were about to write there,

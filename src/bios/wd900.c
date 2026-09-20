@@ -29,9 +29,9 @@
 #define WDCBSEG		0x34		/* window segment over the block */
 #define WDCBPAGE	0x0800		/* phys 0x080000 in 256-byte pages */
 /* The command block's address is a guard-wrapped macro for the same reason
- * crsr.c's VSET is: tests/wdtest.c compiles THIS source on the host with
- * the block pointed at an array, so wdsec()'s retry behaviour can be
- * driven and asserted without a controller (verify-wdbusy). */
+ * crsr.c's VSET is: the host tests compile THIS source with the block
+ * pointed at an array, so wdsec()'s retry behaviour can be driven and
+ * asserted without a controller. */
 #ifndef WDCB
 #define WDCB		((char *)0x34000000L)
 #endif

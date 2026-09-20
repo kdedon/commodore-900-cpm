@@ -189,9 +189,9 @@ MLOCAL UBYTE xfcb_ro;		/* FCB name byte 7 bit 7 preserves an open without its wr
 
 
 UWORD xbdos(func,info,infop)	/* C900: renamed from _bdos -- `bdos' is the
-				   user-facing shim provided at integration
-				   (D3); the trap handler and the shim both
-				   call xbdos */
+				   user-facing shim provided at integration;
+				   the trap handler and the shim both call
+				   xbdos */
 REG WORD func;		/* BDOS function number */
 REG UWORD info;		/* parameter as word */
 REG XADDR infop;	/* parameter as (segmented) pointer */
@@ -686,7 +686,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		      record field names.  The whole of CP/M 3's batch
 		      handling rests on this -- its CCP consumes a submit
 		      file by reading the last record and truncating it
-		      away (ref/cpm3/ccp3.asm:517-537) -- and nothing else
+		      away (ccp3.asm:517-537) -- and nothing else
 		      in this BDOS can shrink a file: close() writes an FCB
 		      back only when it describes a LARGER one.	*/
 	  case 99:  tmp_sel(&temp);		/* truncate file	*/
@@ -742,7 +742,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 
 		  /*  Fn 104 stores the caller's four bytes in @DATE and
 		      pushes them down to the clock, zeroing @SEC on the
-		      way (ref/cpm3/bdos30.asm:5027-5031).  A machine with
+		      way (bdos30.asm:5027-5031).  A machine with
 		      no clock is not an error to the program: the SCB is
 		      still updated, so the time it set is the time this
 		      system stamps with.			*/
@@ -753,7 +753,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 
 		  /*  Fn 105 refreshes @DATE from the clock, copies the
 		      four bytes out and returns BCD seconds
-		      (ref/cpm3/bdos30.asm:5039-5050).  When the clock
+		      (bdos30.asm:5039-5050).  When the clock
 		      does not answer, @DATE keeps whatever function 104
 		      last put there, which is v3's behaviour too.  */
 	  case 105: bdostime(0);
@@ -820,13 +820,12 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 					   is here so that if it ever did,
 					   the next case would not run	*/
 
-		  /*  146/147 Attach and Detach Console -- C10.  A console
-		      has ONE owner and everybody else waits, so 146 is
-		      the only call in this dispatcher that can block on
-		      another PROCESS rather than on a device or on the
-		      clock.  Neither takes a parameter: they act on the
-		      console fn 148 has already chosen.  src/bdos/xdos.c,
-		      and the rule itself is src/bdos/proc.c pconatt().	*/
+		  /*  146/147 Attach and Detach Console.  A console has ONE
+		      owner and everybody else waits, so 146 is the only
+		      call in this dispatcher that can block on another
+		      PROCESS rather than on a device or on the clock.
+		      Neither takes a parameter: they act on the console
+		      fn 148 has already chosen.  The rule is pconatt().  */
 	  case 146: return(xconatt());		/* attach console	*/
 	  case 147: return(xcondet());		/* detach console	*/
 

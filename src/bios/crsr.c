@@ -9,14 +9,14 @@
 #include "romabi.h"
 
 /*
- * `console serial' MUST REACH THE SERIAL LINE (C11).
+ * `console serial' MUST REACH THE SERIAL LINE.
  *
- * The ROM's putchar/puts route by the ROM'S OWN flags (con_alt, con_hires
- * -- romabi.h), not by anything CP/M decided.  On a machine whose ROM
- * believes it is a video console, every byte written through them lands on
- * the SCREEN however bi_console was set: the owner booted a `console
- * serial' medium, CP/M chose serial (ck=0000), the A> prompt worked, and
- * all of it came out on the LR display.  D8 recorded this as an open item.
+ * The ROM's putchar/puts route by the ROM'S OWN flags (con_alt,
+ * con_hires), not by anything CP/M decided.  On a machine whose ROM
+ * believes it is a video console, every byte written through them lands
+ * on the SCREEN however bi_console was set -- boot a `console serial'
+ * medium and CP/M picks serial, the A> prompt works, and all of it comes
+ * out on the LR display.
  *
  * So a serial console is written by us, straight to SCC channel B -- the
  * same line, and the same two registers, conpoll() in bios900.c already
@@ -24,8 +24,8 @@
  * is correct for them.  Every byte crsr.c emits goes through crtty(), so
  * redefining the two macros here covers the whole file at one point.
  *
- * CRSHOST is the host state-machine harness (tests/crsrtest.c, verify-crsr)
- * which has no I/O ports and supplies its own putchar; it keeps both.
+ * CRSHOST is the host state-machine harness, which has no I/O ports and
+ * supplies its own putchar; it keeps both.
  */
 #ifndef CRSHOST
 #undef	putchar
@@ -49,7 +49,7 @@ extern outb();
 
 /*
  * Screen access, as two macros so that the state machine below can be
- * compiled and driven on the host (host/crsrtest.c overrides both).
+ * compiled and driven on the host, which overrides both.
  *
  * A character cell is a 16-bit word at byte offset row*0xA0 + col*2 of
  * logical segment 0x3a; the ROM byte-writes the character at the cell's
@@ -65,9 +65,8 @@ extern outb();
 #endif
 /*
  * Block move inside the character plane, for cellscroll().  The ROM's
- * own LDIRB thunk does 3,840 bytes in one instruction
- * (firmware/rom_source/diag_runtime_re.c:84-96, [EXACT]; its frame order
- * is (src, dst, len), which is what romabi.h's macro spells).  The host
+ * own LDIRB thunk does 3,840 bytes in one instruction; its frame order
+ * is (src, dst, len), which is what romabi.h's macro spells.  The host
  * harness overrides it with memmove.
  */
 #ifndef VMOVE
@@ -92,18 +91,18 @@ static int ckind;
  * a dead line costs a fixed number of INs and never wedges the boot.
  */
 /*
- * IS THE ROM ITSELF ON THE SERIAL LINE? (C12)
+ * IS THE ROM ITSELF ON THE SERIAL LINE?
  *
- * The ROM picks its console before we run and records it in two flags
- * (romabi.h): con_alt for the LR text console, con_hires for HR.  Both
+ * The ROM picks its console before we run and records it in two flags:
+ * con_alt for the LR text console, con_hires for HR.  Both
  * clear means the ROM is talking to the SCC -- and therefore that the ROM
  * PROGRAMMED the SCC, baud and all.  Either set means the ROM is on a
  * video board and has no reason ever to have touched the serial channel.
  *
  * This is NOT the same question as `which console did CP/M choose'.  A
  * `console serial' medium makes CP/M choose serial (ckind == CK_SER) on a
- * machine whose ROM is still a video console, which is exactly the owner's
- * failing case: CP/M drives a channel nobody initialised.  convid cannot
+ * machine whose ROM is still a video console, and then CP/M drives a
+ * channel nobody initialised.  convid cannot
  * tell the two apart -- it is 0 for both -- so bios900.c asks here.
  */
 crsromser()
@@ -216,9 +215,8 @@ int ch;
 /*
  * Current cursor, from the ROM's own saved state.  Both halves are masked
  * rather than simply cast: int is 16 bits on the target and the cast alone
- * would do it, but the same source is compiled on the host
- * (host/crsrtest.c) where int is 32 bits and an unmasked cast would leave
- * the row sitting in the column.
+ * would do it, but the same source is compiled on the host, where int is
+ * 32 bits and an unmasked cast would leave the row sitting in the column.
  */
 static vrow()
 {
@@ -610,9 +608,9 @@ int c;
 }
 
 /*
- * crsmode() is the seam the host-side state-machine test drives
- * (host/crsrtest.c), which is why the console decision is a separate
- * function from the probe below.
+ * crsmode() is the seam the host-side state-machine test drives, which
+ * is why the console decision is a separate function from the probe
+ * below.
  */
 crsmode(k)
 int k;
@@ -642,13 +640,13 @@ extern int mapseg();
 /*
  * vprobe(base) -- is there framebuffer RAM at physical base<<8?
  *
- * COHERENT's vprobe (commodore-900-coherent src/kernel/z8001/src/md.s
- * 1140-1170): map a scratch segment onto the framebuffer's base, save the
- * word at offset 0, write and read back 0x55AA, then its complement
- * 0xAA55, and restore the word on either exit.  Both patterns must survive.
+ * COHERENT's vprobe: map a scratch segment onto the framebuffer's base,
+ * save the word at offset 0, write and read back 0x55AA, then its
+ * complement 0xAA55, and restore the word on either exit.  Both patterns
+ * must survive.
  *
- * ONE ADDITION, for an undecoded bus.  md.s relies on "undecoded reads
- * return garbage on this machine" (md.s:1120-1121).  If instead the bus
+ * ONE ADDITION, for an undecoded bus.  COHERENT relies on undecoded reads
+ * returning garbage.  If instead the bus
  * floated and held the last value driven onto it, a read straight after a
  * write would echo the pattern and pass.  So each write at offset 0 is
  * followed by a write of the OTHER pattern at offset 2 before offset 0 is
@@ -663,9 +661,9 @@ int base;
 	unsigned s0, s2, r0, r2;
 	int hit;
 
-	mapseg(VPROBESEG, base, 0x02);		/* md.s:1147-1150 */
+	mapseg(VPROBESEG, base, 0x02);
 	p = (unsigned *)VPROBEADDR;
-	s0 = p[0];				/* md.s:1152 */
+	s0 = p[0];
 	s2 = p[1];
 	p[0] = 0x55AA;
 	p[1] = 0xAA55;
@@ -673,21 +671,21 @@ int base;
 	r2 = p[1];
 	hit = (r0 == 0x55AA && r2 == 0xAA55);
 	if (hit) {
-		p[0] = 0xAA55;			/* md.s:1158-1162 */
+		p[0] = 0xAA55;
 		p[1] = 0x55AA;
 		r0 = p[0];
 		r2 = p[1];
 		hit = (r0 == 0xAA55 && r2 == 0x55AA);
 	}
-	p[0] = s0;				/* md.s:1163,1167 */
+	p[0] = s0;
 	p[1] = s2;
 	mapseg(VPROBESEG, VPROBEHOME, 0x02);
 	return (hit);
 }
 
 /*
- * crsinit(bicon) -- choose console 0, never from the ROM's con_alt/con_hires
- * flags (owner decisions, 2026-09-15: D8, then K2).
+ * crsinit(bicon) -- choose console 0, never from the ROM's
+ * con_alt/con_hires flags.
  *
  *   BI_CON_SER			serial   } kboot DECIDED (its own probe, or
  *   BI_CON_LR			low-res  } the entry's `console serial'):
@@ -695,7 +693,7 @@ int base;
  *
  *   BI_CON_ANY, BI_CON_VID,	FALLBACK: nobody decided, so probe HR,
  *   a value not known here,	then the text framebuffer, as COHERENT's
- *   no v3 handoff, or none	vidsel does (md.s:1124-1138); serial if
+ *   no v3 handoff, or none	vidsel does; serial if
  *				neither answers.  This is how CP/M comes up
  *				from a loader that says nothing, or none.
  *

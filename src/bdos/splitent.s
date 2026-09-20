@@ -23,8 +23,8 @@
 /	module rebuildable without relinking CPM.SYS -- the `ld -k'
 /	staleness trap, avoided by construction rather than by rule.
 /
-/	The offsets are asserted after every module link (host/
-/	mkblob.py): a link that moves them fails the build.
+/	The offsets are asserted after every module link: a link that
+/	moves them fails the build.
 /
 /	The three words at the end are live state, not constants:
 /	sptop_ is written by the scanner and read by the resident

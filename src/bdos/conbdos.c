@@ -17,7 +17,7 @@ EXTERN WORD	pyield();	/* give the machine away (src/bdos/proc.c) */
 EXTERN WORD	pwait();	/* block on a reason, then give it away	*/
 EXTERN WORD	proccnt();	/* how many processes are live		*/
 EXTERN WORD	pconatt();	/* claim this console, blocking until its
-				   owner detaches (C10, src/bdos/proc.c) */
+				   owner detaches (proc.c)		*/
 EXTERN WORD	pconmine();	/* ...and may I take a character off it
 				   without claiming it?			*/
 
@@ -403,13 +403,9 @@ REG UBYTE *p;
 /* The character control block is {address, length}.    */
 /*						       */
 /* The characters are pulled across PRTBCHUNK at a     */
-/* time and handed on as runs.  It used to be one      */
-/* cpy_bi() -- a mem_cpy() call -- per byte, which is  */
-/* the falsifier CONSOLE-DRIVER-DESIGN.md 7/0b names   */
-/* for the function 111 path: the per-byte copy in     */
-/* costs what the batching saves.  uprt_line() had     */
-/* already been chunked for the same reason; this is   */
-/* the same fix, with the same chunk size.	       */
+/* time and handed on as runs.  One cpy_bi() per byte  */
+/* costs as much as the batching saves, so the chunk   */
+/* size matches uprt_line()'s.			       */
 /* C900 deviation: the address is a 32-bit XADDR, since */
 /* that is what a pointer is here -- the 8080 form is   */
 /* two bytes.  Length stays a word.		       */

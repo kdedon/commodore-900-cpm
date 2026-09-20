@@ -31,7 +31,7 @@ XVNPROC	=	6			/ rows in xvec (bios900.c XVNPROC)
 
 / EPU trap.  Every stock DRI binary's runtime startup executes Z8070
 / extended instructions (fldctl/fldil FP-state init, startup.8kn); the M20
-/ handled them with the FPE emulator, which this port excludes (plan D1).
+/ handled them with its floating-point emulator, which this port excludes.
 / Policy: a genuine EPA opcode (high byte 0E/0F/4E/4F/8E/8F) with no
 / recorded FPE vector (slot 1) is skipped -- the hardware pushes the PC
 / past the whole instruction, so a plain dismiss resumes after it and FP

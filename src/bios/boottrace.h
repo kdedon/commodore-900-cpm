@@ -23,7 +23,6 @@
  * default build: `make cpmtrace' recurses with its own OBJDIR and DEFS
  * and writes build/cpmtrace.bin, leaving build/cpm.sys and
  * build/cpmonly.bin byte-identical to what `make all' produces.
- * Markers are listed in docs/run/D3.md.
  */
 #ifndef BOOTTRACE_H
 #define BOOTTRACE_H

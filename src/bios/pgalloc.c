@@ -83,8 +83,8 @@ int seg;
 
 /*
  * How many slots a ROM report of [bram, eram) clicks can back.  Split
- * from pginit() so that tests/pgtest.c can run the arithmetic for RAM
- * sizes the emulator cannot be given.
+ * from pginit() so the arithmetic can be exercised for RAM sizes no
+ * real machine here has.
  */
 int pgsize(bram, eram)
 unsigned bram, eram;

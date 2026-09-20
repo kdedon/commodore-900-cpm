@@ -4,9 +4,8 @@
  */
 /*
  * romabi.h -- stock C900 boot-ROM entry points the CP/M BIOS reuses.
- * Trimmed from coherent/boot/src/romabi.h (kboot), which documents the
- * full surface; confirmed against ~/git/C900/firmware/bios_disassembly.txt
- * and firmware/rom_source/.
+ * Trimmed from kboot's romabi.h, which documents the full surface, and
+ * confirmed against a disassembly of the ROM.
  *
  * The ROM is MWC-Coherent-C for the Z8001 -- same stack-arg / R1-return
  * convention as our cc -- so a segmented indirect call through a far
@@ -32,13 +31,12 @@
 /*
  * Local keyboard (Z8036 CIO #1, port A = scancode).  The ROM does NOT
  * initialize it at reset: its kbd_init (0x3ed4) runs lazily inside the
- * ROM's own getchar(), behind a once-only flag at 01:041c, and CP/M never
- * calls getchar (docs/run/D5.md in c900oses).  The BIOS therefore does not
- * use these ROM calls; kbd900.h replaces them.  kbd_poll is NON-blocking:
- * raw scancode or 0.  kbd_decode maps a raw scancode to ASCII (0 for
- * key-up/modifier-only events; bit7 of the raw code = key-up), tracking
- * shift/ctrl/alt/caps/num in seg-1 state.
- * See ~/git/C900/firmware/rom_source/keyboard_re.c.
+ * ROM's own getchar(), behind a once-only flag at 01:041c, and CP/M
+ * never calls getchar.  The BIOS therefore does not use these ROM calls;
+ * kbd900.h replaces them.  kbd_poll is NON-blocking: raw scancode or 0.
+ * kbd_decode maps a raw scancode to ASCII (0 for key-up/modifier-only
+ * events; bit7 of the raw code = key-up), tracking shift/ctrl/alt/caps/
+ * num in seg-1 state.
  */
 #define ROM_KBDPOLL	0x3f1e
 #define ROM_KBDDECODE	0x3f62
@@ -62,9 +60,8 @@
 /*
  * The video drivers' saved cursor, RR12 parked between calls: row in the
  * high word and column in the low word for the 6845 character driver
- * BvidCHR, a segmented framebuffer pointer for the bitmap driver AvidCHR
- * (~/git/C900/firmware/rom_source/display_re.c:52-59).  src/crsr.c writes
- * it to position the cursor.
+ * BvidCHR, a segmented framebuffer pointer for the bitmap driver AvidCHR.
+ * crsr.c writes it to position the cursor.
  */
 #define ROMV_SCRSTATE	0x01000614L	/* long: video cursor state */
 

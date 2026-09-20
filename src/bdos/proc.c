@@ -612,8 +612,8 @@ WORD	con, sess;
 	kid->pd_seg   = seg;		/* its image is parked on seg	*/
 	kid->pd_con   = (con < 0 ? me->pd_con : con);
 	kid->pd_chome = kid->pd_con;	/* where it belongs, which is where
-					   it starts and never moves: C10,
-					   proc.h and procdead()	*/
+					   it starts and never moves; see
+					   procdead()			*/
 	kid->pd_sess  = sess;
 	for (i = 0; i < 8; i++)
 		kid->pd_name[i] = pq.pq_fcb[1 + i];	/* the FCB's name field,
@@ -682,8 +682,8 @@ WORD	con;
 
 
 /* Start the cold boot's ONE extra session: on the console bound to SCC-B,
- * and only when console 0 is video (BIOS function 33 decides; D8, the
- * owner's decision following COHERENT's /etc/ttys).  A serial operator gets
+ * and only when console 0 is video (BIOS function 33 decides), following
+ * COHERENT's /etc/ttys.  A serial operator gets
  * none.  Other bound consoles get nothing automatically; SESSION n still
  * reaches them.  Insufficient memory or a missing CCP leaves no session. */
 

@@ -7,19 +7,12 @@
  *
  * Code, not declarations: a header so that one copy is #included by
  * bios900.c, in place of the ROM's kbd_poll (0x3f1e) and kbd_decode
- * (0x3f62), and compiled on the host by tests/kbdtest.c, which checks it
- * against COHERENT's own driver.
+ * (0x3f62), and compiled on the host by the tests.
  *
- * The reference is COHERENT's Commodore 900 keyboard driver, not the ROM
- * reverse engineering.  (docs/run/D6.md in c900oses records where the RE
- * and COHERENT disagree.)
- *   init, ack   commodore-900-coherent  src/kernel/z8001/drv/hrtty/kb.c
- *               kbinit() :60-96, kbintend() :387-398; lrtty/ is identical
- *   decode      commodore-900-coh-kernel3  os/sys/z8001/rec/kb.c kbintr()
- *               :189-263, the original C900 driver: arrows as ESC A/D/C/B
- *   table       the same tree's rec/kbtab.c, compiled on the host and
- *               dumped; the rows below are that dump, unedited
- *   bound       hrtty/kb.c:299 (a code past the table is dropped)
+ * Behaviour follows COHERENT's Commodore 900 keyboard driver rather than
+ * the ROM: its init and acknowledge sequences, its decode with arrows as
+ * ESC A/D/C/B, and its scancode table dumped verbatim into the rows
+ * below.  A code past the end of the table is dropped.
  *
  * COHERENT takes the port A pattern-match interrupt (vector 8).  The BIOS
  * polls the same interrupt-pending bit instead.  So kbdinit() writes
@@ -180,9 +173,9 @@ static unsigned char kbtab[] = {
 	0x20,0xe4,0xe4,0xe4,	/* SC63 */
 	0x20,0xe5,0xe5,0xe5	/* SC64 */
 };
-#define KB_NKEY		0x65	/* rows above; tests/kbdtest.c checks it */
+#define KB_NKEY		0x65	/* rows above				*/
 
-/* rec/kb.c:51 kbcurs[], indexed by CUP CLEFT CRIGHT CDOWN (0x80-0x83) */
+/* cursor keys, indexed by CUP CLEFT CRIGHT CDOWN (0x80-0x83) */
 static char kbcurs[] = { 'A', 'D', 'C', 'B' };
 
 static int kbstate;		/* kbsstate: KS_ bits held		*/

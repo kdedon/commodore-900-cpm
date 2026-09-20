@@ -4,7 +4,7 @@
  */
 /* Fixed RSX prefix. Entries and links are 16-bit TPA offsets.
  * org and len describe a fixed-address image; there is no relocation.
- * Layout derives from the CP/M 3 prefix (ref/cpm3/getrsx.asm). */
+ * Layout derives from the CP/M 3 prefix (getrsx.asm). */
 
 #define	RSXMAGIC	0x5253		/* 'RS' at prefix offset 8	*/
 #define	RSXNAMELEN	8

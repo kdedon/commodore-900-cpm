@@ -100,7 +100,7 @@ VOID __LOAD()
     previous command's bytes.  A stock tool that scans the tail for a
     terminator rather than trusting the length byte reads them: STAT saw
     `STAT HELLO.TXT' as two arguments and printed the SET form of its
-    output.  Caught by `make verify-set'.	*/
+    output.	*/
 
 	for (i = tlen; i < SV_CMDLEN; i++)
 		CCPSV->sv_ptail[i] = NULL;

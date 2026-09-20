@@ -66,9 +66,8 @@ pnspget_:
 / SET -- so without this, a tick landing on `ld r0, rr2(34)' would call
 / pdisp(), which copies the interrupted frame into pd[pcur].pd_f, which
 / is THE VERY STRUCTURE rr2 is pointing at.  The resumed process would
-/ then IRET back into the middle of presume_ forever.  `make
-/ verify-concdir' found it on the first suite run and looked like a
-/ machine that had gone quiet.  The IRET at the end restores the resumed
+/ then IRET back into the middle of presume_ forever, which looks like a
+/ machine gone quiet.  The IRET at the end restores the resumed
 / process's own FCW, so nothing has to turn interrupts back on.
 presume_:
 	di	VI
@@ -98,8 +97,8 @@ presume_:
 					/   before r2/r3 are overwritten)
 	iret				/ -> the other process, mid-BDOS-return
 
-/ pcopark(slotp)  LONG slotp;  -- PARK THE CALLING PROCESS MID-CALL, which
-/ is the whole of what S4 adds to the switch.  Never returns to its caller
+/ pcopark(slotp)  LONG slotp;  -- PARK THE CALLING PROCESS MID-CALL.
+/ Never returns to its caller
 / here and now; it returns to its caller LATER, when pcoresume_ gives this
 / process the machine back, and to the C code in between it looks like an
 / ordinary function call that took a very long time.

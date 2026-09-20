@@ -51,9 +51,9 @@ unsigned tickper;		/* the time constant actually programmed */
 
 /*
  * The time constant for a 100 Hz tick on this machine.  A ROM pointer
- * that does not name segment 1 is not the ROM's, so the 6 MHz value is
- * used rather than a byte read from somewhere unknown -- 6 MHz is what
- * the emulator models and the commoner machine.
+ * that does not name segment 1 is not the ROM's, so the 6 MHz value --
+ * the commoner machine -- is used rather than a byte read from
+ * somewhere unknown.
  */
 static unsigned tickconst()
 {

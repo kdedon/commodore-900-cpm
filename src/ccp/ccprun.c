@@ -111,7 +111,7 @@ struct context	context =
 /*  The CCP's own FCB.  Drive 1 is A:, and the CCP is looked for there
     and nowhere else -- v3 says the same thing in a comment, "load the
     CCP from a file called CCP.COM on the system drive (A:)"
-    (`ref/cpm3/boot.asm:41-42').  User zero: the load happens with the
+    (`boot.asm:41-42').  User zero: the load happens with the
     BDOS user code forced to 0 below, because a session left in user 5
     must still find its command processor.  */
 
@@ -171,7 +171,7 @@ MLOCAL VOID svstore()			/* sv -> resident state		*/
 **		A warm boot here would reload the CCP,
 **		which is the thing that just failed.
 **		v3 has the same dead end -- `no$CCP'
-**		(ref/cpm3/boot.asm:71-74).
+**		(boot.asm:71-74).
 **
 ****************************************************/
 

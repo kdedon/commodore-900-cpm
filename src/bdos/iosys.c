@@ -98,10 +98,10 @@ LONG	p1, p2;			/* its two LONG parameters		*/
 	case 25:		/* SEGMENT -- likewise, for 64 KB	*/
 	case 29:		/* CONCNT -- how many consoles exist	*/
 	case 30:		/* CONRX -- ring or polled receive	*/
-	case 24:		/* TICK -- see the table (N2)		*/
-	case 28:		/* CONDEV -- see the table (N2)		*/
-	case 31:		/* AUXIST -- see the table (N2)		*/
-	case 32:		/* AUXDEV -- see the table (N2)		*/
+	case 24:		/* TICK -- see the table		*/
+	case 28:		/* CONDEV -- see the table		*/
+	case 31:		/* AUXIST -- see the table		*/
+	case 32:		/* AUXDEV -- see the table		*/
 		return( bios(code, p1, p2) );
     }
     return(0xffffffffL);	/* refused -- see the table above */

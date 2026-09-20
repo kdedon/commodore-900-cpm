@@ -72,9 +72,8 @@ long v;
 }
 
 /*
- * Expected content of logical record `rec' per tools/mksig.py: each
- * 128-byte record starts "CPMA", 32-bit record number, 32-bit complement,
- * then zeros.
+ * Expected content of logical record `rec': each 128-byte record starts
+ * "CPMA", 32-bit record number, 32-bit complement, then zeros.
  */
 static mkexp(rec, bp)
 long rec;
