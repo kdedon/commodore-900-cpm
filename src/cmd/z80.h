@@ -256,7 +256,8 @@ extern int z80ww();		/* (m, addr, v)				*/
 /* .COM loader							       */
 
 /* The loader places a .COM at 0x100, builds page zero and hook stubs,
- * and identifies/refuses GENCOM RSX headers (leading 0xc9). */
+ * and, for a GENCOM-bound image (leading 0xc9), relocates its RSX
+ * modules into the pages below the furniture and chains them. */
 
 #define COM_ORG		0x0100	/* where a .COM loads and starts	*/
 #define COM_REC		128	/* a CP/M record; .COM files are padded	*/
@@ -323,8 +324,11 @@ extern int z80ww();		/* (m, addr, v)				*/
 #define CL_OK		0
 #define CL_EMPTY	1	/* a zero-length file			*/
 #define CL_BIG		2	/* the image does not fit under GUESTTOP */
-#define CL_RSX		3	/* K1: a GENCOM-bound .COM with an RSX	*/
+#define CL_RSX		3	/* a GENCOM-bound .COM whose RSXes ran	*/
+				/* off the end of the file		*/
 #define CL_NOTCOM	4	/* the first byte cannot begin a program	*/
+#define CL_RSXFIT	5	/* a named RSX will not fit below the	*/
+				/* furniture and above the .COM half	*/
 
 extern int z80load();		/* place an image and build page zero	*/
 extern char *z80lerr();		/* the refusal text for a CL_* code	*/
@@ -351,6 +355,46 @@ struct comrsx {
 };
 
 extern int z80rsxhdr();		/* parse a 0xC9 prefix; 0 if not one	*/
+
+/* Each descriptor names a PRL module: `len' bytes of image, then a
+ * relocation bitmap of ceil(len/8) bytes, one bit per image byte, most
+ * significant bit first.  The image is linked at 0x0100 -- NOT at zero:
+ * every relocated high byte in the five bound programs lies in 0x01 to
+ * 0x05 for a module of 0x0440 bytes, which is 0x0100 to 0x0540 -- so the
+ * bias added to a marked byte is the destination page MINUS ONE
+ * (loader3.asm reloc: `mov e,d / dcr e ... base address is now 100h'). */
+#define RSX_BITS	8	/* image bytes per byte of bitmap	*/
+
+/* The module's own prefix, DRI's (loader3.asm:71-77 and its own header
+ * at :112).  A module is placed on a page boundary so that base + ENTRY
+ * is its entry JMP and only the PAGE of an address has to be patched;
+ * that is why NEXT's low byte is the constant 6 and why the BDOS entry
+ * itself sits six bytes above a page boundary. */
+#define RSXP_SERIAL	0x00	/* six bytes; a serial number on real CP/M */
+#define RSXP_ENTRY	0x06	/* JMP into the module			*/
+#define RSXP_NEXT	0x09	/* JMP to the next link in the chain	*/
+#define RSXP_NEXTLO	0x0a
+#define RSXP_NEXTHI	0x0b
+#define RSXP_PREV	0x0c	/* ADDRESS of the previous link's NEXTHI */
+#define RSXP_WARM	0x0e	/* 0xFF: remove me on warm boot		*/
+#define RSXP_NBANK	0x0f
+#define RSXP_NAME	0x10	/* eight blank-padded characters	*/
+#define RSXP_END	0x18	/* 0xFF only in DRI's own LOADER module	*/
+#define RSXP_LEN	0x1b
+
+/* PREV is 0x0007 in a module that heads the chain, and the 7 is exact:
+ * page zero's `JMP 0005' has its address field at 0x0006, so writing the
+ * next link's page at 0x0007 and a 6 at 0x0006 re-points the BDOS vector
+ * with the same two stores that re-point any other link.  Removal
+ * therefore needs no special case for the head (loader3.asm remove:). */
+#define RSX_HEADPREV	0x0007
+
+extern int z80rsxwboot();	/* unlink the modules flagged for it	*/
+extern z16 z80rsxbase[RSX_NDESC];   /* where each module was placed	*/
+extern int z80nrsx;		/* how many were placed			*/
+extern int z80rsxonly;		/* the .COM half is a bare RET		*/
+extern z16 z80rsxtop;		/* the top of the TPA the guest is left	*/
+extern char z80rsxwho[9];	/* the module a CL_RSXFIT refusal names	*/
 
 /*
  * The loader's four entry points, with their arguments, because K&R

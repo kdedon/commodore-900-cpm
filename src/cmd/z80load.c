@@ -4,7 +4,8 @@
  */
 /* CP/M-80 .COM loader and guest environment. Load the image at 0x100,
  * build page zero and the fake BDOS/BIOS tables, and initialize registers.
- * GENCOM-bound images are identified by their 0xc9 header and refused. */
+ * A GENCOM-bound image is identified by its 0xc9 header; its RSX modules
+ * are relocated into the pages below the furniture and chained. */
 
 #include "z80.h"
 
@@ -150,6 +151,168 @@ struct comrsx *r;
 }
 
 /* ------------------------------------------------------------------ */
+/* the RSX chain						       */
+
+z16 z80rsxbase[RSX_NDESC];
+int z80nrsx;
+int z80rsxonly;
+z16 z80rsxtop;
+char z80rsxwho[9];
+
+/*
+ * rsxplace -- copy one PRL module to `dest', relocate it, and make it
+ * the head of the chain.
+ *
+ * `dest' is a page boundary, because the whole chain is addressed by
+ * page: a link holds only the PAGE of the link below it and pairs it
+ * with the constant 6, which is the offset of the entry JMP in every
+ * prefix and of the entry itself in the BDOS above them.
+ *
+ * The bitmap follows the image and carries one bit per image byte, most
+ * significant bit first; a marked byte is the HIGH half of an address
+ * and takes the bias.  The bias is the destination page less one and not
+ * the destination page, because a PRL module is linked at 0x0100 --
+ * loader3.asm's relocator says so (`dcr e ... base address is now 100h')
+ * and the five bound programs agree: for a module of 0x0440 bytes every
+ * marked byte holds 0x01 through 0x05, never 0x00.
+ */
+static int rsxplace(mem, img, off, len, dest)
+char *mem, *img;
+long off, len;
+z16 dest;
+{
+	register long k;
+	long map;
+	int bias, head, b;
+
+	map = off + len;
+	bias = (int)((dest >> 8) & 0xff) - 1;
+	for (k = 0; k < len; k++) {
+		b = img[off + k] & 0xff;
+		if (img[map + k / RSX_BITS] & (0x80 >> (int)(k % RSX_BITS)))
+			b = (b + bias) & 0xff;
+		mem[(z16)(dest + k)] = (char)b;
+	}
+
+	/* The chain head is whatever the BDOS vector points at now: the
+	 * BDOS hook itself for the first module, the module before it for
+	 * the rest.  Both are a page plus 6, so one store each way links
+	 * them (loader3.asm fixchain). */
+	head = (mem[PZ_BDOS + 2] & 0xff) << 8;
+
+	/* Six bytes of serial number on a real CP/M.  We have none, and a
+	 * module that read them would read our exit stub, so they are
+	 * zeroed rather than copied down from the link above. */
+	for (k = 0; k < 6; k++)
+		pb(mem, (int)(dest + RSXP_SERIAL + k), 0);
+	pb(mem, dest + RSXP_END, 0);
+	pb(mem, dest + RSXP_PREV, RSX_HEADPREV & 0xff);
+	pb(mem, dest + RSXP_PREV + 1, (RSX_HEADPREV >> 8) & 0xff);
+
+	/* The link above chains back to our NEXT field's high byte, which
+	 * is the address removal will store a page into. */
+	pb(mem, head + RSXP_PREV, RSXP_NEXTHI);
+	pb(mem, head + RSXP_PREV + 1, (dest >> 8) & 0xff);
+
+	pb(mem, dest + RSXP_NEXTLO, RSXP_ENTRY);
+	pb(mem, dest + RSXP_NEXTHI, (head >> 8) & 0xff);
+
+	/* The BDOS vector now names us, so `CALL 5' enters this module and
+	 * `LHLD 6' answers a TPA ending where we begin. */
+	pjmp(mem, PZ_BDOS, (z16)(dest + RSXP_ENTRY));
+	return (0);
+}
+
+/*
+ * rsxload -- place every module a GENCOM-bound image declares.
+ *
+ * Each goes in the pages directly below the link above it, which for the
+ * first module is the page GUESTTOP begins: FAKEDPB, FAKEALV, the BIOS
+ * table and the SCB image are all above GUESTTOP and stay there.  The
+ * floor is the end of the .COM half, and a module that will not fit
+ * between the two is refused by name rather than written over a program.
+ */
+static int rsxload(mem, img, n, r)
+char *mem, *img;
+long n;
+struct comrsx *r;
+{
+	register int i, k;
+	long off, len, end, head;
+	z16 dest;
+	int pages;
+
+	for (i = 0; i < r->n; i++) {
+		off = (long)r->off[i];
+		len = (long)r->len[i];
+		if (len == 0)
+			continue;
+		end = off + len + (len + RSX_BITS - 1) / RSX_BITS;
+		if (off < (long)RSX_HDRLEN || end > n)
+			return (CL_RSX);
+		head = (long)(mem[PZ_BDOS + 2] & 0xff) << 8;
+		pages = (int)((len - 1) / 256) + 1;
+		if (head < (long)pages * 256
+		 || head - (long)pages * 256
+			< (long)COM_ORG + (long)r->comlen) {
+			for (k = 0; k < 9; k++)
+				z80rsxwho[k] = r->name[i][k];
+			return (CL_RSXFIT);
+		}
+		dest = (z16)(head - (long)pages * 256);
+		rsxplace(mem, img, off, len, dest);
+		z80rsxbase[z80nrsx++] = dest;
+		z80rsxtop = dest;
+	}
+	return (CL_OK);
+}
+
+/*
+ * z80rsxwboot -- the warm-boot half of the chain's life.
+ *
+ * Walk it from the head and unlink every module whose remove flag is
+ * 0xFF, which is what the CCP does on every warm start (loader3.asm
+ * rsx$chain).  The memory is not reclaimed: the links above and below a
+ * removed module simply stop naming it, and the BDOS vector rises again
+ * when the head goes.  Returns the number removed.
+ *
+ * DRI's walk stops on its own LOADER module's flag at RSXP_END; ours
+ * stops on the BDOS page, because that is what our chain ends at.
+ */
+int z80rsxwboot(m)
+struct z80 *m;
+{
+	register char *mem;
+	register int cur, nxt;
+	int prev, gone, k;
+
+	mem = m->m;
+	gone = 0;
+	cur = (mem[PZ_BDOS + 2] & 0xff) << 8;
+	for (k = 0; k <= RSX_NDESC; k++) {
+		if ((cur >> 8) == (GUESTTOP >> 8))
+			break;
+		nxt = (mem[(z16)(cur + RSXP_NEXTHI)] & 0xff) << 8;
+		if ((mem[(z16)(cur + RSXP_WARM)] & 0xff) == 0xff) {
+			prev = (mem[(z16)(cur + RSXP_PREV)] & 0xff)
+			     | ((mem[(z16)(cur + RSXP_PREV + 1)] & 0xff) << 8);
+			/* PREV addresses a high byte, and its low
+			 * neighbour is the 6 that goes with it.  For the
+			 * head that pair is 0x0007 and 0x0006, so page
+			 * zero's BDOS vector is re-pointed by the same
+			 * two stores as any other link. */
+			pb(mem, prev, (nxt >> 8) & 0xff);
+			pb(mem, prev - 1, RSXP_ENTRY);
+			pb(mem, nxt + RSXP_PREV, prev & 0xff);
+			pb(mem, nxt + RSXP_PREV + 1, (prev >> 8) & 0xff);
+			gone++;
+		}
+		cur = nxt;
+	}
+	return (gone);
+}
+
+/* ------------------------------------------------------------------ */
 /* the command tail and the two default FCBs			       */
 
 /*
@@ -268,12 +431,26 @@ char *tail;
 char *z80lerr(e)
 int e;
 {
+	static char fit[64];
+	static char pre[] = "this RSX does not fit under the TPA ceiling: ";
+	register int i, k;
+
 	switch (e) {
 	case CL_OK:	return ("ok");
 	case CL_EMPTY:	return ("the file is empty");
 	case CL_BIG:	return ("the image does not fit under the TPA ceiling");
-	case CL_RSX:	return ("a GENCOM-bound .COM: it carries RSXes stage one does not load");
+	case CL_RSX:	return ("a GENCOM-bound .COM whose RSX runs off the end of the file");
 	case CL_NOTCOM:	return ("the first byte is 00 or FF: this file was never written");
+	case CL_RSXFIT:
+		/* Built by hand rather than with sprintf(): this file is
+		 * compiled for the target as well, where the loader has no
+		 * business dragging in stdio. */
+		for (i = 0; pre[i] != '\0'; i++)
+			fit[i] = pre[i];
+		for (k = 0; k < 8 && z80rsxwho[k] != '\0'; k++)
+			fit[i++] = z80rsxwho[k];
+		fit[i] = '\0';
+		return (fit);
 	}
 	return ("unknown");
 }
@@ -293,6 +470,8 @@ char *mem, *img;
 long n;
 {
 	register long i;
+	long len;
+	int e;
 	struct comrsx r;
 
 	for (i = 0; i < 4; i++)
@@ -318,33 +497,57 @@ long n;
 	for (i = 0; i < 0x10000L; i++)
 		mem[i] = 0;
 
+	z80nrsx = 0;
+	z80rsxonly = 0;
+	z80rsxtop = GUESTTOP;
+	z80rsxwho[0] = '\0';
+
 	if (n <= 0)
 		return (CL_EMPTY);
-	if ((img[0] & 0xff) == 0xc9) {
-		/* Parse the GENCOM header for diagnostics; RSX relocation, chaining,
-		 * and lifecycle support are not implemented. */
-		z80rsxhdr(img, n, &r);
-		return (CL_RSX);
+	if (z80rsxhdr(img, n, &r)) {
+		/* The .COM half is comlen bytes behind the header record,
+		 * and comlen is the field to trust: what follows it is the
+		 * first RSX, not more program. */
+		z80rsxonly = r.rsxonly;
+		len = (long)r.comlen;
+		if (len > n - (long)RSX_HDRLEN)
+			len = n - (long)RSX_HDRLEN;
+		if ((long)COM_ORG + len > (long)GUESTTOP)
+			return (CL_BIG);
+		for (i = 0; i < len; i++)
+			mem[COM_ORG + i] = img[RSX_HDRLEN + i];
+		z80furn(m);
+		/* After the furniture, because the first module is placed
+		 * below whatever the BDOS vector names and that vector is
+		 * what z80furn() has just planted. */
+		e = rsxload(mem, img, n, &r);
+		if (e != CL_OK)
+			return (e);
+	} else {
+		if ((img[0] & 0xff) == 0x00 || (img[0] & 0xff) == 0xff) {
+			/* Refuse leading 0x00/0xff as an unwritten-image
+			 * heuristic. */
+			return (CL_NOTCOM);
+		}
+		if (n > (long)(GUESTTOP - COM_ORG))
+			return (CL_BIG);
+
+		for (i = 0; i < n; i++)
+			mem[COM_ORG + i] = img[i];
+
+		z80furn(m);
 	}
-	if ((img[0] & 0xff) == 0x00 || (img[0] & 0xff) == 0xff) {
-		/* Refuse leading 0x00/0xff as an unwritten-image heuristic. */
-		return (CL_NOTCOM);
-	}
-	if (n > (long)(GUESTTOP - COM_ORG))
-		return (CL_BIG);
 
-	for (i = 0; i < n; i++)
-		mem[COM_ORG + i] = img[i];
-
-	z80furn(m);
-
-	/* The stack the CCP hands over: SP two below the exit stub, with
-	 * the stub's address on top, so that a program terminating with
-	 * a plain RET -- the documented CP/M-80 way -- lands on a hook
-	 * and not in the middle of our furniture. */
-	m->rp[P_SP] = (z16)(FAKEEXIT - 2);
-	mem[(z16)(FAKEEXIT - 2)] = (char)(FAKEEXIT & 0xff);
-	mem[(z16)(FAKEEXIT - 1)] = (char)((FAKEEXIT >> 8) & 0xff);
+	/* The stack the CCP hands over: SP two below the top of the TPA,
+	 * with the exit stub's address on top, so that a program
+	 * terminating with a plain RET -- the documented CP/M-80 way --
+	 * lands on a hook and not in the middle of our furniture.  With
+	 * RSXes loaded the top of the TPA is the lowest of them, and the
+	 * stack has to come down with it or the guest's first PUSH would
+	 * land inside a module. */
+	m->rp[P_SP] = (z16)(z80rsxtop - 2);
+	mem[(z16)(z80rsxtop - 2)] = (char)(FAKEEXIT & 0xff);
+	mem[(z16)(z80rsxtop - 1)] = (char)((FAKEEXIT >> 8) & 0xff);
 	m->pc = COM_ORG;
 	return (CL_OK);
 }

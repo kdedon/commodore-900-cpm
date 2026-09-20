@@ -1912,9 +1912,24 @@ static void t_loader(void)
 	/* every refusal */
 	chk("empty file", z80load(&G, gmem, img, 0L), CL_EMPTY);
 
+	/* A header record with no descriptor in it declares no RSX at all,
+	 * and there is then nothing left to refuse. */
 	img[0] = (char)0xc9;
-	chk("a GENCOM-bound .COM is refused", z80load(&G, gmem, img,
-		(long)RSX_HDRLEN + 16), CL_RSX);
+	chk("a GENCOM header with no descriptors loads", z80load(&G, gmem,
+		img, (long)RSX_HDRLEN + 16), CL_OK);
+	chk("... and places no module", z80nrsx, 0);
+	chk("... and leaves the TPA where it was", (long)z80rsxtop,
+		(long)GUESTTOP);
+
+	/* A descriptor whose image and bitmap run past the end of the file
+	 * is the one thing left that CL_RSX names. */
+	img[0x10] = 0x00;
+	img[0x11] = 0x02;		/* offset 0x0200			*/
+	img[0x12] = 0x00;
+	img[0x13] = 0x01;		/* length 0x0100, bitmap to 0x0320	*/
+	chk("a descriptor past the end of the file is refused",
+		z80load(&G, gmem, img, 0x300L), CL_RSX);
+	img[0x10] = img[0x11] = img[0x12] = img[0x13] = 0;
 
 	img[0] = 0x00;
 	chk("an all-zero file is refused", z80load(&G, gmem, img, 128L),
@@ -1932,7 +1947,9 @@ static void t_loader(void)
 
 	/* every refusal has a sentence, and no two share one */
 	bad = 0;
-	for (i = CL_OK; i <= CL_NOTCOM; i++) {
+	z80rsxwho[0] = 'X';
+	z80rsxwho[1] = '\0';
+	for (i = CL_OK; i <= CL_RSXFIT; i++) {
 		int j;
 
 		if (z80lerr(i)[0] == '\0')
@@ -2291,8 +2308,8 @@ static void t_corpus(const char *dir)
 	if (r.n >= 1 && r.off[0] != (z16)(RSX_HDRLEN + r.comlen))
 		fail("SUBMIT.COM comlen reaches the first RSX",
 			(long)r.off[0], (long)(RSX_HDRLEN + r.comlen));
-	chk("SUBMIT.COM is refused by the loader",
-		z80load(&G, gmem, cbuf, n), CL_RSX);
+	chk("SUBMIT.COM is accepted by the loader",
+		z80load(&G, gmem, cbuf, n), CL_OK);
 	printf("z80test: SUBMIT.COM: comlen %u, %d RSX(es), first \"%s\" "
 		"at 0x%04x len %u\n", (unsigned)r.comlen, r.n,
 		r.n ? r.name[0] : "", r.n ? (unsigned)r.off[0] : 0u,
@@ -2305,8 +2322,8 @@ static void t_corpus(const char *dir)
 	chk("SAVE.COM is GENCOM-bound", z80rsxhdr(cbuf, n, &r), 1);
 	chk("SAVE.COM is RSX-only", r.rsxonly, 1);
 	chk("SAVE.COM comlen is one record", (long)r.comlen, 0x80L);
-	chk("SAVE.COM is refused by the loader",
-		z80load(&G, gmem, cbuf, n), CL_RSX);
+	chk("SAVE.COM is accepted by the loader",
+		z80load(&G, gmem, cbuf, n), CL_OK);
 }
 
 /* ================================================================== */
@@ -3250,6 +3267,249 @@ static void sprint(const char *tag)
 	printf("\n");
 }
 
+/* ================================================================== */
+/* 14. the GENCOM RSX chain					      */
+/* ================================================================== */
+
+static int gword(unsigned a);
+
+/*
+ * Build one PRL module into `img' at `at': DRI's prefix, one byte of
+ * code at offset 0x40, and a relocation bitmap marking exactly two
+ * bytes -- the high half of the entry JMP at offset 8, and that byte at
+ * 0x40.  Both are hand-computable after the move, which is the whole
+ * point of building the module here instead of borrowing one.
+ */
+#define RM_LEN	0x120			/* two pages, and not a round one */
+#define RM_MAP	(RM_LEN / 8)
+#define RM_TOT	(RM_LEN + RM_MAP)
+
+static void rmake(char *img, long at, const char *name, int warm)
+{
+	int i;
+
+	for (i = 0; i < RM_TOT; i++)
+		img[at + i] = 0;
+	for (i = 0; i < 6; i++)
+		img[at + i] = (char)0xa5;	/* the serial area	*/
+	img[at + RSXP_ENTRY] = (char)0xc3;
+	img[at + RSXP_ENTRY + 1] = 0x20;
+	img[at + RSXP_ENTRY + 2] = 0x01;	/* JMP 0120h: base + 20h */
+	img[at + RSXP_NEXT] = (char)0xc3;
+	img[at + RSXP_NEXTLO] = 0x06;
+	img[at + RSXP_NEXTHI] = 0x00;
+	img[at + RSXP_PREV] = 0x07;
+	img[at + RSXP_PREV + 1] = 0x00;
+	img[at + RSXP_WARM] = (char)warm;
+	for (i = 0; i < 8; i++)
+		img[at + RSXP_NAME + i] = i < (int)strlen(name)
+			? name[i] : ' ';
+	img[at + 0x40] = 0x02;			/* a high byte to relocate */
+	img[at + RM_LEN + (8 / 8)] = (char)0x80;	/* offset 8	*/
+	img[at + RM_LEN + (0x40 / 8)] = (char)0x80;	/* offset 0x40	*/
+}
+
+/* Two modules behind a 256-byte header record and a 256-byte .COM. */
+#define RD_A	0x200L
+#define RD_B	(RD_A + RM_TOT)
+#define RD_N	(RD_B + RM_TOT)
+
+static void rimage(char *img, int warma, int warmb, long comlen)
+{
+	memset(img, 0, RD_N);
+	img[0] = (char)0xc9;
+	img[1] = (char)(comlen & 0xff);
+	img[2] = (char)((comlen >> 8) & 0xff);
+	img[RSX_HDRLEN] = (char)0xc3;		/* a .COM half, not a RET */
+
+	img[RSX_DESC0] = (char)(RD_A & 0xff);
+	img[RSX_DESC0 + 1] = (char)(RD_A >> 8);
+	img[RSX_DESC0 + 2] = (char)(RM_LEN & 0xff);
+	img[RSX_DESC0 + 3] = (char)(RM_LEN >> 8);
+	memcpy(img + RSX_DESC0 + 6, "MODA    ", 8);
+
+	img[RSX_DESC0 + RSX_DSTRIDE] = (char)(RD_B & 0xff);
+	img[RSX_DESC0 + RSX_DSTRIDE + 1] = (char)(RD_B >> 8);
+	img[RSX_DESC0 + RSX_DSTRIDE + 2] = (char)(RM_LEN & 0xff);
+	img[RSX_DESC0 + RSX_DSTRIDE + 3] = (char)(RM_LEN >> 8);
+	memcpy(img + RSX_DESC0 + RSX_DSTRIDE + 6, "MODB    ", 8);
+
+	rmake(img, RD_A, "MODA", warma);
+	rmake(img, RD_B, "MODB", warmb);
+}
+
+static void t_rsx(const char *dir)
+{
+	static char img[0x10000];
+	char path[256];
+	long n;
+	int i;
+
+	/* ---- where the chain is allowed to live. ---- */
+
+	chk("the RSX area ends where the furniture begins",
+		(long)(GUESTTOP <= FAKEDPB), 1L);
+	chk("... which is also the BDOS entry's page",
+		(long)(FAKEBDOS & 0xff00), (long)GUESTTOP);
+	chk("... and the link field the BDOS end of the chain takes"
+	    " is clear of both",
+		(long)(GUESTTOP + RSXP_PREV + 1 < FAKEDPB
+		    && GUESTTOP + RSXP_PREV > FAKEBDOS + 3), 1L);
+	chk("a module is addressed by page, so the entry offset is the"
+	    " BDOS's own",
+		(long)(FAKEBDOS - GUESTTOP), (long)RSXP_ENTRY);
+
+	/* ---- two synthetic modules: placement, relocation, order. ---- */
+
+	rimage(img, 0xff, 0x00, 0x100L);
+	chk("a two-RSX image loads", z80load(&G, gmem, img, RD_N), CL_OK);
+	chk("... placing both", z80nrsx, 2);
+	/* 0x120 bytes is two pages, so each module takes the two pages
+	 * below the link above it: 0xE400 - 0x200, then that - 0x200. */
+	chk("... the first below the BDOS", (long)z80rsxbase[0],
+		(long)(GUESTTOP - 0x200));
+	chk("... the second below the first", (long)z80rsxbase[1],
+		(long)(GUESTTOP - 0x400));
+	chk("... and the TPA ends at the lowest", (long)z80rsxtop,
+		(long)(GUESTTOP - 0x400));
+
+	/* Relocation.  MODA sits at 0xE200, so its bias is 0xE1 -- the
+	 * page LESS ONE, because the module is linked at 0x0100. */
+	chk("the entry JMP's high byte took the bias",
+		(long)(gmem[z80rsxbase[0] + RSXP_ENTRY + 2] & 0xff),
+		(long)(0x01 + ((GUESTTOP - 0x200) >> 8) - 1));
+	chk("... which makes the entry base + 0x20",
+		(long)gword((unsigned)(z80rsxbase[0] + RSXP_ENTRY + 1)),
+		(long)(z80rsxbase[0] + 0x20));
+	chk("a marked byte inside the code took it too",
+		(long)(gmem[z80rsxbase[0] + 0x40] & 0xff),
+		(long)(0x02 + ((GUESTTOP - 0x200) >> 8) - 1));
+	chk("... and its unmarked neighbour did not",
+		(long)(gmem[z80rsxbase[0] + 0x41] & 0xff), 0L);
+	chk("the second module took its own, lower bias",
+		(long)(gmem[z80rsxbase[1] + 0x40] & 0xff),
+		(long)(0x02 + ((GUESTTOP - 0x400) >> 8) - 1));
+
+	/* The chain: newest first, BDOS last. */
+	chk("the first module chains to the BDOS",
+		(long)gword((unsigned)(z80rsxbase[0] + RSXP_NEXTLO)),
+		(long)FAKEBDOS);
+	chk("the second chains to the first",
+		(long)gword((unsigned)(z80rsxbase[1] + RSXP_NEXTLO)),
+		(long)(z80rsxbase[0] + RSXP_ENTRY));
+	chk("the head's PREV is page zero's own vector",
+		(long)gword((unsigned)(z80rsxbase[1] + RSXP_PREV)),
+		(long)RSX_HEADPREV);
+	chk("the first module's PREV names the second's NEXT high byte",
+		(long)gword((unsigned)(z80rsxbase[0] + RSXP_PREV)),
+		(long)(z80rsxbase[1] + RSXP_NEXTHI));
+	chk("and the BDOS end of the chain names the first's",
+		(long)gword((unsigned)(GUESTTOP + RSXP_PREV)),
+		(long)(z80rsxbase[0] + RSXP_NEXTHI));
+
+	chk("page zero's BDOS vector is the head module's entry",
+		(long)gword(PZ_BDOS + 1),
+		(long)(z80rsxbase[1] + RSXP_ENTRY));
+	chk("... so a guest reading `LHLD 6' sees a TPA ending there",
+		(long)(gword(PZ_BDOS + 1) - 6), (long)z80rsxtop);
+	chk("... and the stack came down with it", (long)G.rp[P_SP],
+		(long)(z80rsxtop - 2));
+	chk("... still carrying the exit stub",
+		(long)gword((unsigned)(z80rsxtop - 2)), (long)FAKEEXIT);
+	chk("the serial area is cleared, not carried down",
+		(long)(gmem[z80rsxbase[0]] & 0xff), 0L);
+	chk("the .COM half is still at 0x100",
+		(long)(gmem[COM_ORG] & 0xff), 0xc3L);
+	chk("... and the program counter with it", (long)G.pc,
+		(long)COM_ORG);
+
+	/* ---- warm boot removes the flagged half of the chain. ---- */
+
+	chk("warm boot removes the module that asked for it",
+		z80rsxwboot(&G), 1);
+	chk("... leaving the head where it was", (long)gword(PZ_BDOS + 1),
+		(long)(z80rsxbase[1] + RSXP_ENTRY));
+	chk("... and chaining the head straight to the BDOS",
+		(long)gword((unsigned)(z80rsxbase[1] + RSXP_NEXTLO)),
+		(long)FAKEBDOS);
+	chk("... with the BDOS end chained back to the head",
+		(long)gword((unsigned)(GUESTTOP + RSXP_PREV)),
+		(long)(z80rsxbase[1] + RSXP_NEXTHI));
+	chk("a second warm boot removes nothing", z80rsxwboot(&G), 0);
+
+	/* Both flagged: the head goes too, and the vector rises. */
+	rimage(img, 0xff, 0xff, 0x100L);
+	z80load(&G, gmem, img, RD_N);
+	chk("warm boot can empty the chain", z80rsxwboot(&G), 2);
+	chk("... putting the BDOS vector back", (long)gword(PZ_BDOS + 1),
+		(long)FAKEBDOS);
+
+	/* ---- a module that will not fit is refused by its name. ---- */
+
+	rimage(img, 0, 0, (long)(GUESTTOP - COM_ORG));
+	chk("an RSX that would land on the program is refused",
+		z80load(&G, gmem, img, RD_N), CL_RSXFIT);
+	chk("... naming it", strcmp(z80rsxwho, "MODA    "), 0);
+	chk("... in the sentence too",
+		(long)(strstr(z80lerr(CL_RSXFIT), "MODA") != 0), 1L);
+
+	/* ---- SUBMIT.COM and SAVE.COM, the real thing. ---- */
+
+	sprintf(path, "%s/SUBMIT.COM", dir);
+	n = cread(path);
+	chk("SUBMIT.COM loads", z80load(&G, gmem, cbuf, n), CL_OK);
+	chk("... with one module", z80nrsx, 1);
+	/* 0x440 bytes is five pages, so it lands five pages below the
+	 * BDOS, and its entry is the 0x0146 the file carries less the
+	 * 0x100 it was linked at. */
+	chk("... five pages below the BDOS", (long)z80rsxbase[0],
+		(long)(GUESTTOP - 0x500));
+	chk("... whose entry the relocation moved with it",
+		(long)gword((unsigned)(z80rsxbase[0] + RSXP_ENTRY + 1)),
+		(long)(z80rsxbase[0] + 0x46));
+	/* File offset 0x1D of the module is the high byte of an `LDA
+	 * 03F3h', and 0x03F3 less the 0x100 it was linked at is 0x2F3. */
+	chk("... and an LDA inside the code with it",
+		(long)gword((unsigned)(z80rsxbase[0] + 0x1c)),
+		(long)(z80rsxbase[0] + 0x2f3));
+	chk("... it is the module GENCOM named",
+		strncmp(gmem + z80rsxbase[0] + RSXP_NAME, "GET     ", 8), 0);
+	chk("... the TPA now ends at it", (long)gword(PZ_BDOS + 1) - 6,
+		(long)z80rsxbase[0]);
+	chk("... and the .COM half is only comlen long: the first RSX"
+	    " byte did not follow it into the TPA",
+		(long)(gmem[COM_ORG + 0x0f00] & 0xff), 0L);
+	chk("SUBMIT's RSX asks to be removed on warm boot",
+		z80rsxwboot(&G), 1);
+	chk("... which puts the BDOS vector back",
+		(long)gword(PZ_BDOS + 1), (long)FAKEBDOS);
+
+	sprintf(path, "%s/SAVE.COM", dir);
+	n = cread(path);
+	chk("SAVE.COM loads", z80load(&G, gmem, cbuf, n), CL_OK);
+	chk("... and says it is RSX-only", z80rsxonly, 1);
+	chk("... its .COM half being the one RET the CCP re-runs",
+		(long)(gmem[COM_ORG] & 0xff), 0xc9L);
+	chk("... with its RSX placed all the same", z80nrsx, 1);
+	chk("... five pages down, for 0x4B7 bytes", (long)z80rsxbase[0],
+		(long)(GUESTTOP - 0x500));
+	chk("SAVE's RSX stays over a warm boot", z80rsxwboot(&G), 0);
+	chk("... and the BDOS vector with it", (long)gword(PZ_BDOS + 1),
+		(long)(z80rsxbase[0] + RSXP_ENTRY));
+
+	/* ---- an unbound .COM is untouched by any of it. ---- */
+
+	sprintf(path, "%s/DUMP.COM", dir);
+	n = cread(path);
+	chk("DUMP.COM loads", z80load(&G, gmem, cbuf, n), CL_OK);
+	chk("... with no chain at all", z80nrsx, 0);
+	chk("... the BDOS vector where it always was",
+		(long)gword(PZ_BDOS + 1), (long)FAKEBDOS);
+	chk("... and the stack where it always was", (long)G.rp[P_SP],
+		(long)(FAKEEXIT - 2));
+	chk("... with nothing to remove on warm boot", z80rsxwboot(&G), 0);
+}
+
 /*
  * Run the loaded guest until it terminates or refuses.  Returns the
  * seam's last verdict; *steps gets the instruction count and *why the
@@ -4103,16 +4363,24 @@ static void runx(const char *path, const char *tail)
 		return;
 	}
 	off = 0;
-	if (z80rsxhdr(cbuf, n, &r)) {
-		off = RSX_HDRLEN;
-		printf("z80test: %s is GENCOM-bound (%d RSX%s%s); running the "
-			".COM half only\n", path, r.n, r.n == 1 ? "" : "es",
-			r.rsxonly ? ", RSX-ONLY" : "");
-	}
-	if (z80load(&G, gmem, cbuf + off, n - off) != CL_OK) {
-		printf("z80test: %s did not load: %s\n", path,
-			z80lerr(z80load(&G, gmem, cbuf + off, n - off)));
+	if (z80rsxhdr(cbuf, n, &r))
+		printf("z80test: %s is GENCOM-bound (%d RSX%s%s)\n", path, r.n,
+			r.n == 1 ? "" : "es", r.rsxonly ? ", RSX-ONLY" : "");
+	off = z80load(&G, gmem, cbuf, n);
+	if (off != CL_OK) {
+		printf("z80test: %s did not load: %s\n", path, z80lerr(off));
 		return;
+	}
+	if (z80nrsx) {
+		int i;
+
+		printf("z80test: %s chain:", path);
+		for (i = 0; i < z80nrsx; i++)
+			printf(" %.8s@%04x", gmem + z80rsxbase[i] + RSXP_NAME,
+				(unsigned)z80rsxbase[i]);
+		printf(", TPA top %04x, bdos vector %04x\n",
+			(unsigned)z80rsxtop,
+			(unsigned)(z80rw(&G, (z16)(PZ_BDOS + 1))));
 	}
 	z80tail(&G, (char *)tail);
 
@@ -4123,6 +4391,14 @@ static void runx(const char *path, const char *tail)
 	fi->len = 1024;
 	for (k = 0; k < fi->len; k++)
 		fi->d[k] = (char)(k & 0x7f);
+
+	/* SUBMIT's input and its only real work: it reads a .SUB and
+	 * writes $$$.SUB with the lines reversed and padded to records. */
+	fi = &sdisk[1];
+	smkname(fi->name, "VERIFY.SUB");
+	fi->used = 1;
+	memcpy(fi->d, "DIR\r\nERA X.Y\r\n", 14);
+	fi->len = 14;
 
 	sysmode = SYS_CPM;
 	z80ninsn = z80nflag = 0;
@@ -4159,6 +4435,17 @@ static void runx(const char *path, const char *tail)
 		printf("\n");
 	}
 	sprint(path);
+	for (k = 0; k < SF_MAX; k++) {
+		long j;
+
+		if (!sdisk[k].used || !sdisk[k].len)
+			continue;
+		printf("z80test: %s left %.11s, %ld bytes:", path,
+			sdisk[k].name, sdisk[k].len);
+		for (j = 0; j < sdisk[k].len && j < 48; j++)
+			printf(" %02x", sdisk[k].d[j] & 0xff);
+		printf("\n");
+	}
 }
 
 int main(argc, argv)
@@ -4218,6 +4505,7 @@ char **argv;
 	t_random();
 	t_dmabound();
 	t_scb();
+	t_rsx(argv[1]);
 
 	printf("z80test: %d checks, %d failures\n", ntest, nfail);
 	return (nfail != 0);

@@ -491,6 +491,7 @@ int v;
 	switch (v) {
 	case 0:				/* cold boot			*/
 	case 1:				/* warm boot			*/
+		z80rsxwboot(m);
 		return (B_EXIT);
 	case 2:				/* CONST			*/
 		r = z80sys(11, (z16)0, (char *)0);
@@ -593,6 +594,10 @@ struct z80 *m;
 		return (biosv(m, z80hookno - HOOK_BIOS));
 	if (z80hookno == HOOK_EXIT) {
 		z80bdosfn = -1;
+		/* A plain RET goes back to the CCP, and the CCP warm
+		 * starts, so the temporary half of the chain goes here
+		 * too and not only at the BIOS vector. */
+		z80rsxwboot(m);
 		return (B_EXIT);
 	}
 	if (z80hookno != HOOK_BDOS) {
@@ -630,6 +635,7 @@ struct z80 *m;
 		 * not return (src/bdos/bdosmain.c:234); the shim is an
 		 * ordinary TPA program and must return to ITS caller,
 		 * so this is the one function the seam answers itself. */
+		z80rsxwboot(m);
 		return (B_EXIT);
 	}
 	if (fn == 12) {
@@ -679,7 +685,12 @@ struct z80 *m;
 		return (B_RUN);
 	}
 	if (fn == 60) {
-		/* No RSX chain is loaded, so nothing handled the call. */
+		/* The BDOS is the LAST link in the chain, never the first:
+		 * page zero's vector names the lowest module and each
+		 * module's prefix either handles the call or jumps to the
+		 * link below it, so a function 60 that arrives here has
+		 * already been offered to every module.  0FFh is then the
+		 * true answer whether a chain is loaded or not. */
 		m->a = 0xff;
 		m->rp[P_HL] = 0x00ff;
 		z80setr(m, R_B, 0);
