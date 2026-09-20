@@ -85,6 +85,14 @@ struct z80 *m;
 		pjmp(mem, FAKEBIOS + 3 * k, (z16)(stub + 4 * k));
 		phook(mem, stub + 4 * k, HOOK_BIOS + k);
 	}
+
+	/* The CCP's second ask, for an RSX-only image. */
+	pb(mem, FAKECCP, 0xe);
+	pb(mem, FAKECCP + 1, 59);
+	pb(mem, FAKECCP + 2, 0xcd);
+	pb(mem, FAKECCP + 3, PZ_BDOS);
+	pb(mem, FAKECCP + 4, 0);
+	pjmp(mem, FAKECCP + 5, (z16)PZ_WBOOT);
 	return (0);
 }
 
@@ -546,6 +554,9 @@ long n;
 	m->rp[P_SP] = (z16)(z80rsxtop - 2);
 	mem[(z16)(z80rsxtop - 2)] = (char)(FAKEEXIT & 0xff);
 	mem[(z16)(z80rsxtop - 1)] = (char)((FAKEEXIT >> 8) & 0xff);
-	m->pc = COM_ORG;
+	/* An RSX-only image starts at the CCP stub rather than at the RET
+	 * the .COM half consists of: the modules are the program, and
+	 * they are entered by the second function 59. */
+	m->pc = z80rsxonly ? (z16)FAKECCP : (z16)COM_ORG;
 	return (CL_OK);
 }

@@ -812,6 +812,16 @@ struct z80 *m;
 		}
 		return (B_RUN);
 	}
+	if (fn == 59) {
+		/* Program load, reaching the end of the chain.  The shim
+		 * loads the one image it was started with, so the answer
+		 * is CP/M 3's own "nothing loaded": zero in HL, and a
+		 * module that passed the call down gets it. */
+		m->a = 0xff;
+		m->rp[P_HL] = 0;
+		z80setr(m, R_B, 0);
+		return (B_RUN);
+	}
 	if (fn == 60) {
 		/* The BDOS is the LAST link in the chain, never the first:
 		 * page zero's vector names the lowest module and each

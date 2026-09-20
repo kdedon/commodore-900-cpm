@@ -307,6 +307,18 @@ extern int z80ww();		/* (m, addr, v)				*/
 #define DEV_SIO		1
 #define DEVBIT(n)	(0x8000 >> (n))
 
+/* An RSX-only .COM -- 0xC9 at the image base, SAVE.COM being one -- has
+ * no program to enter: the modules are the whole file, and they are
+ * reached by the CCP asking for the command a second time.  This is that
+ * second ask, above the TPA beside the rest of the furniture:
+ *
+ *	MVI C,59 / CALL 5 / JMP 0
+ *
+ * The call enters the chain the load has just built, and the warm boot
+ * after it hands over to whatever the module left in the BIOS vector. */
+#define FAKECCP		0xf3a0
+#define FAKECCPLEN	8
+
 /* FAKEBDOS is GUESTTOP + 6 and the 6 is load-bearing.  A CP/M-80
  * program finds the top of the TPA by reading the ADDRESS FIELD of the
  * `JMP' at 5 -- `LHLD 6' -- and subtracting nothing: the word at 6 is

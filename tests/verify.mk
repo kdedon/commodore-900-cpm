@@ -643,6 +643,97 @@ verify-z80pip: all
 	@echo "            run, and the copy it made is byte-identical to its input"
 
 
+# ---- CP/M-80 shim, ON THE MACHINE, third program: SAVE.COM ----
+# The one program in the corpus that IS an RSX.  DUMP and PIP prove the
+# seam and the arithmetic; SUBMIT proves a module is placed, relocated
+# and chained.  None of the three proves a module is ever ENTERED, and
+# until this target nothing anywhere did: SAVE.COM's .COM half is a bare
+# RET, so a shim that loads it and jumps to 0x0100 leaves immediately
+# with the chain untouched.
+#
+# HOW THE MODULE IS REACHED.  A CP/M 3 CCP asks for an RSX-only command a
+# second time, with function 59, and that second ask is what the module
+# takes.  SAVE's takes it, points the guest's warm-boot vector at itself,
+# and passes the call on down the chain; the warm boot that follows is
+# the entry.  src/cmd/z80load.c plants those three instructions -- MVI
+# C,59 / CALL 5 / JMP 0 -- above the TPA and starts an RSX-only image
+# there instead of at the RET.
+#
+# WHAT CARRIES THE VERDICT.  "CP/M 3 SAVE - Version 3.1" is printed by
+# code inside the module, from an address the relocator computed: it
+# cannot appear unless the module was placed, chained, entered and
+# relocated correctly.  The saved file is the other half -- SAVE is
+# asked for the guest's own first 256 bytes, so the file has to carry
+# page zero as the loader built it, down to the BDOS vector naming the
+# module (0xDF06) rather than the seam, which is the chain itself in a
+# file the machine wrote.  A load that never entered the module produces
+# no file at all.
+#
+# The session is the host run's, key for key (tests/z80test.c t_save),
+# so the instruction, BDOS-call and flag triple is asserted the way
+# verify-z80's and verify-z80pip's are.
+#
+# THIS TARGET IS ALLOWED TO ANSWER "no segment", same as verify-z80.
+Z80SDISK = build/z80savedisk
+Z80SCPMA = build/z80save-cpma.img
+Z80SIMG	 = build/z80savetest.bin
+Z80SLOG	 = build/verify-z80save.log
+.PHONY: verify-z80save
+verify-z80save: all
+	@rm -rf $(Z80SDISK)
+	@mkdir -p $(Z80SDISK)
+	@cp $(DISKA)/* $(Z80SDISK)/
+	cp $(Z80CORPUS)/SAVE.COM $(Z80SDISK)/SAVE.COM
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(Z80SCPMA) $(CPMA_BLOCKS) $(Z80SDISK)
+	$(MKDISK) $(Z80SIMG) $(CPMSYS) $(Z80SCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(Z80SIMG)) \
+		--input="$(OSSEL)$(SESS1)Z80 SAVE.COM SAVED.BIN\r\gSAVED.BIN\r0000\r00FF\r" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(Z80SLOG))
+	@$(EMUOK)
+	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- BIOS function 25 handed out no segment."; exit 1; }
+	@grep -q 'z80: load: ok' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- SAVE.COM did not load"; exit 1; }
+	@grep -q '0100: C9' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- the .COM half is not the RET an"; \
+		     echo "                RSX-only image consists of"; exit 1; }
+	@# --- the verdict: text that exists only inside the module ---
+	@grep -q 'CP/M 3 SAVE - Version 3.1' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- the RSX was never entered.  The banner"; \
+		     echo "                is printed from inside the relocated module, so"; \
+		     echo "                a load that placed and chained it correctly and"; \
+		     echo "                still never reached it looks exactly like this."; exit 1; }
+	@grep -q 'Beginning hex address' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- the module was entered but did not run"; \
+		     echo "                on to ask for a range"; exit 1; }
+	@grep -q 'z80: 1520 instructions, 21 BDOS calls, 319 flag' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- the target run did not take the same"; \
+		     echo "                path through SAVE as the host run (1,520"; \
+		     echo "                instructions, 21 BDOS calls, 319 flag"; \
+		     echo "                materialisations -- tests/z80test.c t_save())."; \
+		     echo "                Read the divergence; do not relax this."; exit 1; }
+	@grep -q 'z80: the guest terminated' $(Z80SLOG) \
+		|| { echo "verify-z80save: FAIL -- the guest did not terminate cleanly"; exit 1; }
+	@# --- the known answer: page zero, off the disk the machine wrote it to ---
+	dd if=$(Z80SIMG) of=build/z80save-after.img bs=512 skip=$(CPMA_BASEBLK) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	rm -rf build/z80save-fs
+	python3 tools/mkcpmfs.py --extract build/z80save-after.img build/z80save-fs
+	@test -f build/z80save-fs/SAVED.BIN \
+		|| { echo "verify-z80save: FAIL -- the module wrote no file"; exit 1; }
+	@python3 -c 'import sys; d = open("build/z80save-fs/SAVED.BIN","rb").read(); sys.exit(0 if len(d) == 256 and d[:0x5c] == b"\xc3\x03\xf2\x00\x00\xc3\x06\xdf" + bytes(0x54) else 1)' \
+		|| { echo "verify-z80save: FAIL -- the saved bytes are not the guest's page"; \
+		     echo "                zero: two records, the warm-boot JMP, and a BDOS"; \
+		     echo "                vector naming the module at 0xDF06 rather than"; \
+		     echo "                the seam at 0xE406."; exit 1; }
+	@echo "verify-z80save: PASS -- DRI's SAVE.COM was loaded as the RSX-only"
+	@echo "            image it is, its module was entered through the CCP's"
+	@echo "            second function 59, and it wrote the guest's own page"
+	@echo "            zero out to a file on the machine"
+
+
 # ---- CP/M-86 shim, ON THE MACHINE: CPM86-STAGE-ONE.md's step 2 ----
 # The other half of what BIOS function 25 was built for, and the same
 # gate as verify-z80 above with one more segment in it: a small-model
@@ -7714,8 +7805,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 930 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 930 of its"; \
+	@grep -q 'z80test: 944 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 944 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
 	@grep -q 'i86test: 1587 checks, 0 failures' build/verify-shim-i86.log \

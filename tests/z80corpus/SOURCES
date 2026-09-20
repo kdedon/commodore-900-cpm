@@ -26,4 +26,8 @@ Each of the four answers a different question:
   SAVE.COM    1,792 B  an RSX-ONLY file: 0xC9 at the image base too, so there
                        is no program in it at all.  loader3.asm:253 is the
                        code that exists to tell these apart, and this is the
-                       file that exercises the distinction.
+                       file that exercises the distinction.  It is also the
+                       one program in the corpus whose module is ENTERED --
+                       by the second function 59 a CCP asks an RSX-only
+                       command with -- so it is what says the chain works
+                       and not merely that it was built.

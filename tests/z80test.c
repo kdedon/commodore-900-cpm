@@ -2368,6 +2368,8 @@ struct sccb {
 
 static char scon[16384];
 static int sconn;
+static char skeys[256];			/* what function 10 reads	*/
+static int skeyp;
 static int ssearch;
 static char ssname[11];
 
@@ -2732,6 +2734,22 @@ static int stub(int fn, z16 val, char *addr)
 		c = (struct sccb *)addr;
 		for (i = 0; i < (int)c->n; i++)
 			sputc(c->a[i] & 0x7f);
+		return (0);
+	}
+	case 10: {				/* read console buffer	*/
+		/* A canned session, CR-separated; a spent script answers
+		 * an empty line, which is how a prompt is escaped. */
+		int max = addr[0] & 0xff, len = 0;
+
+		while (skeys[skeyp] && skeys[skeyp] != '\r' && len < max)
+			addr[2 + len++] = skeys[skeyp++];
+		if (skeys[skeyp] == '\r')
+			skeyp++;
+		addr[1] = (char)len;
+		for (i = 0; i < len; i++)
+			sputc(addr[2 + i] & 0x7f);
+		sputc('\r');
+		sputc('\n');
 		return (0);
 	}
 	case 11:				/* console status	*/
@@ -3101,8 +3119,17 @@ static void t_seam(void)
 
 	/* the refusals.  27 and 31 are NOT among them any more: they are
 	 * answered out of the guest's own memory, in section 8e. */
+	z80setr(&G, R_C, 47);
+	chk("fn 47 is refused by name", z80bdos(&G), B_FN);
+
+	/* Function 59 is not a refusal: it is the end of the chain an
+	 * RSX passes a program load down to, and it answers "nothing
+	 * loaded" because the shim loads one image and no more. */
 	z80setr(&G, R_C, 59);
-	chk("fn 59 is refused by name", z80bdos(&G), B_FN);
+	rfn = -1;
+	chk("fn 59 answers rather than refusing", z80bdos(&G), B_RUN);
+	chk("... with no load done", (long)G.rp[P_HL], 0L);
+	chk("... and reaches no BDOS of its own", rfn, -1);
 
 	/* the answer comes back in A, HL and B */
 	rret = 0x0409;
@@ -3238,6 +3265,8 @@ static void sreset(void)
 	memset(sdisk, 0, sizeof sdisk);
 	memset(sfncount, 0, sizeof sfncount);
 	sconn = 0;
+	skeys[0] = '\0';
+	skeyp = 0;
 	sdma = 0;
 	ssearch = 0;
 	smultcnt = 1;
@@ -3705,6 +3734,102 @@ static void t_pip(const char *dir)
 				bad++;
 		chk("pip copy identical", bad, 0);
 	}
+}
+
+/*
+ * The RSX chain, ENTERED: DRI's SAVE.COM.
+ *
+ * SAVE is an RSX-only .COM -- a RET where the program would be -- and
+ * the module is reached the way a CCP reaches it, by asking for the
+ * command a second time with function 59.  The module takes that call,
+ * points the warm-boot vector at itself and passes the call down; the
+ * warm boot that follows is what enters it.  Nothing here drives the
+ * module directly: the load, the chain, the relocation and the vector
+ * are all doing the work, and the banner below is printed from inside
+ * the relocated code.
+ *
+ * The known answer is the guest's own first 256 bytes, which SAVE is
+ * asked to write out: page zero as the loader left it, tail and all,
+ * with the BDOS vector naming the module rather than the seam.
+ */
+static void t_save(const char *dir)
+{
+	char path[512];
+	struct sfile *fo;
+	long n, steps, k;
+	int brc, why, bad;
+
+	sprintf(path, "%s/SAVE.COM", dir);
+	n = cread(path);
+	ntest++;
+	if (n < 0) {
+		fail("SAVE.COM readable", -1, 0);
+		return;
+	}
+	chk("save loads", z80load(&G, gmem, cbuf, n), CL_OK);
+	chk("... starting at the CCP stub, not at the RET",
+		(long)G.pc, (long)FAKECCP);
+	z80tail(&G, " SAVED.BIN");
+
+	sreset();
+	strcpy(skeys, "SAVED.BIN\r0000\r00FF\r");
+
+	sysmode = SYS_CPM;
+	z80ninsn = z80nflag = 0;
+	z80bdosinit(&G);
+	brc = grun(20000000L, &steps, &why);
+	sysmode = SYS_REC;
+
+	printf("z80test: SAVE ran %ld instructions, %lu BDOS calls, "
+		"%lu flag materialisations (%ld %% of instructions)\n",
+		steps, (unsigned long)z80nbdos, (unsigned long)z80nflag,
+		steps ? (long)((z80nflag * 100L) / (z32)steps) : 0L);
+	sprint("SAVE");
+	if (brc != B_EXIT)
+		printf("z80test: SAVE stopped: step %s, seam %s "
+			"(bdos fn %d, bios %d) at pc 0x%04x\n",
+			xname(why), z80berr(), z80bdosfn, z80biosfn,
+			(unsigned)G.pc);
+	chk("save exited cleanly", brc, B_EXIT);
+
+	/* The banner lives inside the module and nowhere else, so it is
+	 * on the console only if the relocated code ran. */
+	ntest++;
+	scon[sconn] = '\0';
+	if (strstr(scon, "CP/M 3 SAVE - Version 3.1") == 0) {
+		fail("the RSX was entered", 0, 1);
+		printf("     (console was \"%.80s\")\n", scon);
+	}
+	ntest++;
+	if (strstr(scon, "Beginning hex address") == 0)
+		fail("the RSX asked for a range", 0, 1);
+
+	smkname(path, "SAVED.BIN");
+	fo = sfind(path);
+	ntest++;
+	if (fo == 0) {
+		fail("save wrote the file", 0, 1);
+		return;
+	}
+	chk("save wrote two records", fo->len, 256L);
+	chk("... beginning at the warm-boot vector",
+		(long)(fo->d[PZ_WBOOT] & 0xff), 0xc3L);
+	/* The chain as it stood while the module ran.  SAVE takes itself
+	 * out before it terminates, so the live vector is back at the
+	 * seam and only the file still shows the module.
+	 *
+	 * Page zero above 0x005C is not checked on either machine: the
+	 * range being saved is also the DMA buffer, and a BDOS is free
+	 * to leave a directory record in it while the file is made. */
+	chk("... whose BDOS vector names the module",
+		(long)((fo->d[PZ_BDOS + 1] & 0xff)
+		     | ((fo->d[PZ_BDOS + 2] & 0xff) << 8)),
+		(long)(z80rsxbase[0] + RSXP_ENTRY));
+	bad = 0;
+	for (k = 8; k < (long)PZ_FCB1; k++)
+		if (fo->d[k] != 0)
+			bad++;
+	chk("... and the rest of the vectors clear", bad, 0);
 }
 
 /*
@@ -4627,6 +4752,7 @@ char **argv;
 	t_scb();
 	t_devtbl();
 	t_rsx(argv[1]);
+	t_save(argv[1]);
 
 	printf("z80test: %d checks, %d failures\n", ntest, nfail);
 	return (nfail != 0);

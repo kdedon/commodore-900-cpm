@@ -96,3 +96,4 @@
 51 verify-xout
 5 verify-z80
 6 verify-z80pip
+7 verify-z80save
