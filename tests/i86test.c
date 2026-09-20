@@ -1846,18 +1846,18 @@ static void t_loader(void)
 	/* --- K1, both halves --- */
 	memset(h, 0, sizeof h);
 	mkgrp(h, 0, G_CODE, 10, 0x40, 10, 0);
-	chk("K1 nonzero A-Base", i86hdr(h, (i32)100000, &c), CE_BASE);
+	chk("nonzero A-Base", i86hdr(h, (i32)100000, &c), CE_BASE);
 	memset(h, 0, sizeof h);
 	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
 	mkgrp(h, 1, G_DATA, 10, 0, 5000, 0);
-	chk("K1 over 64K by G-Min", i86hdr(h, (i32)100000, &c), CE_BIG);
+	chk("over 64K by G-Min", i86hdr(h, (i32)100000, &c), CE_BIG);
 	memset(h, 0, sizeof h);
 	mkgrp(h, 0, G_CODE, 5000, 0, 5000, 0);
-	chk("K1 over 64K by G-Length", i86hdr(h, (i32)100000, &c), CE_BIG);
+	chk("over 64K by G-Length", i86hdr(h, (i32)100000, &c), CE_BIG);
 	memset(h, 0, sizeof h);
 	mkgrp(h, 0, G_CODE, 10, 0, 10, 0);
 	mkgrp(h, 1, G_DATA, 10, 0, 10, 9000);
-	chk("K1 over 64K by G-Max", i86hdr(h, (i32)100000, &c), CE_BIG);
+	chk("over 64K by G-Max", i86hdr(h, (i32)100000, &c), CE_BIG);
 	/* 4,096 paragraphs is exactly one segment and must be allowed:
 	 * WordStar declares 4,095 and a 4,096 would be legal too. */
 	memset(h, 0, sizeof h);

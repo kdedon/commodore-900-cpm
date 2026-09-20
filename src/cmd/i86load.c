@@ -134,8 +134,8 @@ int e;
 	switch (e) {
 	case CE_OK:	return ("ok");
 	case CE_NOCODE:	return ("no code group");
-	case CE_BASE:	return ("nonzero A-Base: not relocatable (K1)");
-	case CE_BIG:	return ("group wants more than 64K (K1)");
+	case CE_BASE:	return ("nonzero A-Base: not relocatable");
+	case CE_BIG:	return ("group wants more than 64K");
 	case CE_FORM:	return ("unsupported group form");
 	case CE_TRUNC:	return ("file shorter than its group descriptors");
 	case CE_EMPTY:	return ("group needs no memory");
