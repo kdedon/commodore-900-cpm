@@ -108,8 +108,9 @@ main()
 	/* ---- function 31, Get DPB Address: a TESTABLE return value ----
 	   v3 returns the DPB's address in HL.  We cannot hand out the
 	   BDOS's own copy (it lives in a SYS segment this program cannot
-	   address -- the same wall that drops fn 27), so we deliver the
-	   DPB's contents to the caller's buffer and return THAT address.
+	   address -- the same wall function 27 answers over, by the same
+	   means), so we deliver the DPB's contents to the caller's buffer
+	   and return THAT address.
 	   It used to return 0, so a caller testing the answer concluded
 	   the call had failed while the DPB sat in its own buffer.  Here
 	   the returned value is checked against the pointer passed in,

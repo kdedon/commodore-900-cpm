@@ -13,11 +13,27 @@
 #define	BDOS_CHAIN	47
 #define	BDOS_SCB	49
 #define	BDOS_WRANZF	40	/* write random with 0 fill		*/
+#define	BDOS_GETALV	27	/* copy out the allocation vector	*/
 
 #define	SCB_CCPFLGS	0x17
 
+/* struct dpb (src/bdos/bdosdef.h:168) as function 31 lands it in our
+   buffer.  The words are the BDOS's own, so they are big-endian here --
+   the same reading src/cmd/v3free.c takes of the same block. */
+#define	DPB_BLM		3
+#define	DPB_DSM_HI	6
+#define	DPB_DSM_LO	7
+
+/* Room for the longest allocation vector src/bios/bios900.c can build:
+   dsm is a UWORD, so 65,536 blocks at one bit each.  Sized so that the
+   length check below cannot fire on a drive this BIOS would accept. */
+#define	ALVBUF		8192
+#define	ALVSENT		0xaa	/* poison, so an unwritten byte shows	*/
+
 static struct fcb	f;
 static char		buf[SECLEN];
+static char		dpbbuf[SECLEN];
+static char		alvbuf[ALVBUF + 1];
 static char		pb[4];
 static int		checks;
 static int		bad;
@@ -32,7 +48,9 @@ char *argv[];
 {
 	register int	r;
 	int		startuser;
-	int		i;
+	int		i, k;
+	unsigned	blm, dsm, alvlen;
+	long		recs, freerecs;
 	static char	diverted[SECLEN];	/* G6: fn 26's decoy DMA target */
 
 	if (argc > 1 && argv[1][0] == 'P') {
@@ -145,9 +163,50 @@ char *argv[];
 	mkfcb("V2TMP.TXT", &f);
 	__bdos(BDOS_DELETE, (long) &f);	/* clean up */
 
-	/* ---- G5, unaffected: fn 27 stays the bad-function 0FFFFh ---- */
-	check("fn 27 (won't-fix, structural) still 0FFFFh",
-	      __bdos(27, 0L) & 0xffff, 0xffff);
+	/* ---- G5: fn 27 copies out the allocation vector ----
+	   It answers the way function 31 does, because neither structure
+	   is addressable from a transient: the caller names a buffer, the
+	   BDOS fills it and returns that address.  The length is the one
+	   the caller computes from the block function 31 gave it -- dsm
+	   is the HIGHEST block number, so dsm+1 bits rounded up to a
+	   byte -- and the bits run MSB first, block 0 in the top bit of
+	   the first byte (src/bdos/dskutil.c setaloc).		  */
+	__bdos(BDOS_GETDPB, (long) dpbbuf);
+	blm = (unsigned) (dpbbuf[DPB_BLM] & 0xff);
+	dsm = (unsigned) (((dpbbuf[DPB_DSM_HI] & 0xff) << 8)
+			 | (dpbbuf[DPB_DSM_LO] & 0xff));
+	alvlen = (dsm >> 3) + 1;
+	check("fn 31 gives a vector length this buffer holds",
+	      (alvlen <= ALVBUF) ? 0 : 1, 0);
+	for (i = 0; i <= (int) alvlen && i <= ALVBUF; i++)
+		alvbuf[i] = (char) ALVSENT;
+	check("fn 27 returns the buffer it was given",
+	      __bdos(BDOS_GETALV, (long) alvbuf) & 0xffff,
+	      (unsigned) ((long) alvbuf & 0xffffL));
+	check("fn 27 marked the four directory blocks",
+	      (unsigned) (alvbuf[0] & 0xf0), 0xf0);
+	check("fn 27 wrote nothing past (dsm >> 3) + 1 bytes",
+	      (unsigned) (alvbuf[alvlen] & 0xff), ALVSENT);
+
+	/* The vector is the one the BDOS walks itself: the records its
+	   clear bits stand for have to be the number function 46 answers
+	   with, to the record. */
+	recs = 0L;
+	for (i = 0; i < (int) alvlen; i++)
+		for (k = 0; k < 8; k++)
+			if (!(alvbuf[i] & (0x80 >> k))
+			 && (unsigned) i * 8u + (unsigned) k <= dsm)
+				recs += (long) blm + 1L;
+	setdma(buf);
+	__bdos(BDOS_FREESP, (long) (__bdos(BDOS_CURDSK, 0L) & 0xff));
+	freerecs =   ((long) (buf[0] & 0xff))
+		   | ((long) (buf[1] & 0xff) <<  8)
+		   | ((long) (buf[2] & 0xff) << 16);
+	cputs("free space the vector spells = ");
+	putdec((unsigned) (recs >> 3));
+	cputs("k\r\n");
+	check("fn 46 counts the same free records",
+	      (recs == freerecs) ? 1 : 0, 1);
 
 	/* ---- G12: a file reached through the user-0 fallback is
 	   read-only, 03FFh plus the console message, not a bare 3.

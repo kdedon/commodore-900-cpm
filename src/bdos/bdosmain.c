@@ -857,9 +857,9 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	      with lret$eq$ff (00FFh) and, at :348-349, everything from
 	      128 up with func$ret (0) -- the CP/M-8000 MP/M/XDOS range,
 	      which answers "not present" rather than "bad function
-	      number" so a program can probe it.  Only what is truly
-	      outside the v3 table (fn 27, structural, G5) keeps the
-	      0FFFFh bad-function-number answer.		*/
+	      number" so a program can probe it.  Only a number with no
+	      case of its own below those ranges keeps the 0FFFFh
+	      bad-function-number answer.			*/
 	  default:  if (func >= 128) return(0);
 		    if ( (func >= 51 && func <= 97) ||
 			 (func >= 113 && func <= 127) ) return(0x00ff);
