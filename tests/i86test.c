@@ -799,13 +799,12 @@ static void t_exec(void)
 	xsetup();
 	xseg[0x100] = (char)0xd6;			/* SALC		*/
 	chk("salc is not an instruction", xstep(), X_BAD);
-	/* IRET and INTO stay refused, and for a reason that is not
-	 * "unfinished": nothing here ever builds an interrupt frame for
-	 * them to unwind.  See i86exec.c's far-transfer comment. */
+	/* INTO stays refused: an overflow trap is a vector nothing here
+	 * claims.  IRET does not -- see section 3c. */
 	xsetup();
-	xseg[0x100] = (char)0xcf;			/* iret		*/
-	chk("iret refused", xstep(), X_UNIMP);
-	chk("iret ip", xm.ip & 0xffff, 0x100);
+	xseg[0x100] = (char)0xce;			/* into		*/
+	chk("into refused", xstep(), X_UNIMP);
+	chk("into ip", xm.ip & 0xffff, 0x100);
 }
 
 /* ================================================================== */
@@ -1545,6 +1544,229 @@ static void t_segslow(void)
 }
 
 /* ================================================================== */
+/* 3c. paragraph 0, the vector table, and the guest's own handlers     */
+/* ================================================================== */
+
+/*
+ * The one place in the shim where the GUEST installs the code that runs
+ * next.  DDT86 needs all of it: it writes an interrupt vector through a
+ * zeroed segment register, enters the program under test with IRET, and
+ * expects to be re-entered through a vector when that program hits a
+ * breakpoint or steps.
+ *
+ * Paragraph 0 is a segment in i86spar[]/i86sbase[] like any other, so
+ * the guest reads and writes it with ordinary instructions; what makes
+ * it the vector table is only that i86exec.c looks there on an INT.  A
+ * ZERO vector is not a handler -- it is the shim's spelling of "nobody
+ * installed one", and it is what keeps INT 0E0h going to the seam.
+ */
+static char ivtseg[65536];		/* paragraph 0			*/
+
+/* Paragraph 0 at slot 1 and a second code segment at 0x2000, so a
+ * handler can live somewhere the guest did not start. */
+static void xsetupivt(void)
+{
+	xsetup();
+	memset(ivtseg, 0, sizeof ivtseg);
+	memset(xseg2, 0, sizeof xseg2);
+	i86nseg = 3;
+	i86spar[1] = 0x0000; i86sbase[1] = ivtseg;
+	i86spar[2] = 0x2000; i86sbase[2] = xseg2;
+}
+
+/* The four bytes of vector `n', offset first. */
+static void setvec(int n, int off, int seg)
+{
+	ivtseg[n * 4 + 0] = (char)(off & 0xff);
+	ivtseg[n * 4 + 1] = (char)((off >> 8) & 0xff);
+	ivtseg[n * 4 + 2] = (char)(seg & 0xff);
+	ivtseg[n * 4 + 3] = (char)((seg >> 8) & 0xff);
+}
+
+/* A word of the guest's stack, `k' words above where SP now points. */
+static long stkw(int k)
+{
+	int sp;
+
+	sp = (xm.r[R_SP] + 2 * k) & 0xffff;
+	return ((long)((xseg[sp] & 0xff) | ((xseg[sp + 1] & 0xff) << 8)));
+}
+
+static void t_intvec(void)
+{
+	/* --- the guest writes a vector and reads it back, through a
+	   segment register it zeroed itself.  This is DDT86's opening
+	   move (its code+0x220 does it with REP MOVSB) and it is what
+	   used to stop at X_SEGESC on paragraph 0000. --- */
+	xsetupivt();
+	put(0x100, "\x2b\xc0", 2);			/* sub ax,ax	*/
+	put(0x102, "\x8e\xd8", 2);			/* mov ds,ax	*/
+	put(0x104, "\xc7\x06\x0c\x00\x34\x12", 6);	/* mov [0c],1234 */
+	put(0x10a, "\x8b\x1e\x0c\x00", 4);		/* mov bx,[0c]	*/
+	chk("paragraph 0 sub", xstep(), X_OK);
+	chk("paragraph 0 mov ds", xstep(), X_OK);
+	chk("paragraph 0 is a segment", xm.sr[S_DS] & 0xffff, 0);
+	chk("paragraph 0 unbiased", xm.so[S_DS] & 0xffff, 0);
+	chk("vector write", xstep(), X_OK);
+	chk("vector low byte", (long)(ivtseg[0x0c] & 0xff), 0x34);
+	chk("vector high byte", (long)(ivtseg[0x0d] & 0xff), 0x12);
+	chk("vector read back", xstep(), X_OK);
+	chk("vector read value", xm.r[R_BX] & 0xffff, 0x1234);
+
+	/* --- INT n through a vector the guest wrote: three words
+	   pushed, IF and TF cleared, control at the vector. --- */
+	xsetupivt();
+	setvec(3, 0x300, 0x2000);
+	xm.fl = (i16)(F_ONES | F_IF | F_TF | F_CF);
+	xseg[0x100] = (char)0xcc;			/* int 3	*/
+	chk("int3 rc", xstep(), X_OK);
+	chk("int3 cs", xm.sr[S_CS] & 0xffff, 0x2000);
+	chk("int3 ip", xm.ip & 0xffff, 0x300);
+	chk("int3 sp", xm.r[R_SP] & 0xffff, 0xfefa);
+	chk("int3 pushed ip", stkw(0), 0x101);
+	chk("int3 pushed cs", stkw(1), 0x1000);
+	chk("int3 pushed flags", stkw(2),
+		(long)((F_ONES | F_IF | F_TF | F_CF) & 0xffff));
+	chk("int3 cleared if", (long)(xm.fl & F_IF), 0);
+	chk("int3 cleared tf", (long)(xm.fl & F_TF), 0);
+	chk("int3 kept cf", (long)(xm.fl & F_CF), (long)F_CF);
+
+	/* --- IRET puts back exactly what the entry pushed. --- */
+	xseg2[0x300] = (char)0xcf;			/* iret		*/
+	chk("iret rc", xstep(), X_OK);
+	chk("iret cs", xm.sr[S_CS] & 0xffff, 0x1000);
+	chk("iret ip", xm.ip & 0xffff, 0x101);
+	chk("iret sp", xm.r[R_SP] & 0xffff, 0xff00);
+	chk("iret flags", (long)(xm.fl & 0xffff),
+		(long)((F_ONES | F_IF | F_TF | F_CF) & 0xffff));
+
+	/* --- a two-byte INT n reaches the same place, and the address
+	   it pushes is past BOTH its bytes. --- */
+	xsetupivt();
+	setvec(0x20, 0x400, 0x2000);
+	put(0x100, "\xcd\x20", 2);			/* int 20h	*/
+	chk("int imm rc", xstep(), X_OK);
+	chk("int imm ip", xm.ip & 0xffff, 0x400);
+	chk("int imm pushed ip", stkw(0), 0x102);
+
+	/* --- nesting: the handler takes an interrupt of its own and
+	   unwinds through two IRETs to where the first one began. --- */
+	xsetupivt();
+	setvec(3, 0x300, 0x2000);
+	setvec(1, 0x380, 0x2000);
+	xseg[0x100] = (char)0xcc;			/* int 3	*/
+	memcpy(&xseg2[0x300], "\xcd\x01", 2);		/* int 1	*/
+	xseg2[0x302] = (char)0xcf;			/* iret		*/
+	xseg2[0x380] = (char)0xcf;			/* iret		*/
+	chk("nest outer", xstep(), X_OK);
+	chk("nest inner", xstep(), X_OK);
+	chk("nest inner ip", xm.ip & 0xffff, 0x380);
+	chk("nest inner sp", xm.r[R_SP] & 0xffff, 0xfef4);
+	chk("nest inner pushed ip", stkw(0), 0x302);
+	chk("nest inner iret", xstep(), X_OK);
+	chk("nest back in handler", xm.ip & 0xffff, 0x302);
+	chk("nest outer iret", xstep(), X_OK);
+	chk("nest back in guest", xm.ip & 0xffff, 0x101);
+	chk("nest cs restored", xm.sr[S_CS] & 0xffff, 0x1000);
+	chk("nest sp restored", xm.r[R_SP] & 0xffff, 0xff00);
+
+	/* --- the trap flag, which is what DDT86's T command is.  The
+	   instruction runs and the trap follows it, carrying the address
+	   AFTER it. --- */
+	xsetupivt();
+	setvec(1, 0x380, 0x2000);
+	xm.fl = (i16)(F_ONES | F_TF);
+	xseg[0x100] = (char)0x40;			/* inc ax	*/
+	chk("step rc", xstep(), X_OK);
+	chk("step ran the instruction", xm.r[R_AX] & 0xffff, 1);
+	chk("step trapped", xm.ip & 0xffff, 0x380);
+	chk("step pushed ip", stkw(0), 0x101);
+	chk("step cleared tf", (long)(xm.fl & F_TF), 0);
+
+	/* --- and it is read at the START of an instruction, so an IRET
+	   that SETS it steps what comes after the IRET rather than
+	   trapping on the IRET itself.  That is the 8086's rule and it
+	   is the one that lets a debugger hand control back. --- */
+	xsetupivt();
+	setvec(1, 0x380, 0x2000);
+	xm.r[R_SP] = 0xfefa;
+	xseg[0xfefa] = 0x00; xseg[0xfefb] = 0x02;	/* ip 0200	*/
+	xseg[0xfefc] = 0x00; xseg[0xfefd] = 0x10;	/* cs 1000	*/
+	xseg[0xfefe] = (char)((F_ONES | F_TF) & 0xff);
+	xseg[0xfeff] = (char)(((F_ONES | F_TF) >> 8) & 0xff);
+	xseg[0x100] = (char)0xcf;			/* iret		*/
+	chk("iret sets tf rc", xstep(), X_OK);
+	chk("iret sets tf ip", xm.ip & 0xffff, 0x200);
+	chk("iret did not trap", xm.r[R_SP] & 0xffff, 0xff00);
+	xseg[0x200] = (char)0x90;			/* nop		*/
+	chk("step after iret rc", xstep(), X_OK);
+	chk("step after iret trapped", xm.ip & 0xffff, 0x380);
+	chk("step after iret pushed ip", stkw(0), 0x201);
+
+	/* --- INT clears TF on the way in, so a stepped INT enters its
+	   handler once and is not also stepped. --- */
+	xsetupivt();
+	setvec(3, 0x300, 0x2000);
+	setvec(1, 0x380, 0x2000);
+	xm.fl = (i16)(F_ONES | F_TF);
+	xseg[0x100] = (char)0xcc;
+	chk("stepped int rc", xstep(), X_OK);
+	chk("stepped int went to its own handler", xm.ip & 0xffff, 0x300);
+	chk("stepped int pushed one frame", xm.r[R_SP] & 0xffff, 0xfefa);
+
+	/* --- WHAT MUST NOT CHANGE.  A zero vector is not a handler, so
+	   INT 0E0h is still the seam's, and so is any other interrupt
+	   nobody claimed -- IP past the INT, which is the rule
+	   i86bdos() is written to. --- */
+	xsetupivt();
+	put(0x100, "\xcd\xe0", 2);			/* int 0e0h	*/
+	chk("seam rc", xstep(), X_INT);
+	chk("seam vector", (long)i86intno, 0xe0);
+	chk("seam ip past the int", xm.ip & 0xffff, 0x102);
+	chk("seam pushed nothing", xm.r[R_SP] & 0xffff, 0xff00);
+
+	/* --- and with NO paragraph 0 at all there is no vector table
+	   and nothing is different from before any of this existed. --- */
+	xsetup();
+	xseg[0x100] = (char)0xcc;			/* int 3	*/
+	chk("no ivt rc", xstep(), X_INT);
+	chk("no ivt vector", (long)i86intno, 3);
+	chk("no ivt ip past the int", xm.ip & 0xffff, 0x101);
+	chk("no ivt pushed nothing", xm.r[R_SP] & 0xffff, 0xff00);
+
+	/* --- a trap flag with no vector 1 behind it is inert, which is
+	   what it has always been. --- */
+	xsetup();
+	xm.fl = (i16)(F_ONES | F_TF);
+	xseg[0x100] = (char)0x90;			/* nop		*/
+	chk("tf with no ivt rc", xstep(), X_OK);
+	chk("tf with no ivt did not trap", xm.ip & 0xffff, 0x101);
+	chk("tf with no ivt kept tf", (long)(xm.fl & F_TF), (long)F_TF);
+
+	/* --- a vector into a paragraph the shim never handed out is a
+	   refusal and not a jump into nothing, and the stack it half
+	   wrote is put back. --- */
+	xsetupivt();
+	setvec(3, 0x300, 0xd000);
+	i86nsegbad = 0;
+	xseg[0x100] = (char)0xcc;
+	chk("bad vector rc", xstep(), X_SEGESC);
+	chk("bad vector paragraph", i86segbad & 0xffff, 0xd000);
+	chk("bad vector sp restored", xm.r[R_SP] & 0xffff, 0xff00);
+	chk("bad vector ip restored", xm.ip & 0xffff, 0x100);
+
+	/* --- the seam answers INT 0E1h as well as 0E0h: DDT86 moves the
+	   BDOS up one vector and calls it there. --- */
+	xsetupivt();
+	xm.r[R_CX] = 12;				/* version	*/
+	i86intno = 0xe1;
+	chk("int 0e1h serviced", (long)i86bdos(&xm), (long)B_RUN);
+	chk("int 0e1h answered", xm.r[R_AX] & 0xffff, (long)(i86ver & 0xffff));
+	i86intno = 0xe2;
+	chk("int 0e2h still refused", (long)i86bdos(&xm), (long)B_VEC);
+}
+
+/* ================================================================== */
 /* 4. the loader						      */
 /* ================================================================== */
 
@@ -2108,6 +2330,12 @@ struct ld {
  */
 static char lseg[CMD_NGRP][65536];
 
+/* Paragraph 0: the low 64 KB, holding the interrupt vector table.  It is
+ * registered after the groups, so a paragraph inside a group's own
+ * segment still resolves to that group.  The target gate keeps the
+ * segment it staged the file in for this (src/cmd/i86.c). */
+static char zseg[65536];
+
 static int ldread(const char *path, struct ld *L)
 {
 	FILE *fp;
@@ -2170,7 +2398,10 @@ static int ldplace(struct ld *L, const char *tail)
 		i86spar[i] = (i16)(0x1000 * (i + 1));
 		i86sbase[i] = lseg[i];
 	}
-	i86nseg = n;
+	memset(zseg, 0, sizeof zseg);
+	i86spar[n] = (i16)0;
+	i86sbase[n] = zseg;
+	i86nseg = n + 1;
 	L->m.fl = F_ONES;
 	L->m.lz = LZ_NONE;
 	rc = i86place(&L->c, &L->m, n);
@@ -3029,6 +3260,30 @@ static void sputc(int c)
 		scon[sconn++] = (char)c;
 }
 
+/*
+ * Scripted console input, for the `-x'/`-X' runs only: a program that
+ * reads a command line and acts on it cannot be watched doing it
+ * otherwise.  Null means there is no script and the console functions
+ * are left exactly as they were, which is what every corpus run uses.
+ * A newline in the script is the carriage return a CP/M program is
+ * waiting for; running out sets skeyeof, and runx() stops rather than
+ * let a command loop spin to the step limit.
+ */
+static const char *skeys;
+static int skeyeof;
+
+static int skey(void)
+{
+	int c;
+
+	if (skeys == 0 || *skeys == 0) {
+		skeyeof = 1;
+		return (-1);
+	}
+	c = *skeys++ & 0xff;
+	return (c == '\n' ? '\r' : c);
+}
+
 /* An FCB name is 11 bytes with the high bits used as attributes; a
  * comparison has to mask them, and a search has to honour `?'. */
 static int smatch(const char *a, const char *b, int wild)
@@ -3344,7 +3599,34 @@ static int stub(int fn, i16 val, char *addr)
 			sputc(c->a[i] & 0x7f);
 		return (0);
 	}
+	case 1:					/* console input	*/
+		if (!skeys)
+			return (0xff);
+		i = skey();
+		if (i < 0)
+			return (0x1a);
+		sputc(i);
+		return (i);
+	case 10: {				/* read console buffer	*/
+		int max, k, c;
+
+		if (!skeys)
+			return (0xff);
+		max = addr[0] & 0xff;
+		k = 0;
+		while ((c = skey()) >= 0 && c != '\r' && k < max)
+			addr[2 + k++] = (char)c;
+		addr[1] = (char)k;
+		for (i = 0; i < k; i++)
+			sputc(addr[2 + i]);
+		sputc('\r');
+		sputc('\n');
+		return (0);
+	}
 	case 11:				/* console status	*/
+		/* Always "no key waiting", script or not: a scripted
+		 * line is an answer to a read, never the keypress a
+		 * program polls for to abort a listing. */
 		return (0);
 	case 12:
 		return (0x2031);
@@ -4590,14 +4872,22 @@ static void runx(const char *path, const char *tail)
 	 * disagree with out loud, so it is settable for a measurement. */
 	if (getenv("I86VER"))
 		i86ver = (i16)strtol(getenv("I86VER"), (char **)0, 0);
+	/* Console input, for a program that has a command loop.  One
+	 * newline-separated line per command; the run ends when the
+	 * script does, so a prompt nobody answers cannot spin. */
+	skeys = getenv("I86KEYS");
+	skeyeof = 0;
 
 	brc = B_RUN;
 	rc = X_OK;
 	nref = 0;
 	for (nstep = 0; nstep < 5000000L; nstep++) {
 		rc = i86step(&L.m, &in);
-		if (rc == X_OK)
+		if (rc == X_OK) {
+			if (skeyeof)
+				break;
 			continue;
+		}
 		if (rc == X_INT) {
 			brc = i86bdos(&L.m);
 			if (brc == B_RUN)
@@ -4734,6 +5024,7 @@ char **argv;
 	t_far();
 	t_segcheck();
 	t_segslow();
+	t_intvec();
 	t_loader();
 	t_corpus(argv[1]);
 	t_fixtures(argv[2]);

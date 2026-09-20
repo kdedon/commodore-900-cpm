@@ -18,7 +18,13 @@ static struct fcb	f;
  * input file. gseg[i] matches i86spar[i]/i86sbase[i] and group sidx. */
 #define I86MAXG	6			/* 7 pool - 1 staging		*/
 
-static int	gseg[I86MAXG];		/* the segment numbers held	*/
+/* The staging segment is not released after the load: it becomes the
+ * guest's paragraph 0, the low 64 KB that holds the interrupt vector
+ * table.  So it is held for the whole run and freed with the rest, and
+ * a program that declares the six groups this machine can place still
+ * gets them -- the seventh segment was always acquired, and now it is
+ * kept rather than handed back. */
+static int	gseg[I86MAXG + 1];	/* the segment numbers held	*/
 static int	ngseg;			/* how many of them		*/
 static int	cseg, dseg;		/* the guest's first two 64 KB	*/
 static char	*cmem, *dmem;
@@ -138,7 +144,7 @@ int rc;
 	case B_FN:	return ("an unmapped function");
 	case B_ADDR:	return ("a parameter outside the guest segment");
 	case B_SEG:	return ("a DMA base we never handed out");
-	case B_VEC:	return ("an interrupt that is not 0E0h");
+	case B_VEC:	return ("an interrupt with no handler and no seam");
 	case B_TRAP:	return ("a divide by zero");
 	}
 	return ("?");
@@ -427,7 +433,19 @@ char *argv[];
 		segcopy(i86sbase[g->sidx], stage + g->foff,
 			(long) g->len * (long) CMD_PARA);
 	}
-	segcall(SEG_PUT, (long) sseg);		/* wanted for the read only */
+	/*
+	 * The staging segment becomes paragraph 0 now that the images
+	 * are out of it: zeroed, registered after the groups so that a
+	 * paragraph inside a group still resolves to that group, and
+	 * held until the run ends.  Zeroed is what makes it a vector
+	 * table with no handlers in it, which is what leaves INT 0E0h
+	 * the seam's until a guest writes a vector of its own.
+	 */
+	segzero(stage);
+	i86spar[need] = 0;
+	i86sbase[need] = stage;
+	i86nseg = need + 1;
+	gseg[ngseg++] = sseg;
 
 	/*
 	 * One line per group: its form, the guest paragraph it was given

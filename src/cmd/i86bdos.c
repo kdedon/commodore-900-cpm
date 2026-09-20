@@ -163,7 +163,7 @@ static i8 pmap[53] = {
 #define BR_FN	1		/* a function stage one does not map	*/
 #define BR_ADDR	2		/* the parameter left its segment	*/
 #define BR_SEG	3		/* the DMA base is a paragraph we lack	*/
-#define BR_VEC	4		/* an interrupt that is not 0E0h	*/
+#define BR_VEC	4		/* an interrupt with no handler and no seam */
 #define BR_DIV	5		/* vector 0: the guest divided by zero	*/
 
 static int breason;
@@ -175,7 +175,7 @@ char *i86berr()
 	case BR_FN:	return ("BDOS function not mapped in stage one");
 	case BR_ADDR:	return ("parameter runs past the end of its segment");
 	case BR_SEG:	return ("DMA base is a paragraph we did not assign");
-	case BR_VEC:	return ("interrupt vector other than 0E0h");
+	case BR_VEC:	return ("interrupt with no handler and no seam");
 	case BR_DIV:	return ("divide error (INT 0)");
 	}
 	return ("unknown");
@@ -372,7 +372,13 @@ struct i86 *m;
 	i32 n;
 
 	breason = BR_NONE;
-	if (i86intno != 0xe0) {
+	/* 0E1h as well as 0E0h.  DDT86 reads the vector byte out of its
+	 * own INT 0E0h instruction, adds one, copies vector 0E0h to the
+	 * vector above it and issues its own BDOS calls there, keeping
+	 * 0E0h free for the handler it plants for the program under test.
+	 * So the interrupt above the seam's IS the seam, for a guest that
+	 * moved it, and answering it is what lets DDT86 talk at all. */
+	if (i86intno != 0xe0 && i86intno != 0xe1) {
 		/* Vector 0 is the divide error i86exec.c raises, and it
 		 * is a fault in the guest rather than a hole in us; the
 		 * distinction is worth keeping in the message. */

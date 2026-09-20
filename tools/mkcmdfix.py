@@ -534,7 +534,7 @@ def main(argv):
            (G_DATA, npar(data), 0, 512, 0)], [code, data])
     man.append("RUN RUNSMALL.CMD X_HALT " + exp)
 
-    img, exp = p_refuse(0xcf, 'iret: a real instruction we do not run')
+    img, exp = p_refuse(0xce, 'into: a real instruction we do not run')
     write(d, 'RUNUNIMP.CMD', [(G_CODE, npar(img), 0, 64, 0)], [img])
     man.append("RUN RUNUNIMP.CMD X_UNIMP " + exp)
 

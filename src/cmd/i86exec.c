@@ -741,6 +741,53 @@ i16 par;
 	return (X_SEGESC);
 }
 
+/* ------------------------------------------------------------------ */
+/* interrupts the guest itself handles				       */
+
+/*
+ * takeint -- enter the guest's own handler for vector `n', the way the
+ * hardware does: FLAGS, CS and IP pushed, IF and TF cleared, control
+ * through the four bytes at 0000:4n.
+ *
+ * Two things make it a no-op instead, and both return X_INT so that the
+ * caller hands the vector to the seam exactly as it always has.  The
+ * first is no paragraph 0 at all -- a caller that placed no segment
+ * there has no vector table and no guest handlers.  The second is a
+ * zero vector, which is this shim's spelling of "nobody installed one":
+ * 0000:0000 is the table's own first word, so no handler is ever really
+ * there, and leaving the vector zero is what lets INT 0E0h keep going
+ * to the seam while a vector the guest DID write is honoured.
+ */
+static int takeint(m, n)
+struct i86 *m;
+int n;
+{
+	register char *v;
+	i16 off, seg, sp0;
+	int rc;
+
+	v = i86resolve((i16)0);
+	if (v == (char *)0)
+		return (X_INT);
+	v += (n & 0xff) * 4;
+	off = (i16)((v[0] & 0xff) | ((i16)(v[1] & 0xff) << 8));
+	seg = (i16)((v[2] & 0xff) | ((i16)(v[3] & 0xff) << 8));
+	if (off == 0 && seg == 0)
+		return (X_INT);
+	sp0 = m->r[R_SP];
+	push(m, (i16)(i86flags(m) | F_ONES));
+	push(m, m->sr[S_CS]);
+	push(m, m->ip);
+	rc = setsr(m, S_CS, seg);
+	if (rc != X_OK) {
+		m->r[R_SP] = sp0;
+		return (rc);
+	}
+	m->fl = (i16)(m->fl & ~(F_IF | F_TF));
+	m->ip = off;
+	return (X_OK);
+}
+
 /* A far transfer to entry SS:0000 is the guest warm-boot convention.
  * wset enables this environment rule; CPU-only callers can leave it off. */
 static int wboot(m, seg, off)
@@ -767,12 +814,13 @@ struct i86 *m;
 struct i86in *in;
 {
 	register i16 a, b, r;
-	i16 e, ip0;
+	i16 e, ip0, tf0;
 	i32 la, lb;
 	long sa, sb;
-	int rc, n;
+	int rc, n, ient;
 
 	ip0 = m->ip;
+	ient = 0;
 	m->fault = 0;
 	/* A code segment the slow path had to bias is refused before a
 	 * byte of it is decoded, and this is not laziness.  i86dec()
@@ -793,6 +841,10 @@ struct i86in *in;
 	if (in->op == I_BAD)
 		return (X_BAD);
 	i86ninsn++;
+	/* The trap flag is read HERE and acted on at the end, which is
+	 * what makes an IRET or POPF that sets it step the instruction
+	 * AFTER itself rather than trapping on the spot. */
+	tf0 = (i16)(m->fl & F_TF);
 	m->ip = (i16)(m->ip + in->len);
 	e = (i16)((in->fl & IN_MEM) ? ea(m, in) : 0);
 
@@ -1067,7 +1119,33 @@ struct i86in *in;
 
 	case I_INT:
 		i86intno = (int)(in->imm & 0xff);
-		return (X_INT);
+		rc = takeint(m, i86intno);
+		if (rc == X_INT)
+			return (X_INT);	/* IP past the INT: the seam's rule */
+		if (rc != X_OK) {
+			m->ip = ip0;
+			return (rc);
+		}
+		ient = 1;
+		break;
+	case I_IRET:
+		/* The frame is READ before SP moves, on I_RETF's pattern,
+		 * so an unresolvable CS leaves the stack as it was. */
+		a = mrw(m, S_SS, m->r[R_SP]);			/* ip	*/
+		b = mrw(m, S_SS, (i16)(m->r[R_SP] + 2));	/* cs	*/
+		r = mrw(m, S_SS, (i16)(m->r[R_SP] + 4));	/* flags */
+		if (m->fault)
+			break;
+		rc = setsr(m, S_CS, b);
+		if (rc != X_OK) {
+			m->ip = ip0;
+			return (rc);
+		}
+		m->r[R_SP] = (i16)(m->r[R_SP] + 6);
+		m->ip = a;
+		m->fl = (i16)(r | F_ONES);
+		m->lz = LZ_NONE;
+		break;
 
 	case I_CBW:
 		m->r[R_AX] = (i16)((m->r[R_AX] & 0x80) ? (m->r[R_AX] | 0xff00)
@@ -1289,7 +1367,7 @@ struct i86in *in;
 	/* ---- decoded, deliberately not executed in stage one.  Each
 	 * of these is a line in CPM86-STAGE-ONE.md §2.3's "no" column;
 	 * refusing loudly is the whole point of decoding them. */
-	case I_IRET: case I_INTO:		/* no interrupt frames	*/
+	case I_INTO:				/* no overflow trap	*/
 	case I_ESC:				/* no 8087		*/
 	case I_IO:				/* no PC hardware	*/
 	case I_WAIT:
@@ -1306,6 +1384,20 @@ struct i86in *in;
 	if (m->fault) {
 		m->ip = ip0;
 		return (X_WINDOW);
+	}
+	/* Single step.  The instruction that entered a handler cleared TF
+	 * on the way in and must not also be stepped, and a vector 1 the
+	 * guest never wrote leaves TF meaning nothing, as it always did. */
+	if (tf0 && !ient) {
+		rc = takeint(m, 1);
+		if (rc != X_OK && rc != X_INT) {
+			m->ip = ip0;
+			return (rc);
+		}
+		if (m->fault) {
+			m->ip = ip0;
+			return (X_WINDOW);
+		}
 	}
 	return (X_OK);
 }

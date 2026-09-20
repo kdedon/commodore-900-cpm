@@ -222,8 +222,18 @@ extern i16 i86segbad;		/* paragraph that caused X_SEGESC	*/
  * host base for a known paragraph, or 0. */
 extern char *i86resolve();
 
-/* The assigned set itself, filled by whoever acquires the segments. */
-#define I86NSEG	8
+/* The assigned set itself, filled by whoever acquires the segments.
+ * Nine: the eight groups a .CMD header can declare, and paragraph 0.
+ *
+ * PARAGRAPH 0 is a segment like any other here, entered in this set by
+ * whoever acquires it, and it is how the guest reaches the interrupt
+ * vector table -- DDT86 plants a handler in it and reads one back with
+ * ordinary MOVSB through a zeroed DS and ES.  Registering it also makes
+ * the low 64 KB addressable paragraph by paragraph, through setsr()'s
+ * interior window, which is what the low paragraphs have always meant.
+ * A caller that registers nothing at paragraph 0 has no vector table
+ * and no guest handlers: see i86exec.c takeint(). */
+#define I86NSEG	9
 extern i16 i86spar[];		/* guest paragraph			*/
 extern char *i86sbase[];	/* the host segment it names		*/
 extern int i86nseg;
@@ -258,7 +268,7 @@ extern char *i86mnem();		/* mnemonic of a decoded instruction	*/
 #define B_FN	2		/* a function stage one does not map	*/
 #define B_ADDR	3		/* its parameter left the guest segment	*/
 #define B_SEG	4		/* a DMA base we never handed out	*/
-#define B_VEC	5		/* an interrupt that is not 0E0h	*/
+#define B_VEC	5		/* an interrupt with no guest handler	*/
 #define B_TRAP	6		/* vector 0: the guest divided by zero	*/
 
 extern int i86bdos();		/* service the pending i86intno		*/
