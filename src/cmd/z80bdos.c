@@ -7,6 +7,7 @@
  * random-record byte order, and character-control blocks for native BDOS. */
 
 #include "z80.h"
+#include "gdpb.h"
 
 int	z80bdosfn;		/* function of the last call, or -1	*/
 int	z80biosfn;		/* BIOS vector of the last call, or -1	*/
@@ -64,6 +65,7 @@ z16	z80ver = 0x0031;
 #define P_CCB	8		/* DE, a character control block	*/
 #define P_SCB	9		/* DE, function 49's parameter block	*/
 #define P_NO	10		/* not mapped in stage one		*/
+#define P_DPB	11		/* fns 27 and 31: the answer is an address */
 
 #define Z80BPB	8		/* fn 50: {func, A, BC, DE, HL}		*/
 #define Z80FCB	36		/* sizeof(struct fcb) -- src/cmd/cpm.h	*/
@@ -101,11 +103,11 @@ static z8 pmap[113] = {
 	P_NONE,		/* 24 login vector				*/
 	P_NONE,		/* 25 current disk				*/
 	P_WORD,		/* 26 set DMA address -- handled before this table */
-	P_NO,		/* 27 get addr(alloc)				*/
+	P_DPB,		/* 27 get addr(alloc)				*/
 	P_NONE,		/* 28 write protect disk				*/
 	P_NONE,		/* 29 get read-only vector			*/
 	P_FCB,		/* 30 set file attributes				*/
-	P_NO,		/* 31 get addr(disk parms)			*/
+	P_DPB,		/* 31 get addr(disk parms)			*/
 	P_BYTE,		/* 32 get/set user code				*/
 	P_FCB,		/* 33 read random				*/
 	P_FCB,		/* 34 write random				*/
@@ -327,6 +329,43 @@ struct z80 *m;
 		!= (char *)0);
 }
 
+/*
+ * dparms -- functions 27 and 31, whose answer is an ADDRESS.
+ *
+ * Our BDOS never hands one out: function 31 copies the disk parameter
+ * block to a buffer the caller names, and function 27 does the same with
+ * the allocation vector, because neither structure is addressable from a
+ * transient program.  So the buffer named here is one inside the guest,
+ * above GUESTTOP where the guest's own TPA ends, and `*offp' is the
+ * offset the guest is given.
+ *
+ * Zero when the vector of this drive is longer than the furniture, which
+ * takes a drive of more than 28,287 blocks -- ours are 2,560 and 2,048
+ * (src/bios/bios900.c) -- and which leaves function 27 refused rather
+ * than answered with a truncated map.
+ */
+static int dparms(m, fn, offp)
+struct z80 *m;
+int fn;
+z16 *offp;
+{
+	struct gdpb d;
+	long n;
+
+	z80sys(31, (z16)0, (char *)&d);
+	if (fn == 31) {
+		gdpbpack(&d, z80addr(m, (z16)FAKEDPB, (z32)GDPB_LEN));
+		*offp = FAKEDPB;
+		return (1);
+	}
+	n = gdpbalv(&d);
+	if (n > (long)(FAKEBIOS - FAKEALV))
+		return (0);
+	z80sys(27, (z16)0, z80addr(m, (z16)FAKEALV, (z32)n));
+	*offp = FAKEALV;
+	return (1);
+}
+
 /* The five functions src/bdos/bdosrw.c multio() shells. */
 static int ismulti(fn)
 int fn;
@@ -532,7 +571,7 @@ struct z80 *m;
 {
 	register int fn, cls;
 	register char *p;
-	z16 de;
+	z16 de, dpboff;
 	int r, off, set;
 	long ga;
 	z32 n;
@@ -692,6 +731,13 @@ struct z80 *m;
 		break;
 	case P_WORD:
 		r = z80sys(fn, de, (char *)0);
+		break;
+	case P_DPB:
+		if (!dparms(m, fn, &dpboff)) {
+			breason = BR_FN;
+			return (B_FN);
+		}
+		r = (int)dpboff;
 		break;
 	case P_FCB:
 		n = fn == 23 ? (z32)Z80REN : (z32)Z80FCB;

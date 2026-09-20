@@ -21,6 +21,7 @@
 #include <stdlib.h>
 
 #include "../src/cmd/z80.h"
+#include "../src/cmd/gdpb.h"
 
 static int nfail, ntest;
 
@@ -2664,6 +2665,21 @@ static int smultio(int fn, char *addr)
 	return ((done << 8) | (rtn & 0xff));
 }
 
+/*
+ * Drive A: as src/bios/bios900.c drvinit() builds it for the 10 MB
+ * partition: BLS 4096 (bsh 5, blm 31) over 20,480 512-byte blocks, so
+ * dsm is 20480/8 - 1 and exm is 1 because dsm is over 255.  DRM 511 with
+ * four directory blocks reserved, a fixed disk (cks 0), no system
+ * tracks.  Functions 31 and 27 answer out of this, which is what our
+ * BDOS does with the block the BIOS handed it.
+ */
+static struct gdpb sdpb = { 64, 5, 31, 1, 0, 2559, 511, 0xF000, 0, 0 };
+
+/* The vector a login scan leaves on an empty drive: the four directory
+ * blocks and nothing else, block 0 in the TOP bit of the first byte
+ * (src/bdos/dskutil.c setaloc). */
+static char salv[(2559 >> 3) + 1] = { (char)0xf0 };
+
 static int stub(int fn, z16 val, char *addr)
 {
 	struct sfile *f;
@@ -2726,6 +2742,30 @@ static int stub(int fn, z16 val, char *addr)
 		return (0);
 	case 26:				/* set DMA address	*/
 		sdma = addr;
+		return (0);
+	case 31:			/* copy out the disk parameters	*/
+		memcpy(addr, &sdpb, sizeof sdpb);
+		return (0);
+	case 46: {			/* free space on a drive	*/
+		/* src/bdos/fileio.c free_sp(): the free blocks of the
+		 * vector above, times the records in one, as three
+		 * little-endian bytes and a zero in the DMA buffer. */
+		long recs;
+		int b;
+
+		for (b = 0, recs = 0; b <= (int)sdpb.dsm; b++)
+			if (!(salv[b >> 3] & (0x80 >> (b & 7))))
+				recs += (long)sdpb.blm + 1L;
+		if (sdma) {
+			sdma[0] = (char)(recs & 0xff);
+			sdma[1] = (char)((recs >> 8) & 0xff);
+			sdma[2] = (char)((recs >> 16) & 0xff);
+			sdma[3] = 0;
+		}
+		return (0);
+	}
+	case 27:			/* copy out the allocation vector */
+		memcpy(addr, salv, (size_t)((sdpb.dsm >> 3) + 1));
 		return (0);
 	case 15:				/* open			*/
 		f = sfind(addr + 1);
@@ -2803,10 +2843,6 @@ static int stub(int fn, z16 val, char *addr)
 	case 34:				/* write random		*/
 	case 40:				/* write random, 0 fill	*/
 		return (smultio(fn, addr));
-	case 46:				/* get disk free space	*/
-		if (sdma)
-			memset(sdma, 0x7f, 3);
-		return (0);
 	case 49:				/* get/set SCB		*/
 		/* Enough of a CP/M 3 SCB for a utility to steer by: an
 		 * 80-column console, page mode off, and a version byte.
@@ -3046,11 +3082,8 @@ static void t_seam(void)
 	chk("fn 0 terminates", z80bdos(&G), B_EXIT);
 	chk("fn 0 did not reach the BDOS", rfn, -1);
 
-	/* the refusals */
-	z80setr(&G, R_C, 27);
-	chk("fn 27 is refused by name", z80bdos(&G), B_FN);
-	z80setr(&G, R_C, 31);
-	chk("fn 31 is refused by name", z80bdos(&G), B_FN);
+	/* the refusals.  27 and 31 are NOT among them any more: they are
+	 * answered out of the guest's own memory, in section 8e. */
 	z80setr(&G, R_C, 59);
 	chk("fn 59 is refused by name", z80bdos(&G), B_FN);
 
@@ -3109,6 +3142,78 @@ static void smkname(char *out, const char *s)
 		s++;
 	for (i = 0; i < 3 && *s; i++)
 		out[8 + i] = *s++;
+}
+
+/* ---- 8e: the two functions whose answer is an address ---- */
+
+/*
+ * The seventeen bytes drive A: comes to.  tests/i86test.c holds the same
+ * list for the CP/M-86 seam, and the two have to agree: one disk, one
+ * block, whichever guest is asking.
+ */
+static const unsigned char edpb[GDPB_LEN] = {
+	0x40, 0x00,		/* SPT 64 records a track		*/
+	0x05,			/* BSH: 4096-byte blocks		*/
+	0x1f,			/* BLM					*/
+	0x01,			/* EXM: dsm is over 255			*/
+	0xff, 0x09,		/* DSM 2559				*/
+	0xff, 0x01,		/* DRM 511				*/
+	0xf0, 0x00,		/* AL0, AL1: four directory blocks	*/
+	0x00, 0x00,		/* CKS 0: a fixed disk			*/
+	0x00, 0x00,		/* OFF 0: no system tracks		*/
+	0x00,			/* PSH: the BIOS takes 128-byte records	*/
+	0x00			/* PHM					*/
+};
+
+static void t_dparms(void)
+{
+	static char img[8];
+	int i, bad;
+
+	img[0] = (char)0xc9;			/* RET			*/
+	z80load(&G, gmem, img, 1L);
+	sysmode = SYS_CPM;
+	z80bdosinit(&G);
+	z80hookno = HOOK_BDOS;		/* the hook a CALL 5 would leave */
+
+	/* The two blocks share the run between the BDOS hook and the BIOS
+	 * table with nothing else: the table, its stubs and the SCB copy
+	 * are all above FAKEBIOS, so that is the vector's ceiling. */
+	chk("the blocks are above the BDOS hook",
+		(long)(FAKEDPB >= FAKEBDOS + 3), 1L);
+	chk("... and do not overlap each other",
+		(long)(FAKEALV >= FAKEDPB + GDPB_LEN), 1L);
+	chk("... and the furniture above them starts at FAKEBIOS",
+		(long)(FAKESCB >= FAKEBIOS), 1L);
+
+	z80setr(&G, R_C, 31);
+	G.rp[P_DE] = 0;
+	chk("fn 31 is answered", z80bdos(&G), B_RUN);
+	chk("... with an address inside the guest", (long)G.rp[P_HL],
+		(long)FAKEDPB);
+	chk("... above the TPA the guest was given",
+		G.rp[P_HL] >= (z16)GUESTTOP, 1);
+	chk("... and clear of the BIOS vectors",
+		(long)FAKEDPB + GDPB_LEN <= (long)FAKEBIOS, 1);
+	for (i = 0, bad = -1; i < GDPB_LEN; i++)
+		if ((gmem[FAKEDPB + i] & 0xff) != edpb[i])
+			bad = i;
+	chk("... holding the disk parameter block of drive A:", bad, -1);
+	chk("... with A the low half of it", G.a & 0xff, FAKEDPB & 0xff);
+	chk("... and B the high half", z80getr(&G, R_B), (FAKEDPB >> 8) & 0xff);
+
+	z80setr(&G, R_C, 27);
+	chk("fn 27 is answered", z80bdos(&G), B_RUN);
+	chk("... with an address inside the guest", (long)G.rp[P_HL],
+		(long)FAKEALV);
+	chk("... and the whole vector under the BIOS vectors",
+		(long)FAKEALV + ((2559 >> 3) + 1) <= (long)FAKEBIOS, 1);
+	chk("... four directory blocks allocated", gmem[FAKEALV] & 0xff, 0xf0);
+	chk("... and nothing after them", gmem[FAKEALV + 1] & 0xff, 0);
+	chk("... to the last byte of the vector",
+		gmem[FAKEALV + (2559 >> 3)] & 0xff, 0);
+
+	sysmode = SYS_REC;
 }
 
 static void sreset(void)
@@ -4107,6 +4212,7 @@ char **argv;
 	t_loader();
 	t_corpus(argv[1]);
 	t_seam();
+	t_dparms();
 	t_dump(argv[1]);
 	t_pip(argv[1]);
 	t_random();

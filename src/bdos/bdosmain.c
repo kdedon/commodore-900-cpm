@@ -496,7 +496,18 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 26:  GBL.dmaadr = infop;		/* set dma address */
 		    break;
 
-	  /* No function 27 -- Get Allocation Vector */
+	  /* Copy the allocation vector into caller memory and return its offset,
+ * the way function 31 below hands over the disk parameter block: the
+ * vector lives in the BIOS's own pool (src/bios/bios900.c alvpool) and a
+ * transient cannot dereference it.  Its length is (dsm >> 3) + 1 bytes,
+ * which the caller reads out of the block function 31 gave it.  The
+ * drive has to be selected first because the select is what LOGS IT IN,
+ * and the login scan is what fills the vector (src/bdos/fileio.c). */
+	  case 27:  if (GBL.curdsk != GBL.dfltdsk) seldsk(GBL.dfltdsk);
+		    cpy_out( (GBL.dphp)->alv, infop,
+			     (long)(((GBL.parmp)->dsm >> 3) + 1) );
+		    rtnval = info;	/* return the allocation vector */
+		    break;
 
 	  case 28:  ro_dsk |= 1<<GBL.dfltdsk;	/* set disk read-only */
 		    break;

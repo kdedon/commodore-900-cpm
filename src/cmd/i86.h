@@ -359,6 +359,15 @@ struct i86cmd {
 				/* seven segments, one of them staging,	*/
 				/* so six groups.  See i86place().	*/
 
+/* The group that holds the base page and the stack, and the first offset
+ * in it the guest was NOT given: its allocation is i86dgtop bytes and its
+ * stack starts at the top of that, so everything above belongs to the
+ * shim.  i86place() decides both, because i86place() is what grows a
+ * group to the paragraph count its descriptor asked for; the BDOS seam
+ * puts the blocks functions 27 and 31 answer with up there. */
+extern i16 i86dgpar;
+extern i32 i86dgtop;
+
 extern int i86hdr();		/* parse + validate a 128-byte header	*/
 extern int i86place();		/* bind groups to segment slots		*/
 extern char *i86cerr();		/* the refusal text for a CE_* code	*/

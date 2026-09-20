@@ -146,6 +146,9 @@ int e;
 }
 
 
+i16	i86dgpar;		/* the group the base page and stack are in */
+i32	i86dgtop;		/* bytes of it the guest was given	*/
+
 /* Place groups densely in CODE, DATA, EXTRA, STACK, AUX order using
  * caller-supplied segments. CS uses code, DS uses data or code, ES/SS
  * default to DS unless overridden. Aux paragraphs appear in the base
@@ -165,6 +168,10 @@ int nseg;
 	int idx[9];			/* form -> descriptor, or -1	*/
 	int next, ds;
 
+	/* Nothing spare until a group has been placed, so that a refused
+	 * placement cannot leave the last guest's numbers standing. */
+	i86dgpar = 0;
+	i86dgtop = 0x10000L;
 	for (i = 0; i <= 8; i++)
 		idx[i] = -1;
 	for (i = 0; i < CMD_NGRP; i++) {
@@ -197,6 +204,8 @@ int nseg;
 		m->ip = c->entry;
 		m->wseg = m->sr[S_SS];
 		m->wset = 1;
+		i86dgpar = g->par;
+		i86dgtop = (i32)(g->npar & 0xffff) * (i32)CMD_PARA;
 		return (CE_OK);
 	}
 
@@ -233,6 +242,8 @@ int nseg;
 	m->sb[S_DS] = i86sbase[g->sidx];
 	m->sr[S_ES] = m->sr[S_SS] = m->sr[S_DS];
 	m->sb[S_ES] = m->sb[S_SS] = m->sb[S_DS];
+	i86dgpar = g->par;
+	i86dgtop = (i32)(g->npar & 0xffff) * (i32)CMD_PARA;
 
 	if (idx[G_EXTRA] >= 0) {
 		g = &c->g[idx[G_EXTRA]];

@@ -285,6 +285,19 @@ extern int z80ww();		/* (m, addr, v)				*/
 #define FAKESCB		0xf300
 #define SCBIMGLEN	100	/* src/bdos/scb.h SCBLEN		*/
 
+/* Function 31's disk parameter block and function 27's allocation
+ * vector.  Both answer with an ADDRESS, and the only address a guest can
+ * use is one inside its own 64 KB, so the blocks are built here, for the
+ * same reason the SCB image above is.  Above GUESTTOP -- the top the
+ * program itself computes from the word at 6 -- so a guest that stays
+ * inside the TPA it was given cannot reach them, and in the empty run
+ * between the BDOS hook and FAKEBIOS rather than above the BIOS table,
+ * where the table, its stubs and the SCB copy now reach to 0xF364.
+ * FAKEBIOS is therefore the vector's ceiling: 3,536 bytes, which is a
+ * drive of 28,287 blocks against the 2,560 of ours. */
+#define FAKEDPB		0xe410	/* GDPB_LEN bytes			*/
+#define FAKEALV		0xe430	/* at most FAKEBIOS - FAKEALV bytes	*/
+
 /* FAKEBDOS is GUESTTOP + 6 and the 6 is load-bearing.  A CP/M-80
  * program finds the top of the TPA by reading the ADDRESS FIELD of the
  * `JMP' at 5 -- `LHLD 6' -- and subtracting nothing: the word at 6 is

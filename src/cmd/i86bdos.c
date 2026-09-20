@@ -7,6 +7,7 @@
  * byte order for native BDOS calls. */
 
 #include "i86.h"
+#include "gdpb.h"
 
 /* ------------------------------------------------------------------ */
 /* what the seam reports to its caller				       */
@@ -93,6 +94,7 @@ i16	i86ver = 0x0022;
 #define P_STR	4		/* DS:DX, a `$'-terminated string	*/
 #define P_BUF	5		/* DS:DX, a console read buffer		*/
 #define P_NO	6		/* not mapped in stage one		*/
+#define P_DPB	7		/* fns 27 and 31: the answer is an address */
 
 #define I86FCB	36		/* sizeof(struct fcb) -- src/cmd/cpm.h	*/
 #define I86REN	52		/* fn 23: old FCB at 0, new at 16	*/
@@ -128,11 +130,11 @@ static i8 pmap[53] = {
 	P_NONE,		/* 24 login vector				*/
 	P_NONE,		/* 25 current disk				*/
 	P_WORD,		/* 26 set DMA offset -- handled before this table */
-	P_NO,		/* 27 get addr(alloc)				*/
+	P_DPB,		/* 27 get addr(alloc)				*/
 	P_NONE,		/* 28 write protect disk				*/
 	P_NONE,		/* 29 get read-only vector			*/
 	P_FCB,		/* 30 set file attributes				*/
-	P_NO,		/* 31 get addr(disk parms)			*/
+	P_DPB,		/* 31 get addr(disk parms)			*/
 	P_BYTE,		/* 32 get/set user code				*/
 	P_FCB,		/* 33 read random				*/
 	P_FCB,		/* 34 write random				*/
@@ -248,6 +250,59 @@ static int dmafits()
 		<= 0x10000L);
 }
 
+/*
+ * Where the blocks functions 27 and 31 answer with live: the TOP of the
+ * group that holds the guest's base page and stack.  The disk parameter
+ * block takes the last 32 bytes of the segment, so its offset is the
+ * same on every drive and a guest may keep it; the allocation vector,
+ * whose length is the drive's, is laid out below it.
+ */
+#define I86DPBOFF	0xffe0L
+
+/*
+ * dparms -- functions 27 and 31, whose answer is an ADDRESS.
+ *
+ * Our BDOS never hands one out: function 31 copies the disk parameter
+ * block to a buffer the caller names, and function 27 does the same with
+ * the allocation vector, because neither structure is addressable from a
+ * transient program.  So the buffer is one inside the guest, and `*offp'
+ * is the offset the guest is given, with i86dgpar for the segment half.
+ *
+ * It goes ABOVE the group's own allocation.  i86place() grew that group
+ * to the paragraph count its descriptor asked for, the base page states
+ * that count and the stack starts at the top of it, so a guest that
+ * keeps inside the memory it was given cannot reach these bytes.  A
+ * guest whose group filled the whole 64 KB leaves no such room and is
+ * refused, which is what it got before.
+ */
+static int dparms(m, fn, offp)
+struct i86 *m;
+int fn;
+i16 *offp;
+{
+	struct gdpb d;
+	char *b;
+	i32 off;
+
+	b = i86resolve(i86dgpar);
+	if (b == (char *)0)
+		return (0);
+	i86sys(31, (i16)0, (char *)&d);
+	if (fn == 31) {
+		if (I86DPBOFF < i86dgtop)
+			return (0);
+		gdpbpack(&d, b + I86DPBOFF);
+		*offp = (i16)I86DPBOFF;
+		return (1);
+	}
+	off = I86DPBOFF - gdpbalv(&d);
+	if (off < i86dgtop)
+		return (0);
+	i86sys(27, (i16)0, b + off);
+	*offp = (i16)off;
+	return (1);
+}
+
 /* The five functions src/bdos/bdosrw.c multio() shells. */
 static int ismulti(fn)
 int fn;
@@ -312,7 +367,7 @@ struct i86 *m;
 {
 	register int fn, cls;
 	register char *p;
-	i16 dx;
+	i16 dx, dpboff;
 	int r;
 	i32 n;
 
@@ -428,6 +483,19 @@ struct i86 *m;
 		break;
 	case P_WORD:
 		r = i86sys(fn, dx, (char *)0);
+		break;
+	case P_DPB:
+		if (!dparms(m, fn, &dpboff)) {
+			breason = BR_FN;
+			return (B_FN);
+		}
+		/* CP/M-86 answers an address as ES:BX, so the segment
+		 * register goes with the offset; the offset itself lands
+		 * in BX through the ordinary result store below. */
+		m->sr[S_ES] = i86dgpar;
+		m->sb[S_ES] = i86resolve(i86dgpar);
+		m->so[S_ES] = 0;
+		r = (int)dpboff;
 		break;
 	case P_FCB:
 		n = fn == 23 ? (i32)I86REN : (i32)I86FCB;

@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include "../src/cmd/i86.h"
+#include "../src/cmd/gdpb.h"
 
 /* The native character control block functions 111 and 112 take. */
 struct sccb {
@@ -2774,6 +2775,11 @@ static void bsetup(void)
 	i86nseg = 2;
 	i86spar[0] = 0x1000; i86sbase[0] = cseg;
 	i86spar[1] = 0x2000; i86sbase[1] = bseg;
+	/* The data group's own allocation, as i86place() would have left
+	 * it: 0x800 paragraphs, which is what DRI's STAT.CMD asks for.
+	 * The half above is the shim's. */
+	i86dgpar = 0x2000;
+	i86dgtop = 0x8000L;
 	sysmode = SYS_REC;
 	sysret = 0;
 	sncall = 0;
@@ -2947,11 +2953,9 @@ static void t_seam(void)
 	chk("dma off past limit", bcall(26, (i16)0xff81), B_ADDR);
 
 	/* The functions stage one refuses by name, each for a reason in
-	 * the file's own comment: two return operating-system addresses
-	 * an 8086 has no way to hold, two are MP/M's, and the four above
-	 * 40 are CP/M-86's own memory and load calls. */
-	bsetup(); chk("fn 27 refused", bcall(27, (i16)0), B_FN);
-	bsetup(); chk("fn 31 refused", bcall(31, (i16)0), B_FN);
+	 * the file's own comment: two are MP/M's, and the four above 40
+	 * are CP/M-86's own memory and load calls.  27 and 31 are not
+	 * among them any more -- see section 8e. */
 	bsetup(); chk("fn 38 refused", bcall(38, (i16)0), B_FN);
 	bsetup(); chk("fn 50 refused", bcall(50, (i16)0), B_FN);
 	bsetup(); chk("fn 52 refused", bcall(52, (i16)0), B_FN);
@@ -3294,6 +3298,20 @@ static int smultio(int fn, char *addr)
 	return ((done << 8) | (rtn & 0xff));
 }
 
+/*
+ * Drive A: as src/bios/bios900.c drvinit() builds it for the 10 MB
+ * partition, and the same numbers tests/z80test.c holds: BLS 4096 (bsh
+ * 5, blm 31) over 20,480 512-byte blocks, so dsm is 20480/8 - 1 and exm
+ * is 1 because dsm is over 255.  DRM 511 with four directory blocks
+ * reserved, a fixed disk (cks 0), no system tracks.
+ */
+static struct gdpb sdpb = { 64, 5, 31, 1, 0, 2559, 511, 0xF000, 0, 0 };
+
+/* The vector a login scan leaves on an empty drive: the four directory
+ * blocks and nothing else, block 0 in the TOP bit of the first byte
+ * (src/bdos/dskutil.c setaloc). */
+static char salv[(2559 >> 3) + 1] = { (char)0xf0 };
+
 static int stub(int fn, i16 val, char *addr)
 {
 	struct sfile *f;
@@ -3343,6 +3361,30 @@ static int stub(int fn, i16 val, char *addr)
 	case 26:				/* set DMA address	*/
 		sdma = addr;
 		return (0);
+	case 31:			/* copy out the disk parameters	*/
+		memcpy(addr, &sdpb, sizeof sdpb);
+		return (0);
+	case 27:			/* copy out the allocation vector */
+		memcpy(addr, salv, (size_t)((sdpb.dsm >> 3) + 1));
+		return (0);
+	case 46: {			/* free space on a drive	*/
+		/* src/bdos/fileio.c free_sp(): the free blocks of the
+		 * vector above, times the records in one, as three
+		 * little-endian bytes and a zero in the DMA buffer. */
+		long recs;
+		int b;
+
+		for (b = 0, recs = 0; b <= (int)sdpb.dsm; b++)
+			if (!(salv[b >> 3] & (0x80 >> (b & 7))))
+				recs += (long)sdpb.blm + 1L;
+		if (sdma) {
+			sdma[0] = (char)(recs & 0xff);
+			sdma[1] = (char)((recs >> 8) & 0xff);
+			sdma[2] = (char)((recs >> 16) & 0xff);
+			sdma[3] = 0;
+		}
+		return (0);
+	}
 	case 15:				/* open			*/
 		f = sfind(addr + 1);
 		if (!f)
@@ -3441,6 +3483,71 @@ static void smkname(char *out, const char *s)
 		s++;
 	for (i = 0; i < 3 && *s; i++)
 		out[8 + i] = *s++;
+}
+
+/* ---- 8e: the two functions whose answer is an address ---- */
+
+/*
+ * The seventeen bytes drive A: comes to.  tests/z80test.c holds the same
+ * list for the CP/M-80 seam, and the two have to agree: one disk, one
+ * block, whichever guest is asking.  A CP/M 2.2 guest, which is what
+ * this one is told it is talking to, reads the first fifteen and stops.
+ */
+static const unsigned char edpb[GDPB_LEN] = {
+	0x40, 0x00,		/* SPT 64 records a track		*/
+	0x05,			/* BSH: 4096-byte blocks		*/
+	0x1f,			/* BLM					*/
+	0x01,			/* EXM: dsm is over 255			*/
+	0xff, 0x09,		/* DSM 2559				*/
+	0xff, 0x01,		/* DRM 511				*/
+	0xf0, 0x00,		/* AL0, AL1: four directory blocks	*/
+	0x00, 0x00,		/* CKS 0: a fixed disk			*/
+	0x00, 0x00,		/* OFF 0: no system tracks		*/
+	0x00,			/* PSH: the BIOS takes 128-byte records	*/
+	0x00			/* PHM					*/
+};
+
+#define EALV	((2559 >> 3) + 1)	/* the vector's length in bytes	*/
+
+static void t_dparms(void)
+{
+	int i, bad;
+
+	bsetup();
+	sysmode = SYS_CPM;
+	chk("fn 31 is answered", bcall(31, (i16)0), B_RUN);
+	chk("... with an offset in BX", bm.r[R_BX] & 0xffff, 0xffe0);
+	chk("... the same in AX", bm.r[R_AX] & 0xffff, 0xffe0);
+	chk("... and the group's paragraph in ES", bm.sr[S_ES] & 0xffff,
+		0x2000);
+	chk("... above the memory the guest was given",
+		0xffe0L >= i86dgtop, 1);
+	for (i = 0, bad = -1; i < GDPB_LEN; i++)
+		if ((bseg[0xffe0 + i] & 0xff) != edpb[i])
+			bad = i;
+	chk("... holding the disk parameter block of drive A:", bad, -1);
+
+	chk("fn 27 is answered", bcall(27, (i16)0), B_RUN);
+	chk("... with the vector below the block", bm.r[R_BX] & 0xffff,
+		0xffe0 - EALV);
+	chk("... still above the guest's own memory",
+		(long)(0xffe0L - EALV) >= i86dgtop, 1);
+	chk("... four directory blocks allocated",
+		bseg[0xffe0 - EALV] & 0xff, 0xf0);
+	chk("... and nothing after them",
+		bseg[0xffe0 - EALV + 1] & 0xff, 0);
+	chk("... to the last byte of the vector",
+		bseg[0xffdf] & 0xff, 0);
+
+	/* A guest whose group filled its whole 64 KB leaves nowhere to
+	 * put either block, and gets the refusal it got before. */
+	bsetup();
+	sysmode = SYS_CPM;
+	i86dgtop = 0x10000L;
+	chk("no room, fn 31 refused", bcall(31, (i16)0), B_FN);
+	chk("no room, fn 27 refused", bcall(27, (i16)0), B_FN);
+
+	sysmode = SYS_REC;
 }
 
 /*
@@ -4632,6 +4739,7 @@ char **argv;
 	t_fixtures(argv[2]);
 	t_fcb();
 	t_seam();
+	t_dparms();
 	t_pip(argv[1]);
 	t_submit(argv[1]);
 	t_gencmd(argv[1], argv[2]);
