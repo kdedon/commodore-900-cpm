@@ -2594,12 +2594,14 @@ static void t_seam(void)
 	/* Function 12 is answered here and never reaches the native
 	 * BDOS, which reports 0x2031 -- CP/M 3, a level no 1982 .CMD has
 	 * seen.  K4, and PLAN.md D1 is the same failure from the other
-	 * side. */
+	 * side.  The high byte is the machine type and must be zero:
+	 * DRI's TOD.CMD refuses every non-zero one (src/cmd/i86bdos.c
+	 * i86ver). */
 	bsetup();
 	sysret = 0x2031;
 	chk("version rc", bcall(12, (i16)0), B_RUN);
-	chk("version ax", bm.r[R_AX] & 0xffff, 0x2022);
-	chk("version bx", bm.r[R_BX] & 0xffff, 0x2022);
+	chk("version ax", bm.r[R_AX] & 0xffff, 0x0022);
+	chk("version bx", bm.r[R_BX] & 0xffff, 0x0022);
 	chk("version no call", sncall, 1);		/* the init only	*/
 
 	/* Function 0 is the guest terminating.  It must NOT reach our
@@ -2790,6 +2792,41 @@ static void sbump(char *f)
 }
 
 /*
+ * The random record field, read the way OUR BDOS reads it -- ran0
+ * (fcb+33) is the HIGH byte, matching sranset() above.  A guest's own
+ * bytes are in the OTHER order (fcb+33 low); i86bdos.c's ranswap() is
+ * what makes that true by the time this stub ever sees the FCB
+ * (src/bdos/fileio.c setran/fsize).
+ */
+static long srrec(const char *f)
+{
+	return (((long)(f[33] & 0xff) << 16)
+	      | ((long)(f[34] & 0xff) << 8)
+	      | (long)(f[35] & 0xff));
+}
+
+/*
+ * Advance the random record field by one, in the SAME (post-ranswap)
+ * byte order srrec() reads -- src/bdos/bdosrw.c incr_rr() to the
+ * letter: ran2 (here fcb+35, the low byte) carries into ran1, then
+ * ran0.
+ */
+static void srincr(char *f)
+{
+	int t;
+
+	t = (f[35] & 0xff) + 1;
+	f[35] = (char)(t & 0xff);
+	if (t <= 0xff)
+		return;
+	t = (f[34] & 0xff) + 1;
+	f[34] = (char)(t & 0xff);
+	if (t <= 0xff)
+		return;
+	f[33] = (char)((f[33] & 0xff) + 1);
+}
+
+/*
  * One record, sequential: src/bdos/bdosrw.c bdosrw()'s sequential arm
  * flattened onto this stub's flat files, lifted out of the switch below
  * so that multio() has something to loop on.
@@ -2823,6 +2860,66 @@ static int srw1(int fn, char *addr)
 }
 
 /*
+ * One record, RANDOM, at the record the FCB's own random-record field
+ * names -- src/bdos/bdosrw.c bdosrw()'s random arm, flattened the same
+ * way srw1() flattens the sequential one: no extents, no blocks, just
+ * an absolute record number into the stub's flat file.
+ *
+ * The 0x40000 test is new_ext()'s `if (mod >= 64) return(6)'
+ * (src/bdos/bdosrw.c:136) in flat form.  A module is 32 extents of 128
+ * records, so module 64 begins at record 64 * 32 * 128 = 0x40000, and
+ * that is the one record number the real BDOS refuses before it has
+ * looked at the file at all -- a different answer from code 1, which
+ * means "this file does not go that far yet".
+ *
+ * fn 40, write random WITH ZERO FILL, is the one place this stub's
+ * flat model has to say something the real BDOS says at a different
+ * layer.  On the real machine the zero-fill is a per-BLOCK guarantee
+ * (bdosrw.c: a newly allocated block is zeroed through the directory
+ * buffer before the caller's record is written into it), so records
+ * inside the same block that the caller never writes read back as zero
+ * rather than as leftover disk content.  This stub has no block layer
+ * -- the file is a flat array -- so the equivalent guarantee is made at
+ * the RECORD level: writing past the current end of file zeros the gap
+ * in the array first.  That is a smaller promise than the real BDOS
+ * makes (it zeros to the next block boundary, not just to the record
+ * being written) but it is the same promise on every case this
+ * project's tests can observe -- a read of any record between the old
+ * EOF and the new one -- and it is why fn 40 is the one of the three
+ * that needs its own branch below rather than sharing fn 34's.
+ */
+static int ranw1(int fn, char *addr)
+{
+	struct sfile *f;
+	long r, n;
+
+	f = sfind(addr + 1);
+	if (!f)
+		return (9);
+	r = srrec(addr);
+	if (r >= 0x40000L)
+		return (6);		/* past maximum file size	*/
+	if (fn == 33) {				/* read random		*/
+		if (r * 128L >= f->len)
+			return (1);		/* reading unwritten data */
+		n = f->len - r * 128L;
+		if (n > 128)
+			n = 128;
+		memset(sdma, 0x1a, 128);
+		memcpy(sdma, f->d + r * 128L, (size_t)n);
+	} else {				/* write random, 34 or 40 */
+		if ((r + 1) * 128L > (long)SF_CAP)
+			return (2);		/* disk full		*/
+		if (fn == 40 && r * 128L > f->len)
+			memset(f->d + f->len, 0, (size_t)(r * 128L - f->len));
+		memcpy(f->d + r * 128L, sdma, 128);
+		if ((r + 1) * 128L > f->len)
+			f->len = (r + 1) * 128L;
+	}
+	return (0);
+}
+
+/*
  * MULTI-SECTOR I/O, src/bdos/bdosrw.c multio() to the letter -- the DMA
  * address advances by one record between transfers and is restored on
  * exit, and the high byte of a non-physical failure is the number of
@@ -2836,28 +2933,52 @@ static int srw1(int fn, char *addr)
  * verify-z80pip records the same lesson from the other direction: the
  * Z80 stub ACCEPTED function 44 and ignored it, and the two machines
  * then disagreed about a program behaving correctly on both.
+ *
+ * It covers all five functions the real multio() shells -- 20 and 21
+ * sequential, 33/34/40 random -- and for the random three it also
+ * advances and restores the FCB's own random-record field exactly as
+ * incr_rr() and multio() do: one step per record transferred, the whole
+ * field put back to the caller's value before returning.  Sequential
+ * I/O advances the FCB's CURRENT-RECORD byte instead (sbump(), inside
+ * srw1()), which is why only the random arm touches the record field.
  */
 static int smultcnt = 1;		/* BDOS function 44's count	*/
 
 static int smultio(int fn, char *addr)
 {
 	char *sav_dma;
-	int done, rtn;
+	char sav33, sav34, sav35;
+	int done, rtn, isran;
+
+	isran = (fn == 33 || fn == 34 || fn == 40);
 
 	if (smultcnt <= 1)
-		return (srw1(fn, addr));
+		return (isran ? ranw1(fn, addr) : srw1(fn, addr));
 
 	sav_dma = sdma;
+	sav33 = sav34 = sav35 = 0;
+	if (isran) {
+		sav33 = addr[33];
+		sav34 = addr[34];
+		sav35 = addr[35];
+	}
 	done = 0;
 	rtn = 0;
 	while (done < smultcnt) {
-		rtn = srw1(fn, addr);
+		rtn = isran ? ranw1(fn, addr) : srw1(fn, addr);
 		if (rtn != 0)
 			break;
 		done++;
+		if (isran)
+			srincr(addr);
 		sdma += 128;
 	}
 	sdma = sav_dma;
+	if (isran) {
+		addr[33] = sav33;
+		addr[34] = sav34;
+		addr[35] = sav35;
+	}
 	if (rtn == 0)
 		return (0);
 	if ((rtn & 0xff) == 0xff)
@@ -2981,6 +3102,9 @@ static int stub(int fn, i16 val, char *addr)
 		return (0xff);
 	case 20:				/* read sequential	*/
 	case 21:				/* write sequential	*/
+	case 33:				/* read random		*/
+	case 34:				/* write random		*/
+	case 40:				/* write random, 0 fill	*/
 		return (smultio(fn, addr));
 	case 44:				/* set multi-sector count */
 		/* src/bdos/bdosmain.c:612-616 exactly: 0 and >128 are
@@ -3691,6 +3815,157 @@ static void t_dmabound(void)
 }
 
 /* ==================================================================
+ * RANDOM RECORD I/O -- functions 33, 34 and 40, through the seam.
+ *
+ * These three are the FCB calls whose position comes out of the FCB
+ * itself rather than out of a sequential cursor, so everything that can
+ * go wrong with them goes wrong in the FCB: the record number's byte
+ * order, and whether multio() puts the caller's copy of it back.  No
+ * guest program is needed to reach them -- a read or write is fully
+ * described by an FCB and a DMA address, both of which this test can
+ * place in dseg2[] itself.
+ *
+ * i86bdos.c's ranswap() sits between every call here and the stub: the
+ * FCB is built and read back in the GUEST's little-endian order (r0 at
+ * +33 is the low byte), and it is the seam, not this test, that flips
+ * it to the order srrec()/srincr() use.  A byte-order mistake on either
+ * side would show up here as the wrong record read back, which is the
+ * class of bug the Z80 lane found as DUMP's "No Records Exist"
+ * (Z80-STAGE-ONE.md §0.2).
+ */
+static void t_random(void)
+{
+	struct sfile *f;
+	long k;
+
+	bsetup2();
+
+	f = &sdisk[0];
+	smkname(f->name, "RANDOM.DAT");
+	f->used = 1;
+	f->len = 4L * 128L;
+	for (k = 0; k < f->len; k++)
+		f->d[k] = (char)(k / 128);	/* record N is N in every byte */
+
+	/* byte 0 of a CP/M FCB is the drive, the name starts at byte 1 --
+	 * sfind(addr + 1) in the stub is its own reminder of that. */
+	memset(dseg2 + 0x0100, 0, 36);
+	smkname(dseg2 + 0x0100 + 1, "RANDOM.DAT");
+
+	chk("fn 26 sets the DMA the random tests use",
+		bcall(26, 0x2000), B_RUN);
+
+	/* ---- read random, three records in one multi-sector call ---- */
+
+	chk("fn 44 accepts a multi-sector count", bcall(44, 3), B_RUN);
+
+	dseg2[0x0100 + 33] = 1;			/* record 1, guest order:  */
+	dseg2[0x0100 + 34] = 0;			/* r0 (low) = 1, r1 = r2 = 0 */
+	dseg2[0x0100 + 35] = 0;
+	chk("fn 33 multi-sector random read runs", bcall(33, 0x0100), B_RUN);
+	chk("... in one guest-visible BDOS call", sfncount[33], 1L);
+	chk("... record 1 first", (long)(dseg2[0x2000] & 0xff), 1L);
+	chk("... record 2 next", (long)(dseg2[0x2000 + 128] & 0xff), 2L);
+	chk("... record 3 last", (long)(dseg2[0x2000 + 256] & 0xff), 3L);
+	/* multio() restores the caller's random-record field exactly;
+	 * these three bytes are still in the GUEST's order because
+	 * i86bdos.c un-swaps them again before returning. */
+	chk("fn 33 restores the guest's r0",
+		(long)(dseg2[0x0100 + 33] & 0xff), 1L);
+	chk("fn 33 restores the guest's r1",
+		(long)(dseg2[0x0100 + 34] & 0xff), 0L);
+	chk("fn 33 restores the guest's r2",
+		(long)(dseg2[0x0100 + 35] & 0xff), 0L);
+
+	/* ---- write random, single record, well within the file ---- */
+
+	chk("fn 44 back to one record per call", bcall(44, 1), B_RUN);
+
+	memset(dseg2 + 0x2000, (char)0xbb, 128);
+	dseg2[0x0100 + 33] = 2;			/* record 2		*/
+	dseg2[0x0100 + 34] = 0;
+	dseg2[0x0100 + 35] = 0;
+	chk("fn 34 random write runs", bcall(34, 0x0100), B_RUN);
+	chk("... counted", sfncount[34], 1L);
+	chk("... record 2 now holds the new pattern",
+		(long)(f->d[2 * 128] & 0xff), 0xbbL);
+	chk("... record 1 is untouched",
+		(long)(f->d[1 * 128] & 0xff), 1L);
+
+	/* ---- write random with zero fill, two records past EOF ---- */
+
+	chk("fn 44 accepts a count of two", bcall(44, 2), B_RUN);
+
+	memset(dseg2 + 0x2000, (char)0xcc, 128);
+	memset(dseg2 + 0x2000 + 128, (char)0xdd, 128);
+	dseg2[0x0100 + 33] = 10;	/* record 10, six past the	*/
+	dseg2[0x0100 + 34] = 0;		/* 4-record file's old EOF	*/
+	dseg2[0x0100 + 35] = 0;
+	chk("fn 40 write-random-with-zero-fill runs",
+		bcall(40, 0x0100), B_RUN);
+	chk("... in one guest-visible BDOS call", sfncount[40], 1L);
+	chk("... record 10 holds the first write",
+		(long)(f->d[10 * 128] & 0xff), 0xccL);
+	chk("... record 11 holds the second write",
+		(long)(f->d[11 * 128] & 0xff), 0xddL);
+	/* the gap between the old 4-record EOF and record 10 reads back
+	 * zero, not leftover disk content -- the promise fn 40 makes */
+	chk("... the gap (record 5) is zero-filled",
+		(long)(f->d[5 * 128] & 0xff), 0L);
+	chk("... the gap (record 9) is zero-filled",
+		(long)(f->d[9 * 128] & 0xff), 0L);
+
+	/* ---- a random read of a hole is still an error ---- */
+
+	chk("fn 44 back to one record", bcall(44, 1), B_RUN);
+	dseg2[0x0100 + 33] = 99;
+	dseg2[0x0100 + 34] = 0;
+	dseg2[0x0100 + 35] = 0;
+	bcall(33, 0x0100);
+	chk("fn 33 past EOF answers error 1",
+		(long)(bm.r[R_AX] & 0xff), 1L);
+	chk("... and BX carries the same word",
+		(long)(bm.r[R_BX] & 0xff), 1L);
+
+	/* ---- a record number past the largest file CP/M can name is a
+	   DIFFERENT answer: code 6, refused before the file is looked at
+	   (src/bdos/bdosrw.c new_ext, `mod >= 64'). */
+
+	dseg2[0x0100 + 33] = 0;		/* record 0x040000, guest order */
+	dseg2[0x0100 + 34] = 0;
+	dseg2[0x0100 + 35] = 4;
+	bcall(33, 0x0100);
+	chk("fn 33 past the maximum file size answers error 6",
+		(long)(bm.r[R_AX] & 0xff), 6L);
+	bcall(34, 0x0100);
+	chk("fn 34 past the maximum file size answers error 6",
+		(long)(bm.r[R_AX] & 0xff), 6L);
+
+	chk("random i/o wrote nothing above the guest segment",
+		(long)canary(), -1L);
+
+	/* ---- the DMA bound covers the random three as well: a
+	   multi-record transfer that would leave the segment is refused
+	   before the native BDOS is told. */
+
+	chk("fn 44 accepts a count of two again", bcall(44, 2), B_RUN);
+	chk("fn 26 accepts a DMA one record from the top",
+		bcall(26, (i16)0xff80), B_RUN);
+	dseg2[0x0100 + 33] = 0;
+	dseg2[0x0100 + 34] = 0;
+	dseg2[0x0100 + 35] = 0;
+	chk("a 2-record fn 33 from 0xff80 is refused",
+		bcall(33, 0x0100), B_ADDR);
+	chk("a 2-record fn 34 from 0xff80 is refused",
+		bcall(34, 0x0100), B_ADDR);
+	chk("a 2-record fn 40 from 0xff80 is refused",
+		bcall(40, 0x0100), B_ADDR);
+	chk("... having written nothing above the segment",
+		(long)canary(), -1L);
+	chk("... and without reaching the native BDOS", sfncount[33], 3L);
+}
+
+/* ==================================================================
  * THE PREFIX LOOP HAS A BOUND.
  *
  * i86dec()'s prefix loop was `for (;;)' with no limit, and its fetch
@@ -4052,6 +4327,7 @@ char **argv;
 	t_submit(argv[1]);
 	t_gencmd(argv[1], argv[2]);
 	t_dmabound();
+	t_random();
 	t_prefix();
 
 	printf("i86test: %d checks, %d failures\n", ntest, nfail);

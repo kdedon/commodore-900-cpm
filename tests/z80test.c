@@ -2514,6 +2514,13 @@ static int srw1(int fn, char *addr)
  * way srw1() flattens the sequential one: no extents, no blocks, just
  * an absolute record number into the stub's flat file.
  *
+ * The 0x40000 test is new_ext()'s `if (mod >= 64) return(6)'
+ * (src/bdos/bdosrw.c:136) in flat form.  A module is 32 extents of 128
+ * records, so module 64 begins at record 64 * 32 * 128 = 0x40000, and
+ * that is the one record number the real BDOS refuses before it has
+ * looked at the file at all -- a different answer from code 1, which
+ * means "this file does not go that far yet".
+ *
  * fn 40, write random WITH ZERO FILL, is the one place this stub's
  * flat model has to say something the real BDOS says at a different
  * layer.  On the real machine the zero-fill is a per-BLOCK guarantee
@@ -2539,9 +2546,11 @@ static int ranw1(int fn, char *addr)
 	if (!f)
 		return (9);
 	r = srrec(addr);
+	if (r >= 0x40000L)
+		return (6);		/* past maximum file size	*/
 	if (fn == 33) {				/* read random		*/
 		if (r * 128L >= f->len)
-			return (1);
+			return (1);		/* reading unwritten data */
 		n = f->len - r * 128L;
 		if (n > 128)
 			n = 128;
@@ -2549,7 +2558,7 @@ static int ranw1(int fn, char *addr)
 		memcpy(sdma, f->d + r * 128L, (size_t)n);
 	} else {				/* write random, 34 or 40 */
 		if ((r + 1) * 128L > (long)SF_CAP)
-			return (2);
+			return (2);		/* disk full		*/
 		if (fn == 40 && r * 128L > f->len)
 			memset(f->d + f->len, 0, (size_t)(r * 128L - f->len));
 		memcpy(f->d + r * 128L, sdma, 128);
@@ -3403,6 +3412,24 @@ static void t_random(void)
 	G.rp[P_DE] = 0x0100;
 	z80bdos(&G);
 	chk("fn 33 past EOF answers error 1", (long)G.a, 1L);
+
+	/* ---- a record number past the largest file CP/M can name is a
+	   DIFFERENT answer: code 6, refused before the file is looked at
+	   (src/bdos/bdosrw.c new_ext, `mod >= 64'). */
+
+	gmem[0x0100 + 33] = 0;			/* record 0x040000,	*/
+	gmem[0x0100 + 34] = 0;			/* in the guest's order	*/
+	gmem[0x0100 + 35] = 4;
+	z80setr(&G, R_C, 33);
+	G.rp[P_DE] = 0x0100;
+	z80bdos(&G);
+	chk("fn 33 past the maximum file size answers error 6",
+		(long)G.a, 6L);
+	z80setr(&G, R_C, 34);
+	G.rp[P_DE] = 0x0100;
+	z80bdos(&G);
+	chk("fn 34 past the maximum file size answers error 6",
+		(long)G.a, 6L);
 }
 
 /* ==================================================================

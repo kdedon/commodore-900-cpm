@@ -766,10 +766,10 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		|| { echo "verify-i86: FAIL -- the command tail did not reach DS:0080"; exit 1; }
 	@grep -q '0000: 9C 58 FA 8C D9 8E D1 8D 26 84 01' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- PIP's own prologue is not in the code segment"; exit 1; }
-	@grep -q 'i86: 9488 instructions, 64 BDOS calls' $(I86LOG) \
+	@grep -q 'i86: 9476 instructions, 63 BDOS calls' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the target run did not take the same path"; \
-		     echo "            through PIP as the host run (9,488 instructions,"; \
-		     echo "            64 BDOS calls -- tests/i86test.c section 8b)"; exit 1; }
+		     echo "            through PIP as the host run (9,476 instructions,"; \
+		     echo "            63 BDOS calls -- tests/i86test.c section 8b)"; exit 1; }
 	@grep -q 'i86: slow segment resolutions 0, refused 0' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- PIP wrote a segment register we never handed"; \
 		     echo "            out; K3's static census said it would not"; exit 1; }
@@ -7650,12 +7650,12 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 759 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 759 of its"; \
+	@grep -q 'z80test: 761 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 761 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1335 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1335 of its"; \
+	@grep -q 'i86test: 1370 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1370 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason
@@ -7665,8 +7665,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		|| { echo "verify-shim: FAIL -- DUMP no longer takes the 14,314/605/872 path"; \
 		     echo "             verify-z80 gates on.  Read the divergence; do not"; \
 		     echo "             relax this."; exit 1; }
-	@grep -q 'i86test: PIP ran 9488 instructions, 64 BDOS calls' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- PIP no longer takes the 9,488/64 path"; \
+	@grep -q 'i86test: PIP ran 9476 instructions, 63 BDOS calls' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- PIP no longer takes the 9,476/63 path"; \
 		     echo "             verify-i86 gates on."; exit 1; }
 	@echo "verify-shim: PASS -- both shims, compiled with the guest region's"
 	@echo "             bounds instrumented: a 2-record transfer from 0xff80"

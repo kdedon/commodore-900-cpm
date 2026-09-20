@@ -72,8 +72,16 @@ int i86oflush()
 }
 
 /* Report CP/M 2.2 compatibility to avoid CP/M 3-specific FCB attributes
- * in CP/M-86 guests. */
-i16	i86ver = 0x2022;
+ * in CP/M-86 guests.
+ *
+ * BOTH bytes matter, and for different reasons.  The low byte is 0x22
+ * because our BDOS's own 0x31 made our PIP silently truncate a copy
+ * (PLAN.md D1, CPM86-STAGE-ONE.md §6 K4).  The high byte is ZERO
+ * because a guest reads it as the machine type: DRI's TOD.CMD accepts
+ * 0x0022 and refuses 0x2022, 0x0122, 0x1422 and 0x0031 outright, so a
+ * non-zero high byte is not a harmless decoration here.
+ */
+i16	i86ver = 0x0022;
 
 /* ------------------------------------------------------------------ */
 /* parameter classes						       */
