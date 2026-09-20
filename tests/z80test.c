@@ -2095,7 +2095,8 @@ static unsigned char cseen[0x10000];
 static unsigned short cwl[0x10000];
 static int cnwl;
 
-static void sweep1(char *mem, unsigned lo, unsigned hi, struct census *c)
+static void sweep1at(char *mem, unsigned start, unsigned lo, unsigned hi,
+	struct census *c)
 {
 	struct z80in in;
 	unsigned a, nx;
@@ -2103,7 +2104,7 @@ static void sweep1(char *mem, unsigned lo, unsigned hi, struct census *c)
 
 	memset(cseen, 0, sizeof cseen);
 	cnwl = 0;
-	cwl[cnwl++] = (unsigned short)lo;
+	cwl[cnwl++] = (unsigned short)start;
 	memset((char *)c, 0, sizeof *c);
 	while (cnwl > 0) {
 		a = cwl[--cnwl];
@@ -2146,6 +2147,57 @@ static void sweep1(char *mem, unsigned lo, unsigned hi, struct census *c)
 			}
 			a = nx;
 		}
+	}
+}
+
+static void sweep1(char *mem, unsigned lo, unsigned hi, struct census *c)
+{
+	sweep1at(mem, lo, lo, hi, c);
+}
+
+/*
+ * The `-r' mode: census the RSX MODULES inside a GENCOM-bound .COM,
+ * which `-c' cannot see -- it walks from 0x0100 and an RSX is entered
+ * from the BDOS chain, never from the .COM's own code.
+ *
+ * A module is a PRL image linked for base 0, so it is placed at guest 0
+ * and its own absolute addresses are already right.  Its prefix is
+ * DRI's (ref/cpm3/getrsx.asm): +6 a JMP to the intercept entry, +9 a
+ * JMP to the next module.  Both are walked.
+ */
+static void sweepr(const char *path)
+{
+	struct census c;
+	struct comrsx r;
+	long n;
+	int i;
+	unsigned ent;
+
+	n = cread(path);
+	if (n < 0) {
+		printf("%s: unreadable\n", path);
+		return;
+	}
+	if (!z80rsxhdr(cbuf, n, &r)) {
+		printf("%s: not GENCOM-bound\n", path);
+		return;
+	}
+	for (i = 0; i < r.n; i++) {
+		long off = (long)r.off[i], len = (long)r.len[i];
+
+		if (off < 0 || off + len > n) {
+			printf("%s: RSX %d runs off the file\n", path, i);
+			continue;
+		}
+		memset(gmem, 0, sizeof gmem);
+		memcpy(gmem, cbuf + off, (size_t)len);
+		ent = (gmem[7] & 0xff) | ((gmem[8] & 0xff) << 8);
+		sweep1at(gmem, ent, 0, (unsigned)len, &c);
+		printf("%s RSX[%d] %-8s %4ld bytes  entry %04x  reach %5ld  "
+			"jr %4ld djnz %3ld exaf %2ld exx %2ld | cb %3ld "
+			"ed %3ld ix %3ld ixcb %3ld bad %3ld\n",
+			path, i, r.name[i], len, ent, c.n, c.jr, c.djnz,
+			c.exaf, c.exx, c.cb, c.ed, c.ix, c.ixcb, c.bad);
 	}
 }
 
@@ -3596,6 +3648,152 @@ static void t_dmabound(void)
 
 /* ================================================================== */
 
+/*
+ * The `-x' mode: load one corpus .COM with a command tail and run it
+ * against the stub, then say where it stopped and which BDOS functions
+ * and BIOS vectors it reached.  This is the dynamic half of the gap
+ * measurement: a seam refusal is B_FN/B_BIOS with z80berr() naming it,
+ * and an executor refusal is X_UNIMP/X_BAD at a printed pc.
+ *
+ * A GENCOM-bound image is loaded WITHOUT its 256-byte header, which is
+ * not what the loader does (it refuses); it is a way to ask what the
+ * .COM half alone reaches before the RSX question is answered.
+ */
+/*
+ * The same loop, but a seam refusal is RECORDED and the guest is let
+ * through with the "no" a real BDOS gives for a function it does not
+ * have (A = 0FFh, HL = 0FFFFh).  Without this a program's gap list is
+ * truncated at its FIRST refusal and the second one is never seen.
+ * What it measures is therefore a superset path, not a correct run.
+ */
+static long refused[113];
+static long refusedbios[NBIOSV];
+static long refscb[256];
+
+static int grunt(long limit, long *steps, int *why)
+{
+	struct z80in in;
+	long k, nref;
+	int rc, brc;
+
+	memset(refused, 0, sizeof refused);
+	memset(refusedbios, 0, sizeof refusedbios);
+	memset(refscb, 0, sizeof refscb);
+	brc = B_RUN;
+	rc = X_OK;
+	nref = 0;
+	for (k = 0; k < limit; k++) {
+		rc = z80step(&G, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_HOOK)
+			break;
+		brc = z80bdos(&G);
+		if (brc == B_RUN)
+			continue;
+		if ((brc == B_FN || brc == B_BIOS) && ++nref < 2000) {
+			if (brc == B_BIOS && z80biosfn >= 0
+			 && z80biosfn < NBIOSV)
+				refusedbios[z80biosfn]++;
+			else if (z80bdosfn >= 0 && z80bdosfn <= 112) {
+				refused[z80bdosfn]++;
+				if (z80bdosfn == 49)
+					refscb[gmem[G.rp[P_DE]] & 0xff]++;
+				if (z80bdosfn == 50)
+					/* the BIOSPB: func, A, BC, DE, HL */
+					printf("z80test:   fn 50 BIOSPB func "
+						"%d, a %02x, bc %02x%02x\n",
+						gmem[G.rp[P_DE]] & 0xff,
+						gmem[(z16)(G.rp[P_DE]+1)]&0xff,
+						gmem[(z16)(G.rp[P_DE]+3)]&0xff,
+						gmem[(z16)(G.rp[P_DE]+2)]&0xff);
+			}
+			G.a = 0xff;
+			G.rp[P_HL] = 0xffff;
+			brc = B_RUN;
+			continue;
+		}
+		break;
+	}
+	z80oflush();
+	*steps = k;
+	*why = rc;
+	return (brc);
+}
+
+static int tolerate;
+
+static void runx(const char *path, const char *tail)
+{
+	struct comrsx r;
+	struct sfile *fi;
+	long n, steps, k;
+	int brc, why, off;
+
+	n = cread(path);
+	if (n < 0) {
+		printf("%s: unreadable\n", path);
+		return;
+	}
+	off = 0;
+	if (z80rsxhdr(cbuf, n, &r)) {
+		off = RSX_HDRLEN;
+		printf("z80test: %s is GENCOM-bound (%d RSX%s%s); running the "
+			".COM half only\n", path, r.n, r.n == 1 ? "" : "es",
+			r.rsxonly ? ", RSX-ONLY" : "");
+	}
+	if (z80load(&G, gmem, cbuf + off, n - off) != CL_OK) {
+		printf("z80test: %s did not load: %s\n", path,
+			z80lerr(z80load(&G, gmem, cbuf + off, n - off)));
+		return;
+	}
+	z80tail(&G, (char *)tail);
+
+	sreset();
+	fi = &sdisk[0];
+	smkname(fi->name, "VERIFY.IN");
+	fi->used = 1;
+	fi->len = 1024;
+	for (k = 0; k < fi->len; k++)
+		fi->d[k] = (char)(k & 0x7f);
+
+	sysmode = SYS_CPM;
+	z80ninsn = z80nflag = 0;
+	z80bdosinit(&G);
+	brc = tolerate ? grunt(5000000L, &steps, &why)
+		       : grun(5000000L, &steps, &why);
+	sysmode = SYS_REC;
+
+	printf("z80test: %s tail \"%s\": %ld instructions, %lu BDOS calls\n",
+		path, tail, steps, (unsigned long)z80nbdos);
+	printf("z80test: %s stopped: %s, seam %s (bdos fn %d, bios %d) "
+		"at pc 0x%04x\n", path,
+		brc == B_EXIT ? "exit" : xname(why), z80berr(),
+		z80bdosfn, z80biosfn, (unsigned)G.pc);
+	if (brc != B_EXIT && z80bdosfn == 49)
+		printf("z80test: %s SCB offset 0x%02x, set flag 0x%02x\n",
+			path, gmem[G.rp[P_DE]] & 0xff,
+			gmem[(z16)(G.rp[P_DE] + 1)] & 0xff);
+	if (tolerate) {
+		int i;
+
+		printf("z80test: %s REFUSED bdos fns:", path);
+		for (i = 0; i <= 112; i++)
+			if (refused[i])
+				printf(" %d(%ld)", i, refused[i]);
+		printf("\nz80test: %s REFUSED bios vectors:", path);
+		for (i = 0; i < NBIOSV; i++)
+			if (refusedbios[i])
+				printf(" %d(%ld)", i, refusedbios[i]);
+		printf("\nz80test: %s REFUSED scb offsets:", path);
+		for (i = 0; i < 256; i++)
+			if (refscb[i])
+				printf(" 0x%02x(%ld)", i, refscb[i]);
+		printf("\n");
+	}
+	sprint(path);
+}
+
 int main(argc, argv)
 int argc;
 char **argv;
@@ -3605,6 +3803,17 @@ char **argv;
 	if (argc > 2 && strcmp(argv[1], "-c") == 0) {
 		for (i = 2; i < argc; i++)
 			sweep(argv[i]);
+		return (0);
+	}
+	if (argc > 2 && (strcmp(argv[1], "-x") == 0
+			|| strcmp(argv[1], "-X") == 0)) {
+		tolerate = (argv[1][1] == 'X');
+		runx(argv[2], argc > 3 ? argv[3] : "");
+		return (0);
+	}
+	if (argc > 2 && strcmp(argv[1], "-r") == 0) {
+		for (i = 2; i < argc; i++)
+			sweepr(argv[i]);
 		return (0);
 	}
 	/* The corpus directory is REQUIRED, not optional.  A default

@@ -3818,12 +3818,206 @@ static void t_prefix(void)
 
 /* ================================================================== */
 
+/*
+ * The `-x' / `-X' mode: load one .CMD with a command tail and run it
+ * against the stub.  `-X' is the TOLERANT run: an executor refusal is
+ * recorded by mnemonic and then STEPPED OVER, and a seam refusal is
+ * recorded and answered with the 0FFFFh a real BDOS gives for a
+ * function it does not have.  The tolerant run's later state is not a
+ * correct one -- it is a way to see the SECOND gap, and the third,
+ * instead of stopping at the first.
+ */
+static long xrefused[64];		/* by i86.h opcode class	*/
+static const char *xrefname[64];
+static long xfn[256];
+static long xsegesc, xwindow, xbadn;
+static int xtolerate;
+static const char *xfname, *xfsrc;
+static long xsegval[8];
+static long xintno[256];
+
+static void runx(const char *path, const char *tail)
+{
+	struct ld L;
+	struct i86in in;
+	long nstep, nref;
+	int rc, brc, i;
+
+	memset(xrefused, 0, sizeof xrefused);
+	memset(xrefname, 0, sizeof xrefname);
+	memset(xfn, 0, sizeof xfn);
+	memset(xintno, 0, sizeof xintno);
+	memset(xsegval, 0, sizeof xsegval);
+	xsegesc = xwindow = xbadn = 0;
+	rc = ldread(path, &L);
+	if (rc != CE_OK) {
+		printf("%s: %s\n", path,
+			rc < 0 ? "unreadable" : i86cerr(rc));
+		ldfree(&L);
+		return;
+	}
+	rc = ldplace(&L, tail);
+	if (rc != CE_OK) {
+		printf("%s: place failed: %s\n", path, i86cerr(rc));
+		ldfree(&L);
+		return;
+	}
+
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	{
+		struct sfile *fi = &sdisk[0];
+		long k;
+
+		smkname(fi->name, "VERIFY.IN");
+		fi->used = 1;
+		fi->len = 1024;
+		for (k = 0; k < fi->len; k++)
+			fi->d[k] = (char)(0x20 + (k % 0x5e));
+	}
+	/* An extra file, so that a utility gets past "No file" and into
+	 * the code that is the point of running it. */
+	if (xfname) {
+		struct sfile *fx = &sdisk[1];
+		FILE *fp;
+
+		smkname(fx->name, xfname);
+		fx->used = 1;
+		fx->len = 0;
+		if (xfsrc && (fp = fopen(xfsrc, "rb")) != 0) {
+			fx->len = (long)fread(fx->d, 1, sizeof fx->d, fp);
+			fclose(fp);
+		}
+	}
+
+	sysmode = SYS_CPM;
+	i86ninsn = i86nflag = 0;
+	i86nsegslow = i86nsegbad = 0;
+	i86bdosinit(&L.m);
+	/* The version mask is the one seam answer a guest is allowed to
+	 * disagree with out loud, so it is settable for a measurement. */
+	if (getenv("I86VER"))
+		i86ver = (i16)strtol(getenv("I86VER"), (char **)0, 0);
+
+	brc = B_RUN;
+	rc = X_OK;
+	nref = 0;
+	for (nstep = 0; nstep < 5000000L; nstep++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc == X_INT) {
+			brc = i86bdos(&L.m);
+			if (brc == B_RUN)
+				continue;
+			if (xtolerate && (brc == B_FN || brc == B_VEC)
+			 && ++nref < 2000) {
+				if (brc == B_VEC)
+					xintno[i86intno & 0xff]++;
+				else if (i86bdosfn >= 0 && i86bdosfn < 256)
+					xfn[i86bdosfn]++;
+				L.m.r[R_AX] = (i16)0xffff;
+				L.m.r[R_BX] = (i16)0xffff;
+				brc = B_RUN;
+				continue;
+			}
+			break;
+		}
+		if (!xtolerate || ++nref >= 2000)
+			break;
+		/* An executor refusal: name it, skip it, keep going. */
+		if (rc == X_SEGESC) {
+			if (xsegesc < 8)
+				xsegval[xsegesc] = i86segbad & 0xffff;
+			xsegesc++;
+		} else if (rc == X_WINDOW) {
+			xwindow++;
+		} else if (rc == X_UNIMP || rc == X_BAD) {
+			if (rc == X_BAD)
+				xbadn++;
+			if (in.op >= 0 && in.op < 64) {
+				xrefused[in.op]++;
+				xrefname[in.op] = i86mnem(&in);
+			}
+		} else {
+			break;			/* X_HALT, X_WBOOT	*/
+		}
+		L.m.ip = (i16)(L.m.ip + (in.len ? in.len : 1));
+	}
+	i86oflush();
+
+	printf("i86test: %s tail \"%s\": %ld instructions, %lu BDOS calls\n",
+		path, tail, nstep, (unsigned long)i86nbdos);
+	printf("i86test: %s stopped: %s, seam %s (fn %d) at cs:ip %04x:%04x\n",
+		path,
+		rc == X_OK ? "steplimit" :
+		rc == X_UNIMP ? "X_UNIMP" :
+		rc == X_BAD ? "X_BAD" :
+		rc == X_HALT ? "X_HALT" :
+		rc == X_SEGESC ? "X_SEGESC" :
+		rc == X_WBOOT ? "X_WBOOT(exit)" :
+		rc == X_WINDOW ? "X_WINDOW" : "X_INT",
+		i86berr(), i86bdosfn,
+		(unsigned)(L.m.sr[S_CS] & 0xffff), (unsigned)(L.m.ip & 0xffff));
+	printf("i86test: %s BDOS functions used:", path);
+	for (i = 0; i < (int)(sizeof sfncount / sizeof sfncount[0]); i++)
+		if (sfncount[i])
+			printf(" %d(%ld)", i, sfncount[i]);
+	printf("\n");
+	printf("i86test: %s segment slow %ld, refused %ld\n", path,
+		(long)i86nsegslow, (long)i86nsegbad);
+	if (xtolerate) {
+		printf("i86test: %s REFUSED insn classes:", path);
+		for (i = 0; i < 64; i++)
+			if (xrefused[i])
+				printf(" %s/op%d(%ld)",
+					xrefname[i] ? xrefname[i] : "?",
+					i, xrefused[i]);
+		printf("\ni86test: %s REFUSED bdos fns:", path);
+		for (i = 0; i < 256; i++)
+			if (xfn[i])
+				printf(" %d(%ld)", i, xfn[i]);
+		printf("\ni86test: %s REFUSED int vectors:", path);
+		for (i = 0; i < 256; i++)
+			if (xintno[i])
+				printf(" 0x%02x(%ld)", i, xintno[i]);
+		printf("\ni86test: %s segesc %ld, window %ld, bad %ld;"
+			" escaped paragraphs:", path, xsegesc, xwindow, xbadn);
+		for (i = 0; i < 8 && i < xsegesc; i++)
+			printf(" 0x%04lx", xsegval[i]);
+		printf("\n");
+	}
+	printf("i86test: %s console: \"", path);
+	for (i = 0; i < sconn; i++) {
+		if (scon[i] == '\r')
+			continue;
+		if (scon[i] == '\n')
+			printf("\\n");
+		else if ((scon[i] & 0xff) < 32)
+			printf("^%c", scon[i] + 64);
+		else
+			putchar(scon[i]);
+	}
+	printf("\"\n");
+	ldfree(&L);
+}
+
 int main(argc, argv)
 int argc;
 char **argv;
 {
 	int i;
 
+	if (argc > 2 && (strcmp(argv[1], "-x") == 0
+			|| strcmp(argv[1], "-X") == 0)) {
+		xtolerate = (argv[1][1] == 'X');
+		xfname = argc > 4 ? argv[4] : 0;
+		xfsrc = argc > 5 ? argv[5] : 0;
+		runx(argv[2], argc > 3 ? argv[3] : "");
+		return (0);
+	}
 	if (argc > 2 && strcmp(argv[1], "-c") == 0) {
 		for (i = 2; i < argc; i++)
 			sweep(argv[i]);
