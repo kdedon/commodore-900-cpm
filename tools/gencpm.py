@@ -91,18 +91,29 @@ def readcfg(path):
 
 
 def onoff(cfg, key):
-    v = cfg.get(key, "on").lower()
+    v = cfg[key].lower()
     if v not in ("on", "off"):
         die("%s: expected on or off, got `%s'" % (key, v))
     return 1 if v == "on" else 0
 
 
-def bytes_for(cfg):
+KEYS = ("serial", "default_drive", "hash_a", "hash_b")
+
+
+def bytes_for(cfg, path):
     """Config values as the bytes each field holds."""
-    serial = cfg.get("serial", "C90001")
+    # Every setting is named, none defaulted: a misspelt key would
+    # otherwise ship a value nobody chose.
+    for k in sorted(set(cfg) - set(KEYS)):
+        die("%s: `%s' is not a setting" % (path, k))
+    for k in KEYS:
+        if k not in cfg:
+            die("%s: `%s' is missing" % (path, k))
+
+    serial = cfg["serial"]
     if len(serial) != 6:
         die("serial: expected 6 characters, got %d" % len(serial))
-    drive = cfg.get("default_drive", "A").upper()
+    drive = cfg["default_drive"].upper()
     if drive not in ("A", "B"):
         die("default_drive: expected A or B, got `%s'" % drive)
     return {
@@ -124,7 +135,7 @@ def main():
         die("usage: gencpm.py gencpm.dat cpm.sys | gencpm.py --dump cpm.sys")
 
     cfgf, sysf = av
-    vals = bytes_for(readcfg(cfgf))
+    vals = bytes_for(readcfg(cfgf), cfgf)
     b = bytearray(open(sysf, "rb").read())
     moved = []
     for nm, off, width in offsets(bytes(b), sysf):

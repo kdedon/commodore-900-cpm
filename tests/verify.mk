@@ -4823,6 +4823,8 @@ verify-hash-ab: $(HASHABON) $(HASHABOFF)
 # default build could quietly ship something other than its own sources.
 GCSYS	= build/gencpm-cpm.sys
 GCDAT	= build/gencpm-test.dat
+GCBAD	= build/gencpm-bad.dat
+GCBADSYS = build/gencpm-bad.sys
 GCIMG	= build/gencpm.bin
 GCLOG	= build/verify-gencpm.log
 # CPM3FN prints the serial; it lives on A:, and the prompt under test is B:.
@@ -4832,6 +4834,19 @@ GCIN	= $(OSSEL)A:\rCPM3FN\r$(ENDIN)
 verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
 	@grep -q 'unchanged from $(GENCPMDAT)' $(OBJDIR)/gencpm.txt \
 		|| { cat $(OBJDIR)/gencpm.txt; echo "verify-gencpm: FAIL -- $(GENCPMDAT) no longer agrees with the compiled-in values, so a default build does not ship its own sources"; exit 1; }
+	@cp $(CPMSYS) $(GCBADSYS)
+	@i=0; for bad in \
+	  'serial = C90001\ndefault_drive = A\nhash_a = on\nhash_b = on\nserail = C90002\n' \
+	  'default_drive = A\nhash_a = on\nhash_b = on\n' \
+	  'serial = TOOLONG\ndefault_drive = A\nhash_a = on\nhash_b = on\n' \
+	  'serial = C90001\ndefault_drive = A\nhash_a = maybe\nhash_b = on\n'; do \
+		i=`expr $$i + 1`; printf "$$bad" > $(GCBAD); \
+		if python3 tools/gencpm.py $(GCBAD) $(GCBADSYS) 2>/dev/null; then \
+			echo "verify-gencpm: FAIL -- rejected config $$i was accepted; a misspelt or bad setting would ship a value nobody chose"; exit 1; \
+		fi; \
+	done
+	@cmp -s $(CPMSYS) $(GCBADSYS) \
+		|| { echo "verify-gencpm: FAIL -- a refused config still altered the image"; exit 1; }
 	cp $(CPMSYS) $(GCSYS)
 	@printf 'serial = ZZZZZZ\ndefault_drive = B\nhash_a = on\nhash_b = on\n' \
 		> $(GCDAT)
