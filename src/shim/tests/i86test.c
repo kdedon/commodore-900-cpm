@@ -3317,6 +3317,7 @@ static void sputc(int c)
  */
 static const char *skeys;
 static int skeyeof;
+static int swboot;		/* function 10 read a ^C		*/
 
 static int skey(void)
 {
@@ -3658,6 +3659,15 @@ static int stub(int fn, i16 val, char *addr)
 
 		if (!skeys)
 			return (0xff);
+		/* ^C first on the line is the BDOS's warm boot. */
+		if (*skeys == 3) {
+			skeys++;
+			swboot = 1;
+			sputc('^');
+			sputc('C');
+			addr[1] = 0;
+			return (0);
+		}
 		max = addr[0] & 0xff;
 		k = 0;
 		while ((c = skey()) >= 0 && c != '\r' && k < max)
@@ -4965,6 +4975,93 @@ static void t_prefix(void)
 	alarm(0);
 }
 
+/* ---- DRI's DDT86.CMD debugging DRI's PIP.CMD ---- */
+
+/* E loads PIP through function 59; G,D plants INT 3 at 000D and runs
+ * PIP's prologue into it; X shows what the prologue made; T steps the
+ * JMP with TF set; D dumps PIP's code group; ^C leaves. */
+static void t_ddt86(const char *dir)
+{
+	struct ld L;
+	struct i86in in;
+	char path[512];
+	struct sfile *fp;
+	FILE *f;
+	long nstep;
+	int rc, brc;
+	static const char *want[] = {
+		"CS 2000:0000 3000:0000",
+		"DS 3000:0000 3000:8800",
+		"*2000:000D",
+		"--------- F002 0000 3000 0000 0184 0000 0000 0000 "
+			"2000 3000 3000 3000 000D",
+		"000D JMP    0112",
+		"*2000:0112",
+		"2000:0000 9C 58 FA 8C D9 8E D1 8D 26 84 01 50 9D E9 02 01",
+		0
+	};
+	const char **w;
+
+	sprintf(path, "%s/DDT86.CMD", dir);
+	rc = ldread(path, &L);
+	if (rc != CE_OK) {
+		printf("i86test: %s: %s -- DDT86 skipped\n",
+			path, rc < 0 ? "unreadable" : i86cerr(rc));
+		ldfree(&L);
+		return;
+	}
+	chk("ddt86 place", ldplace(&L, ""), CE_OK);
+
+	memset(sdisk, 0, sizeof sdisk);
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	sprintf(path, "%s/PIP.CMD", dir);
+	fp = &sdisk[0];
+	smkname(fp->name, "PIP.CMD");
+	fp->used = 1;
+	if ((f = fopen(path, "rb")) != 0) {
+		fp->len = (long)fread(fp->d, 1, sizeof fp->d, f);
+		fclose(f);
+	}
+
+	sysmode = SYS_CPM;
+	i86bdosinit(&L.m);
+	skeys = "EPIP.CMD\nG,D\nX\nT\nD2000:0,F\n\003";
+	skeyeof = swboot = 0;
+	brc = B_RUN;
+	rc = X_OK;
+	for (nstep = 0; nstep < 1000000L && !swboot; nstep++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_INT)
+			break;
+		brc = i86bdos(&L.m);
+		if (brc != B_RUN)
+			break;
+	}
+	i86oflush();
+	skeys = 0;
+	scon[sconn] = 0;
+
+	chk("ddt86 left on the ^C", swboot, 1);
+	chk("ddt86 ended in a BDOS call", rc, X_INT);
+	chk("ddt86 seam never refused", brc, B_RUN);
+	chk("ddt86 never ran dry", skeyeof, 0);
+	for (w = want; *w; w++)
+		if (strstr(scon, *w) == 0) {
+			printf("i86test: DDT86 console lacks \"%s\"\n", *w);
+			chk("ddt86 console", 0, 1);
+		}
+	/* DDT86's own handlers, planted in paragraph 0 at its CS. */
+	chk("ddt86 INT 1 vector segment",
+		(zseg[6] & 0xff) | (zseg[7] & 0xff) << 8, 0x1000);
+	chk("ddt86 INT 3 vector segment",
+		(zseg[14] & 0xff) | (zseg[15] & 0xff) << 8, 0x1000);
+	ldfree(&L);
+}
+
 /* ================================================================== */
 
 /*
@@ -5215,6 +5312,7 @@ char **argv;
 	t_dmabound();
 	t_random();
 	t_prefix();
+	t_ddt86(argv[1]);
 
 	printf("i86test: %d checks, %d failures\n", ntest, nfail);
 	/* K2's instruments, reported so that they are known to work.

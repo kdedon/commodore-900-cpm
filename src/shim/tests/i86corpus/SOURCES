@@ -12,3 +12,7 @@ pip.c and src/cmd/stat.c are DRI's sources rebuilt as .Z8K, and they beat
 anything a shim can interpret.  These four are here because a loader needs
 real headers to be tested against, and because a PIP copy is a known-answer
 test for the day the CP/M-86 shim can make a BDOS call.
+
+DDT86.CMD is DRI's CP/M-86 debugger (version 1.2), unmodified, from the same
+drop under the same grant.  It is the one real caller of BDOS functions 49,
+57 and 59, and it drives INT 3, the trap flag and the vector table.

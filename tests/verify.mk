@@ -1042,6 +1042,49 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@echo "            group its G-Max -- and the .CMD it wrote is"
 	@echo "            byte-identical to the host run's, which loads and runs"
 
+# DRI's DDT86 under the shim: load PIP.CMD (BDOS fn 59), break at 000D
+# (INT 3), show registers and memory, single-step (TF, INT 1), then ^C.
+# The native BDOS's line editor warm boots on the ^C, so the CCP's prompt
+# returns and ENDIN ends the run.  '-' is no prompt character, so the
+# session runs gate-off (\\g), paced on the guest's RR0 poll streak, as
+# verify-ed does.
+I86DDTDISK = build/i86ddt
+I86DDTCPMA = build/i86ddt-cpma.img
+I86DDTIMG = build/i86ddt.bin
+I86DDTLOG = build/verify-i86ddt.log
+I86DDTMAX ?= 300000000
+I86DDTFMT = $(OSSEL)$(SESS1)CPM86 DDT86.CMD\r\\gEPIP.CMD\rG,D\rX\rT\rD2000:0,F\r\003$(ENDIN)
+
+.PHONY: verify-i86ddt
+verify-i86ddt: all
+	@rm -rf $(I86DDTDISK)
+	@mkdir -p $(I86DDTDISK)
+	@cp $(DISKA)/* $(I86DDTDISK)/
+	cp $(I86CORPUS)/DDT86.CMD $(I86CORPUS)/PIP.CMD $(I86DDTDISK)/
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(I86DDTCPMA) $(CPMA_BLOCKS) $(I86DDTDISK)
+	$(MKDISK) $(I86DDTIMG) $(CPMSYS) $(I86DDTCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(I86DDTIMG)) \
+		--input="$$(printf '$(I86DDTFMT)')" \
+		--max=$(I86DDTMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(I86DDTLOG))
+	@$(EMUOK)
+	@grep -q 'CS 2000:0000 3000:0000' $(I86DDTLOG) \
+		&& grep -q 'DS 3000:0000 3000:8800' $(I86DDTLOG) \
+		|| { echo "verify-i86ddt: FAIL -- function 59 did not load PIP.CMD"; exit 1; }
+	@grep -q '^\*2000:000D' $(I86DDTLOG) \
+		|| { echo "verify-i86ddt: FAIL -- G,D did not stop at the breakpoint"; exit 1; }
+	@# PIP's prologue: CX = SS = DS, SP = 0184.
+	@grep -q -- '--------- F002 0000 3000 0000 0184 0000 0000 0000 2000 3000 3000 3000 000D' $(I86DDTLOG) \
+		|| { echo "verify-i86ddt: FAIL -- X does not show PIP's prologue registers"; exit 1; }
+	@grep -q '^\*2000:0112' $(I86DDTLOG) \
+		|| { echo "verify-i86ddt: FAIL -- T did not step the JMP to 0112"; exit 1; }
+	@grep -q '^2000:0000 9C 58 FA 8C D9 8E D1 8D 26 84 01 50 9D E9 02 01' $(I86DDTLOG) \
+		|| { echo "verify-i86ddt: FAIL -- D does not show PIP's code group"; exit 1; }
+	@grep -q '$(ENDMARK)' $(I86DDTLOG) \
+		|| { echo "verify-i86ddt: FAIL -- ^C did not return to the CCP"; exit 1; }
+	@echo "verify-i86ddt: PASS -- DDT86 loaded PIP.CMD, broke, stepped, dumped and exited"
+
 # CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
 # cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.
 # Empty (not on $PATH) leaves each recipe to refuse by name.
@@ -7832,8 +7875,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 944 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1587 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1587 of its"; \
+	@grep -q 'i86test: 1594 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1594 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason

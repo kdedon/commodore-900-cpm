@@ -404,7 +404,14 @@ char *argv[];
 	 * most this machine can place and the refusal below names the
 	 * arithmetic rather than saying "no memory".
 	 */
-	need = C.ng < 2 ? 2 : C.ng;
+	need = C.ng;
+	/* The 8080 model has no data group: its segment goes back, so the
+	 * guest owns no paragraph 2000 and function 59 places above 1000,
+	 * as on the host. */
+	if (need == 1) {
+		segcall(SEG_PUT, (long) dseg);
+		ngseg = 1;
+	}
 	if (need > I86MAXG) {
 		cputs("i86: this program declares ");
 		putdec((unsigned) C.ng);
