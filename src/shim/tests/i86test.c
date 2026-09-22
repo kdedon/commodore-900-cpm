@@ -1879,7 +1879,11 @@ static void t_loader(void)
 	memset(h, 0, sizeof h);
 	mkgrp(h, 0, G_CODE, 379, 0, 379, 0);
 	mkgrp(h, 1, G_DATA, 84, 0, 640, 2176);
-	chk("truncated file refused", i86hdr(h, (i32)1000, &c), CE_TRUNC);
+	chk("short file loads", i86hdr(h, (i32)1000, &c), CE_OK);
+	chk("short file code bytes", (long)i86have(&c.g[0], (i32)1000),
+	    1000L - 128);
+	chk("short file data bytes", (long)i86have(&c.g[1], (i32)1000), 0L);
+	chk("header-short file refused", i86hdr(h, (i32)127, &c), CE_TRUNC);
 	/* trailing padding to the 128-byte record is NOT truncation --
 	 * every DRI .CMD has some, PIP has 16 bytes of it */
 	chk("padding is not truncation",
@@ -1904,17 +1908,16 @@ static void t_loader(void)
 	chk("place ip", m.ip & 0xffff, 0);
 
 	i86bpage(&c, &m, S_DS, "A:VERIFY.OUT=A:VERIFY.IN");
-	/* Six bytes to an entry: a 24-bit length in BYTES, then the base
-	 * paragraph.  The code group filled its segment, so its length is
-	 * 0x010000 and only the third byte carries it. */
+	/* Six bytes to an entry: the 24-bit last byte offset, then the
+	 * base paragraph.  The code group filled its segment. */
 	chk("bpage code base", (dseg[3] & 0xff) | ((dseg[4] & 0xff) << 8),
 	    0x1000);
 	chk("bpage code len", (dseg[0] & 0xff) | ((dseg[1] & 0xff) << 8)
-	    | ((long)(dseg[2] & 0xff) << 16), 4096L * 16);
+	    | ((long)(dseg[2] & 0xff) << 16), 4096L * 16 - 1);
 	chk("bpage data base", (dseg[9] & 0xff) | ((dseg[10] & 0xff) << 8),
 	    0x2000);
 	chk("bpage data len", (dseg[6] & 0xff) | ((dseg[7] & 0xff) << 8)
-	    | ((long)(dseg[8] & 0xff) << 16), 2176L * 16);
+	    | ((long)(dseg[8] & 0xff) << 16), 2176L * 16 - 1);
 	chk("bpage tail len", dseg[0x80] & 0xff, 24);
 	ntest++;
 	if (memcmp(dseg + 0x81, "A:VERIFY.OUT=A:VERIFY.IN", 24) != 0)
@@ -1977,8 +1980,8 @@ static long mg(char *h, const int *forms, const int *lens,
 	return (flen);
 }
 
-/* One six-byte group-table entry of the base page: a 24-bit length in
- * bytes, then the base paragraph.  `len' is still stated in paragraphs,
+/* One six-byte group-table entry of the base page: the 24-bit last byte
+ * offset, then the base paragraph.  `len' is still stated in paragraphs,
  * because that is what the header asks for and what galloc() grants. */
 static void chkbp(const char *what, const char *ds, int e, int base, int len)
 {
@@ -1988,7 +1991,7 @@ static void chkbp(const char *what, const char *ds, int e, int base, int len)
 	chk(w, (ds[e + 3] & 0xff) | ((ds[e + 4] & 0xff) << 8), base);
 	sprintf(w, "%s paragraphs", what);
 	chk(w, (ds[e] & 0xff) | ((ds[e + 1] & 0xff) << 8)
-	    | ((long)(ds[e + 2] & 0xff) << 16), (long)len * 16);
+	    | ((long)(ds[e + 2] & 0xff) << 16), len ? (long)len * 16 - 1 : 0L);
 }
 
 static void t_multi(void)
@@ -2455,7 +2458,7 @@ static int ldplace(struct ld *L, const char *tail)
 		if (g->form == G_NONE || g->form > G_AUX4)
 			continue;
 		memcpy(i86sbase[g->sidx], L->img + g->foff,
-			(size_t)g->len * CMD_PARA);
+			(size_t)i86have(g, (i32)L->flen));
 	}
 	/* The base page goes at the base of the group DS names -- the data
 	 * group in the small model, the one group in the 8080 model, where
@@ -2632,7 +2635,7 @@ static void t_corpus(const char *dir)
 			(L.m.sb[S_DS][6] & 0xff)
 			| ((L.m.sb[S_DS][7] & 0xff) << 8)
 			| ((long)(L.m.sb[S_DS][8] & 0xff) << 16),
-			(long)r->dnpar * 16);
+			(long)r->dnpar * 16 - 1);
 		ldsweep(&L, &ninsn, &nbad, &nunimp);
 		chk(nm(r->name, "instructions"), ninsn, r->ninsn);
 		chk(nm(r->name, "undecodable bytes"), nbad, 0);
@@ -3241,11 +3244,58 @@ static void t_seam(void)
 	 * whole segment.  27, 31, 49, 57 and 59 are not among them any
 	 * more -- see sections 8e and 8f. */
 	bsetup(); chk("fn 38 refused", bcall(38, (i16)0), B_FN);
-	bsetup(); chk("fn 50 refused", bcall(50, (i16)0), B_FN);
+	bsetup(); bseg[0] = 9; chk("fn 50 SELDSK refused", bcall(50, (i16)0),
+	    B_FN);
 	bsetup(); chk("fn 52 refused", bcall(52, (i16)0), B_FN);
 	bsetup(); chk("fn 53 refused", bcall(53, (i16)0), B_FN);
 	bsetup(); chk("fn 56 refused", bcall(56, (i16)0), B_FN);
 	chk("refused fn recorded", i86bdosfn, 56);
+
+	/* Function 6: FF answers a key or 0 without waiting, FE the
+	 * status, anything else -- FD included -- is output. */
+	bsetup();
+	chk("fn 6 FF no key rc", bcall(6, (i16)0xff), B_RUN);
+	chk("fn 6 FF no key ax", bm.r[R_AX] & 0xffff, 0);
+	chk("fn 6 FF no key asked status", slast_val & 0xffff, 0xfe);
+	chk("fn 6 FF no key did not wait", sncall, 2);
+	bsetup();
+	sysret = 'K';
+	bcall(6, (i16)0xff);
+	chk("fn 6 FF key ax", bm.r[R_AX] & 0xffff, 'K');
+	chk("fn 6 FF key read", slast_val & 0xffff, 0xff);
+	chk("fn 6 FF key calls", sncall, 3);
+	bsetup();
+	sysret = 1;
+	bcall(6, (i16)0xfe);
+	chk("fn 6 FE ready", bm.r[R_AX] & 0xffff, 0xff);
+	bsetup();
+	bcall(6, (i16)0xfe);
+	chk("fn 6 FE idle", bm.r[R_AX] & 0xffff, 0);
+	bsetup();
+	bcall(6, (i16)0xfd);
+	chk("fn 6 FD is output", slast_val & 0xffff, 0xfd);
+
+	/* Function 50's console vectors, from the block at DS:DX. */
+	bsetup();
+	bseg[0x40] = 4;
+	bseg[0x41] = 'z';
+	chk("fn 50 CONOUT rc", bcall(50, (i16)0x40), B_RUN);
+	chk("fn 50 CONOUT fn", slast_fn, 6);
+	chk("fn 50 CONOUT char", slast_val & 0xffff, 'z');
+	bsetup();
+	sysret = 'Q';
+	bseg[0x40] = 3;
+	chk("fn 50 CONIN rc", bcall(50, (i16)0x40), B_RUN);
+	chk("fn 50 CONIN ax", bm.r[R_AX] & 0xffff, 'Q');
+	chk("fn 50 CONIN read", slast_val & 0xffff, 0xff);
+	bsetup();
+	sysret = 1;
+	bseg[0x40] = 2;
+	bcall(50, (i16)0x40);
+	chk("fn 50 CONST ready", bm.r[R_AX] & 0xffff, 0xff);
+	chk("fn 50 CONST fn", slast_fn, 11);
+	bsetup();
+	chk("fn 50 block off the segment", bcall(50, (i16)0xfffc), B_ADDR);
 
 	/* Any other interrupt is a refusal that says which, and vector 0
 	 * -- the divide error i86exec.c raises -- is distinguished from
@@ -4490,7 +4540,7 @@ static void t_gencmd(const char *dir, const char *fixdir)
 	 * something we do not implement -- GENCMD is the only one of the
 	 * four corpus binaries that runs to completion. */
 	chk("gencmd exited cleanly", brc, B_EXIT);
-	chk("gencmd instructions", nstep, 1911554L);
+	chk("gencmd instructions", nstep, 1911524L);
 	chk("gencmd BDOS calls", (long)i86nbdos, 38L);
 	chk("gencmd no slow segments", (long)i86nsegslow, 0);
 	chk("gencmd no refused segments", (long)i86nsegbad, 0);
@@ -5338,8 +5388,8 @@ static void t_ddt86(const char *dir)
 	long nstep;
 	int rc, brc;
 	static const char *want[] = {
-		"CS 2000:0000 3000:0000",
-		"DS 3000:0000 3000:8800",
+		"CS 2000:0000 2000:FFFF",
+		"DS 3000:0000 3000:87FF",
 		"*2000:000D",
 		"--------- F002 0000 3000 0000 0184 0000 0000 0000 "
 			"2000 3000 3000 3000 000D",

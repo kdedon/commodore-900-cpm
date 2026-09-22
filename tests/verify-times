@@ -43,6 +43,7 @@
 119 verify-i86
 123 verify-i86asm
 8 verify-i86ddt
+8 verify-i86poll
 22 verify-i86util
 11 verify-initdir
 54 verify-initdir-mutants
@@ -100,4 +101,5 @@
 51 verify-xout
 5 verify-z80
 6 verify-z80pip
+9 verify-z80poll
 7 verify-z80save

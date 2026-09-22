@@ -364,7 +364,7 @@ struct i86cmd {
 #define CE_BASE		2	/* A-Base nonzero -- not relocatable	*/
 #define CE_BIG		3	/* a group wants over 64 KB		*/
 #define CE_FORM		4	/* a group form we do not place		*/
-#define CE_TRUNC	5	/* the file is shorter than its descriptors */
+#define CE_TRUNC	5	/* the file is shorter than its header	*/
 #define CE_EMPTY	6	/* a group that needs nothing at all	*/
 #define CE_DUP		7	/* two descriptors with the same form	*/
 #define CE_NSEG		8	/* more groups than the caller has 64 KB	*/
@@ -386,4 +386,5 @@ extern i32 i86dgtop;
 extern int i86hdr();		/* parse + validate a 128-byte header	*/
 extern int i86place();		/* bind groups to segment slots		*/
 extern char *i86cerr();		/* the refusal text for a CE_* code	*/
+extern i32 i86have();		/* image bytes a group's file holds	*/
 extern int i86bpage();		/* build the 256-byte base page		*/

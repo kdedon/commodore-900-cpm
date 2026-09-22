@@ -735,6 +735,55 @@ verify-z80save: all
 	@echo "            second function 59, and it wrote the guest's own page"
 	@echo "            zero out to a file on the machine"
 
+# ---- CP/M-80 shim, ON THE MACHINE: console polling ----
+# POLL80.COM reads a key through the BIOS CONIN vector and echoes it, then
+# 64 times writes a dot with function 6 and polls with E = 0FFh.  A poll
+# must answer 0 at once: one that waits never reaches POLL80 DONE.
+#
+#	lhld 1 / lxi d,6 / dad d / lxi d,back / push d / pchl	; CONIN
+#   back: mov e,a / mvi c,2 / call 5 / mvi b,64
+#   loop: push b / mvi e,'.' / mvi c,6 / call 5
+#	mvi e,0ffh / mvi c,6 / call 5 / pop b / ora a / jnz bad
+#	dcr b / jnz loop / lxi d,done / jmp out
+#   bad:  lxi d,key
+#   out:  mvi c,9 / call 5 / jmp 0
+Z80POLLHEX = 2a0100 110600 19 110c01 d5 e9 \
+	5f 0e02 cd0500 0640 \
+	c5 1e2e 0e06 cd0500 \
+	1eff 0e06 cd0500 c1 b7 c23201 \
+	05 c21401 113d01 c33501 \
+	114b01 \
+	0e09 cd0500 c30000
+Z80POLLDISK = build/z80polldisk
+Z80POLLCPMA = build/z80poll-cpma.img
+Z80POLLIMG  = build/z80polltest.bin
+Z80POLLLOG  = build/verify-z80poll.log
+.PHONY: verify-z80poll
+verify-z80poll: all
+	@rm -rf $(Z80POLLDISK)
+	@mkdir -p $(Z80POLLDISK)
+	@cp $(DISKA)/* $(Z80POLLDISK)/
+	python3 -c 'import sys; sys.stdout.buffer.write(bytes.fromhex("$(Z80POLLHEX)") + b"\r\nPOLL80 DONE$$\r\nPOLL80 KEY$$")' \
+		> $(Z80POLLDISK)/POLL80.COM
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(Z80POLLCPMA) $(CPMA_BLOCKS) $(Z80POLLDISK)
+	$(MKDISK) $(Z80POLLIMG) $(CPMSYS) $(Z80POLLCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(Z80POLLIMG)) \
+		--input="$(OSSEL)$(SESS1)Z80 POLL80.COM\r\gk" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(Z80POLLLOG))
+	@$(EMUOK)
+	@grep -q 'z80: load: ok' $(Z80POLLLOG) \
+		|| { echo "verify-z80poll: FAIL -- POLL80.COM did not load"; exit 1; }
+	@grep -q 'k\.' $(Z80POLLLOG) \
+		|| { echo "verify-z80poll: FAIL -- BIOS CONIN did not return the key"; exit 1; }
+	@grep -q 'POLL80 DONE' $(Z80POLLLOG) \
+		|| { echo "verify-z80poll: FAIL -- a function 6 poll waited or saw a key"; exit 1; }
+	@grep -q 'z80: the guest terminated' $(Z80POLLLOG) \
+		|| { echo "verify-z80poll: FAIL -- the guest did not terminate cleanly"; exit 1; }
+	@echo "verify-z80poll: PASS -- BIOS CONIN read a key and 64 function 6"
+	@echo "            polls answered at once"
+
 
 # ---- CP/M-86 shim, ON THE MACHINE: CPM86-STAGE-ONE.md's step 2 ----
 # The other half of what BIOS function 25 was built for, and the same
@@ -867,12 +916,12 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		|| { echo "verify-i86: FAIL -- the loader did not read PIP's real header"; exit 1; }
 	@grep -q 'i86: place: ok' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the groups were not bound to segments"; exit 1; }
-	@grep -q '0000: 00 00 01 00 10 00 00 88 00 00 20 00' $(I86LOG) \
+	@grep -q '0000: FF FF 00 00 10 00 FF 87 00 00 20 00' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the base page's segment table is not in"; \
 		     echo "            the guest's data segment.  Six bytes to an entry:"; \
-		     echo "            a 24-bit length in BYTES then the base paragraph,"; \
-		     echo "            so code is 0x010000 bytes at 0x1000 and data is"; \
-		     echo "            0x008800 at 0x2000 -- PIP's header asks for G-Max"; \
+		     echo "            a 24-bit last byte offset then the base paragraph,"; \
+		     echo "            so code ends at 0x00FFFF at 0x1000 and data at"; \
+		     echo "            0x0087FF at 0x2000 -- PIP's header asks for G-Max"; \
 		     echo "            0 and 2176, and src/shim/i86load.c galloc() grants"; \
 		     echo "            the ask, not the G-Min floor"; exit 1; }
 	@grep -q '0080: 15 20 49 38 36 4F 55 54' $(I86LOG) \
@@ -902,9 +951,9 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		     echo "            page.  src/shim/i86load.c galloc() grants"; \
 		     echo "            min(G-Max, CMD_MAXPAR); this says it did not."; exit 1; } \
 		|| true
-	@grep -q 'i86: 1911554 instructions, 38 BDOS calls' $(I86LOG) \
+	@grep -q 'i86: 1911524 instructions, 38 BDOS calls' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the target run of GENCMD did not"; \
-		     echo "            take the same path as the host run (1,911,554"; \
+		     echo "            take the same path as the host run (1,911,524"; \
 		     echo "            instructions, 38 BDOS calls -- src/shim/tests/i86test.c"; \
 		     echo "            section 8d)"; exit 1; }
 	@grep -q 'RECORDS WRITTEN 04' $(I86LOG) \
@@ -1071,8 +1120,8 @@ verify-i86ddt: all
 		--max=$(I86DDTMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(I86DDTLOG))
 	@$(EMUOK)
-	@grep -q 'CS 2000:0000 3000:0000' $(I86DDTLOG) \
-		&& grep -q 'DS 3000:0000 3000:8800' $(I86DDTLOG) \
+	@grep -q 'CS 2000:0000 2000:FFFF' $(I86DDTLOG) \
+		&& grep -q 'DS 3000:0000 3000:87FF' $(I86DDTLOG) \
 		|| { echo "verify-i86ddt: FAIL -- function 59 did not load PIP.CMD"; exit 1; }
 	@grep -q '^\*2000:000D' $(I86DDTLOG) \
 		|| { echo "verify-i86ddt: FAIL -- G,D did not stop at the breakpoint"; exit 1; }
@@ -1195,6 +1244,37 @@ verify-i86util: all
 	@echo "verify-i86util: PASS -- DRI's STAT sized two files, HELP found its"
 	@echo "            topic by a random read, and TOD read the clock, set it"
 	@echo "            and read the new time back, all through the real BDOS"
+
+# ---- CP/M-86 shim, ON THE MACHINE: console polling ----
+# I86POLL.CMD (tools/mkcmdfix.py p_poll) reads a key through function 50's
+# CONIN, then polls function 6 with E = 0FFh around its output.  A poll that
+# waits never reaches I86POLL DONE.
+I86PDISK = build/i86polldisk
+I86PCPMA = build/i86poll-cpma.img
+I86PIMG	 = build/i86polltest.bin
+I86PLOG	 = build/verify-i86poll.log
+.PHONY: verify-i86poll
+verify-i86poll: all $(I86FIX)/MANIFEST
+	@rm -rf $(I86PDISK)
+	@mkdir -p $(I86PDISK)
+	@cp $(DISKA)/* $(I86PDISK)/
+	cp $(I86FIX)/I86POLL.CMD $(I86PDISK)/
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(I86PCPMA) $(CPMA_BLOCKS) $(I86PDISK)
+	$(MKDISK) $(I86PIMG) $(CPMSYS) $(I86PCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(I86PIMG)) \
+		--input="$(OSSEL)$(SESS1)CPM86 I86POLL.CMD\r\gk" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(I86PLOG))
+	@$(EMUOK)
+	@grep -q 'k\.' $(I86PLOG) \
+		|| { echo "verify-i86poll: FAIL -- function 50 CONIN did not return the key"; exit 1; }
+	@grep -q 'I86POLL DONE' $(I86PLOG) \
+		|| { echo "verify-i86poll: FAIL -- a function 6 poll waited or saw a key"; exit 1; }
+	@grep -q 'i86: the guest terminated' $(I86PLOG) \
+		|| { echo "verify-i86poll: FAIL -- the guest did not terminate cleanly"; exit 1; }
+	@echo "verify-i86poll: PASS -- function 50 CONIN read a key and 64"
+	@echo "            function 6 polls answered at once"
 
 # CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
 # cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.
@@ -7982,12 +8062,12 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 967 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 967 of its"; \
+	@grep -q 'z80test: 981 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 981 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1731 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1731 of its"; \
+	@grep -q 'i86test: 1766 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1766 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason

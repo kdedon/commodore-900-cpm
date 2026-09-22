@@ -210,10 +210,10 @@ def p_small():
     allocation grows from G-Min to the whole 64 KB segment the group owns
     -- and this program does not take the loader's word for it, it reads
     its own data group's size out of the base page and stores it.  A group
-    table entry is six bytes and its length is a 24-bit BYTE count, so a
-    whole 64 KB segment is 0x010000 and the word at DS:7 holds its top two
-    bytes, 0x0100.  A loader that read G-Max literally would put 0 there;
-    one that stopped at G-Min would put 0x0020, which is 512 paragraphs.
+    table entry is six bytes and its length is the 24-bit last byte
+    offset, so a whole 64 KB segment is 0x00FFFF and the word at DS:7
+    holds its top two bytes, 0x00FF.  A loader that read G-Max literally
+    would put 0 there; one that stopped at G-Min would put 0x001F.
 
     The array it sums sits at DS:0x100, immediately above the base page,
     which is also the check that the data image landed at DS:0 with only
@@ -235,10 +235,86 @@ def p_small():
     words = (0x0101, 0x0202, 0x0303, 0x0404, 0x0505)    # sum 0x0f0f
     data = bytes(0x100) + b''.join(w16(v) for v in words)
     steps = 5 + 5 * 3 + 2
-    top = (MAXPAR * 16) >> 8
+    top = (MAXPAR * 16 - 1) >> 8
     exp = ("ip=0x%04x ax=%d bx=0x0f0f steps=%d w=ds:0x200:%d "
            "w=ds:0x202:0x0f0f" % (a.at('halt'), top, steps, top))
     return a.code(), data, exp
+
+
+def p_8080size():
+    """RUN80SZ.CMD -- an 8080-model program sizing its memory.
+
+    DRI's loader copies the code group's length into the data group's
+    entry at base page 6 for the 8080 model.  With G-Max 0 the group is a
+    whole segment, last byte 0x00FFFF.
+    """
+    a = Asm(0x100)
+    a.b(0xa1, 0x06, 0x00)               # mov ax,[6]
+    a.b(0x8a, 0x1e, 0x08, 0x00)         # mov bl,[8]
+    a.label('halt')
+    a.b(0xf4)                           # hlt
+    exp = "ip=0x%04x ax=0xffff bx=0 steps=3" % a.at('halt')
+    return bytes(0x100) + a.code(), exp
+
+
+def p_short():
+    """RUNSHORT.CMD -- a file that ends before its code group does.
+
+    The group declares 32 paragraphs and the file holds 17.  The load
+    goes ahead and the missing bytes read as zero.
+    """
+    a = Asm(0x100)
+    a.b(0xb8, 0x34, 0x12)               # mov ax,0x1234
+    a.b(0xa1, 0xf0, 0x01)               # mov ax,[0x1f0]
+    a.label('halt')
+    a.b(0xf4)                           # hlt
+    exp = "ip=0x%04x ax=0 steps=3" % a.at('halt')
+    return bytes(0x100) + a.code(), exp
+
+
+def p_poll():
+    """I86POLL.CMD -- console polling, the target's fixture.
+
+    Reads one key through function 50's CONIN and echoes it, then 64
+    times writes a dot with function 6 and polls with E = 0FFh, which
+    must answer 0 at once.  Prints I86POLL DONE, or I86POLL KEY if a
+    poll saw a key.
+    """
+    a = Asm(0x100)
+    a.b(0xb1, 50)                       # mov cl,50
+    a.b(0xba, 0x80, 0x01)               # mov dx,0x180   -- CONIN block
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0x88, 0xc2)                     # mov dl,al
+    a.b(0xb1, 0x02)                     # mov cl,2
+    a.b(0xcd, 0xe0)                     # int 0xe0       -- echo it
+    a.b(0xbe, 0x40, 0x00)               # mov si,64
+    a.label('loop')
+    a.b(0xb1, 0x06, 0xb2, 0x2e)         # mov cl,6 / mov dl,'.'
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0xb1, 0x06, 0xb2, 0xff)         # mov cl,6 / mov dl,0xff
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0x84, 0xc0)                     # test al,al
+    a.rel8(0x75, 'bad')                 # jnz bad
+    a.b(0x4e)                           # dec si
+    a.rel8(0x75, 'loop')                # jnz loop
+    a.b(0xba, 0x90, 0x01)               # mov dx,0x190   -- done text
+    a.rel8(0xeb, 'out')                 # jmp out
+    a.label('bad')
+    a.b(0xba, 0xa0, 0x01)               # mov dx,0x1a0   -- key text
+    a.label('out')
+    a.b(0xb1, 0x09)                     # mov cl,9
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0xb1, 0x00, 0xb2, 0x00)         # mov cl,0 / mov dl,0
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    code = a.code()
+    if len(code) > 0x80:
+        raise ValueError("I86POLL.CMD: code overlaps its data")
+    img = bytearray(0x1b0)
+    img[0x100:0x100 + len(code)] = code
+    img[0x180] = 3                      # CONIN
+    img[0x190:0x190 + 16] = b'\r\nI86POLL DONE$'.ljust(16, b'\0')
+    img[0x1a0:0x1a0 + 16] = b'\r\nI86POLL KEY$'.ljust(16, b'\0')
+    return bytes(img)
 
 
 def p_multi():
@@ -577,11 +653,10 @@ def main(argv):
     # header we never had.  Every other short file is caught later anyway,
     # by the images not fitting; this one is not.
     load('SHORTHDR.CMD', [], 'CE_TRUNC', cut=40)
-    # And the same file one byte longer than a header, so that the LATER
-    # check is the one that fires: the descriptors are real, the image is
-    # not there.
-    load('HDRONLY.CMD', [(G_CODE, 8, 0, 8, 0)], 'CE_TRUNC', cut=HDR)
-    load('PASTEOF.CMD', [(G_CODE, 100, 0, 100, 0)], 'CE_TRUNC',
+    # A header whose images end early loads: DRI's loader reads what is
+    # there and does not refuse.
+    load('HDRONLY.CMD', [(G_CODE, 8, 0, 8, 0)], 'CE_OK', cut=HDR)
+    load('PASTEOF.CMD', [(G_CODE, 100, 0, 100, 0)], 'CE_OK',
          cut=HDR + PARA)
     load('SHCODE.CMD', [(G_CODE, 8, 0, 8, 0), (G_SHCODE, 8, 0, 8, 0)],
          'CE_FORM')
@@ -627,6 +702,15 @@ def main(argv):
            (G_DATA, npar(data), 0, 512, 0)], [code, data])
     man.append("RUN RUNSMALL.CMD X_HALT " + exp)
 
+    img, exp = p_8080size()
+    write(d, 'RUN80SZ.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
+    man.append("RUN RUN80SZ.CMD X_HALT " + exp)
+
+    img, exp = p_short()
+    write(d, 'RUNSHORT.CMD', [(G_CODE, 32, 0, 32, 32)], [img],
+              cut=HDR + len(img))
+    man.append("RUN RUNSHORT.CMD X_HALT " + exp)
+
     img, exp = p_refuse(0xce, 'into: a real instruction we do not run')
     write(d, 'RUNUNIMP.CMD', [(G_CODE, npar(img), 0, 64, 0)], [img])
     man.append("RUN RUNUNIMP.CMD X_UNIMP " + exp)
@@ -659,6 +743,9 @@ def main(argv):
     write(d, 'I86PL.CMD',
           [(G_CODE, npar(code), 0, npar(code), 0),
            (G_DATA, npar(data), 0, 512, 0)], [code, data])
+
+    img = p_poll()
+    write(d, 'I86POLL.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
 
     # ---- and the one fixture that is not a .CMD: GENCMD's input.
     hexf, msg = p_hex()

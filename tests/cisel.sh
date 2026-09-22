@@ -22,10 +22,11 @@
 #
 #   docs: *.md, LICENSE, CONTRIBUTORS (not under src/ or vendor/,
 #         which are staged onto the drives)             nothing
-#   src/shim/z80*, src/shim/tests/z80*                  verify-z80 verify-z80pip verify-shim
+#   src/shim/z80*, src/shim/tests/z80*                  verify-z80 verify-z80pip verify-z80save
+#                                                       verify-z80poll verify-shim
 #   src/shim/i86*, src/shim/tests/i86*,                 verify-i86 verify-i86ddt
 #     tools/mkcmdfix.py                                 verify-i86asm verify-i86util
-#                                                       verify-shim
+#                                                       verify-i86poll verify-shim
 #   src/app/*  (the application programs on drive A:)   verify-a3 verify-sdb verify-appbound
 #                                                       verify-repl verify-put verify-xdospoll5
 #   anything else                                       all
@@ -46,9 +47,9 @@ while IFS= read -r p; do
 	esac
 	case $p in
 	src/shim/z80*|src/shim/tests/z80*)
-		sel="$sel verify-z80 verify-z80pip verify-shim" ;;
+		sel="$sel verify-z80 verify-z80pip verify-z80save verify-z80poll verify-shim" ;;
 	src/shim/i86*|src/shim/tests/i86*|tools/mkcmdfix.py)
-		sel="$sel verify-i86 verify-i86ddt verify-i86asm verify-i86util verify-shim" ;;
+		sel="$sel verify-i86 verify-i86ddt verify-i86asm verify-i86util verify-i86poll verify-shim" ;;
 	src/app/*)
 		sel="$sel verify-a3 verify-sdb verify-appbound verify-repl verify-put verify-xdospoll5" ;;
 	*)

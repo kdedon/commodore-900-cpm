@@ -376,6 +376,11 @@ char *argv[];
 	cputs("i86: header: ");
 	cputs(i86cerr(rc));
 	cputs("\r\n");
+	/* A file that filled the staging segment may go on past it. */
+	if (rc == CE_OK && n >= 0x10000L && C.need > n) {
+		cputs("i86: image larger than 64K\r\n");
+		rc = CE_BIG;
+	}
 	if (rc != CE_OK) {
 		segcall(SEG_PUT, (long) sseg);
 		putsegs();
@@ -489,7 +494,7 @@ char *argv[];
 		if (g->form == G_NONE || g->form > G_AUX4)
 			continue;
 		segcopy(i86sbase[g->sidx], stage + g->foff,
-			(long) g->len * (long) CMD_PARA);
+			(long) i86have(g, (i32) n));
 	}
 	/*
 	 * The staging segment becomes paragraph 0 now that the images

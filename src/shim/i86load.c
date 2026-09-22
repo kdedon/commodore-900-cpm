@@ -39,7 +39,8 @@ struct i86grp *g;
 	return (n);
 }
 
-/* Validate the header against file length, allowing trailing record padding.
+/* Validate the header.  A file may end before its groups do, as DRI's
+ * loader allows; i86have() says how much is there.
  * Returns CE_OK or a CE_* refusal. */
 int i86hdr(hdr, flen, c)
 char *hdr;
@@ -108,8 +109,6 @@ struct i86cmd *c;
 	if (!seen[G_CODE])
 		return (CE_NOCODE);
 	c->need = off;
-	if (flen < off)
-		return (CE_TRUNC);
 
 	/* Code-only enters at 0x100 with its base page in the same group.
 	 * DATA, EXTRA/STACK, and AUX select small, compact, and large models;
@@ -128,6 +127,22 @@ struct i86cmd *c;
 	return (CE_OK);
 }
 
+/* Bytes of a group's image a file of flen bytes holds; the rest of the
+ * group stays zero. */
+i32 i86have(g, flen)
+struct i86grp *g;
+i32 flen;
+{
+	register i32 n;
+
+	if (flen <= g->foff)
+		return (0);
+	n = flen - g->foff;
+	if (n > (i32)g->len * CMD_PARA)
+		n = (i32)g->len * CMD_PARA;
+	return (n);
+}
+
 char *i86cerr(e)
 int e;
 {
@@ -137,7 +152,7 @@ int e;
 	case CE_BASE:	return ("nonzero A-Base: not relocatable");
 	case CE_BIG:	return ("group wants more than 64K");
 	case CE_FORM:	return ("unsupported group form");
-	case CE_TRUNC:	return ("file shorter than its group descriptors");
+	case CE_TRUNC:	return ("file shorter than its header");
 	case CE_EMPTY:	return ("group needs no memory");
 	case CE_DUP:	return ("two descriptors with the same form");
 	case CE_NSEG:	return ("more groups than this machine has segments");
@@ -340,7 +355,7 @@ char *s, *f;
 /* Build the data group's (or code-only group's) 256-byte base page:
  * eight SIX-byte group descriptors, FCBs at 0x5c/0x6c, tail at 0x80.
  *
- * Six, not four, and the length is a byte count and not a paragraph
+ * Six, not four, and the length is a last byte offset and not a paragraph
  * count.  DRI's DDT86 is the witness: it copies 0x30 bytes out of a
  * loaded program's base page and indexes them by six (DDT86.CMD 06F0h),
  * taking the word at +3 as the group's base PARAGRAPH -- which is also
@@ -359,6 +374,7 @@ char *tail;
 	register int i, n;
 	register char *t;
 	int e;
+	i32 last;
 
 	for (i = 0; i < 256; i++)
 		m->sb[slot][i] = 0;
@@ -369,12 +385,12 @@ char *tail;
 		e = (g->form - 1) * 6;		/* code is first	*/
 		if (e > 0x2a)
 			continue;
-		/* The length in bytes: a group of 4096 paragraphs is a
-		 * whole 64 KB and does not fit in the word, which is what
-		 * the third byte is for. */
-		m->sb[slot][e] = (char)(((g->npar & 0x0fff) << 4) & 0xff);
-		m->sb[slot][e + 1] = (char)((g->npar >> 4) & 0xff);
-		m->sb[slot][e + 2] = (char)((g->npar >> 12) & 0xff);
+		/* The group's last byte offset, as DRI's loader stores it:
+		 * a whole 64 KB group is 00FFFFh. */
+		last = (i32)(g->npar & 0xffff) * CMD_PARA - 1;
+		m->sb[slot][e] = (char)(last & 0xff);
+		m->sb[slot][e + 1] = (char)((last >> 8) & 0xff);
+		m->sb[slot][e + 2] = (char)((last >> 16) & 0xff);
 		/* g->par, not m->sr[g->seg]: an auxiliary group has a
 		 * paragraph and no segment register, and the base page
 		 * is the ONLY way its program can learn that paragraph.
@@ -384,8 +400,14 @@ char *tail;
 		m->sb[slot][e + 4] = (char)((g->par >> 8) & 0xff);
 		/* The 8080 model, in the byte DDT86 tests before it will
 		 * start a program at 0100h rather than at zero. */
-		if (g->form == G_CODE && c->model == M_8080)
+		if (g->form == G_CODE && c->model == M_8080) {
 			m->sb[slot][e + 5] = 1;
+			/* DRI repeats the length as the data group's and
+			 * leaves its base zero. */
+			m->sb[slot][6] = m->sb[slot][e];
+			m->sb[slot][7] = m->sb[slot][e + 1];
+			m->sb[slot][8] = m->sb[slot][e + 2];
+		}
 	}
 	n = 0;
 	if (tail) {

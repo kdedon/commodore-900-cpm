@@ -2736,7 +2736,7 @@ static int stub1(int fn, z16 val, char *addr)
 		sputc(val & 0x7f);
 		return (0);
 	case 6:					/* direct console i/o	*/
-		if ((val & 0xff) == 0xff || (val & 0xff) == 0xfd)
+		if ((val & 0xff) == 0xff || (val & 0xff) == 0xfe)
 			return (0);		/* no input waiting	*/
 		sputc(val & 0x7f);
 		return (0);
@@ -3186,6 +3186,47 @@ static void t_seam(void)
 	rret = 0;
 	z80bdos(&G);
 	chk("BIOS CONST widens 0 to 0x00", (long)G.a, 0x00L);
+
+	z80hookno = HOOK_BIOS + 3;		/* CONIN		*/
+	rret = 'Q';
+	z80bdos(&G);
+	chk("BIOS CONIN returns the key", (long)G.a, (long)'Q');
+	chk("... from our blocking read", (long)rval, 0xffL);
+
+	/* Function 6, CP/M 3's four meanings over our two. */
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, 6);
+	G.rp[P_DE] = 0xff;
+	rret = 0;
+	rn = 0;
+	z80bdos(&G);
+	chk("fn 6 FF with no key answers 0", (long)G.a, 0L);
+	chk("... after a status call only", (long)rval, 0xfeL);
+	chk("... one call, so it did not wait", rn, 1L);
+	rret = 'K';
+	rn = 0;
+	z80bdos(&G);
+	chk("fn 6 FF with a key answers it", (long)G.a, (long)'K');
+	chk("... through our read", (long)rval, 0xffL);
+	chk("... after the status call", rn, 2L);
+	G.rp[P_DE] = 0xfe;
+	rret = 1;
+	z80bdos(&G);
+	chk("fn 6 FE widens a ready status", (long)G.a, 0xffL);
+	rret = 0;
+	z80bdos(&G);
+	chk("fn 6 FE with no key", (long)G.a, 0L);
+	G.rp[P_DE] = 0xfd;
+	rret = 'W';
+	rn = 0;
+	z80bdos(&G);
+	chk("fn 6 FD waits for a key", (long)G.a, (long)'W');
+	chk("... in our read", (long)rval, 0xffL);
+	chk("... and nothing else", rn, 1L);
+	G.rp[P_DE] = 'x';
+	z80bdos(&G);
+	chk("fn 6 other E is output", (long)rval, (long)'x');
+	rret = 0;
 
 	z80hookno = HOOK_BIOS + 1;		/* warm boot		*/
 	chk("BIOS warm boot terminates", z80bdos(&G), B_EXIT);

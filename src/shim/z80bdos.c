@@ -598,6 +598,23 @@ struct z80 *m;
 	return (0);
 }
 
+/* Function 6: E = FFh answers a key or 0 without waiting, FEh the
+ * status, FDh waits for a key, anything else is output.  Our FFh is
+ * the one that waits. */
+static int dconio(e)
+int e;
+{
+	if (e == 0xfd)
+		return (z80sys(6, (z16)0xff, (char *)0) & 0xff);
+	if (e != 0xfe && e != 0xff)
+		return (z80sys(6, (z16)e, (char *)0));
+	if ((z80sys(6, (z16)0xfe, (char *)0) & 0xff) == 0)
+		return (0);
+	if (e == 0xfe)
+		return (0xff);
+	return (z80sys(6, (z16)0xff, (char *)0) & 0xff);
+}
+
 /* Set when the vector just serviced answers in HL rather than in A. */
 static int bioshl;
 
@@ -626,7 +643,7 @@ int v;
 		m->a = (z8)(r ? 0xff : 0x00);
 		return (B_RUN);
 	case 3:				/* CONIN			*/
-		m->a = (z8)(z80sys(6, (z16)0xfd, (char *)0) & 0xff);
+		m->a = (z8)dconio(0xfd);
 		return (B_RUN);
 	case 4:				/* CONOUT			*/
 		z80sys(6, (z16)(z80getr(m, R_C) & 0xff), (char *)0);
@@ -881,6 +898,10 @@ struct z80 *m;
 		r = z80sys(fn, (z16)0, (char *)0);
 		break;
 	case P_BYTE:
+		if (fn == 6) {
+			r = dconio((int)(de & 0xff));
+			break;
+		}
 		r = z80sys(fn, (z16)(de & 0xff), (char *)0);
 		/* Function 44 is the first of the two doors to the count
 		 * this seam has to watch; the native BDOS answers 0xff

@@ -110,7 +110,7 @@ static i8 pmap[53] = {
 	P_NONE,		/*  3 reader input				*/
 	P_BYTE,		/*  4 punch output				*/
 	P_BYTE,		/*  5 list output				*/
-	P_BYTE,		/*  6 direct console i/o				*/
+	P_BYTE,		/*  6 direct console i/o -- handled before this table */
 	P_NONE,		/*  7 get i/o byte				*/
 	P_BYTE,		/*  8 set i/o byte				*/
 	P_STR,		/*  9 print string				*/
@@ -154,7 +154,7 @@ static i8 pmap[53] = {
 	P_NO,		/* 47 chain to program				*/
 	P_NONE,		/* 48 flush buffers				*/
 	P_NO,		/* 49 get system data -- handled before this table */
-	P_NO,		/* 50 direct BIOS call				*/
+	P_NO,		/* 50 direct BIOS call -- handled before this table */
 	P_WORD,		/* 51 set DMA base -- handled before this table	*/
 	P_NO		/* 52 get DMA base				*/
 };
@@ -685,6 +685,40 @@ int fn;
 	return (fn == 20 || fn == 21 || fn == 33 || fn == 34 || fn == 40);
 }
 
+/* Function 6: E = FFh answers a key or 0 without waiting, FEh the
+ * status, anything else is output.  Our FFh waits for a key. */
+static int dconio(e)
+int e;
+{
+	if (e != 0xfe && e != 0xff)
+		return (i86sys(6, (i16)e, (char *)0));
+	if ((i86sys(6, (i16)0xfe, (char *)0) & 0xff) == 0)
+		return (0);
+	if (e == 0xfe)
+		return (0xff);
+	return (i86sys(6, (i16)0xff, (char *)0) & 0xff);
+}
+
+/* Function 50's console vectors; the rest are refused. */
+static int biosv(v, c, r)
+int v, c;
+int *r;
+{
+	switch (v) {
+	case 2:				/* CONST			*/
+		*r = i86sys(11, (i16)0, (char *)0) ? 0xff : 0;
+		return (1);
+	case 3:				/* CONIN			*/
+		*r = i86sys(6, (i16)0xff, (char *)0) & 0xff;
+		return (1);
+	case 4:				/* CONOUT			*/
+		i86sys(6, (i16)(c & 0xff), (char *)0);
+		*r = 0;
+		return (1);
+	}
+	return (0);
+}
+
 /*
  * i86bdosinit -- the state CP/M-86 gives a program before its first
  * instruction: the DMA buffer is the base page's own 128-byte tail
@@ -825,6 +859,27 @@ struct i86 *m;
 		return (B_RUN);
 	}
 
+	if (fn == 6) {
+		r = dconio((int)(dx & 0xff));
+		m->r[R_AX] = (i16)r;
+		m->r[R_BX] = (i16)r;
+		return (B_RUN);
+	}
+	if (fn == 50) {
+		/* The parameter block: function byte, then CX and DX. */
+		p = i86addr(m, S_DS, dx, 5L);
+		if (p == (char *)0) {
+			breason = BR_ADDR;
+			return (B_ADDR);
+		}
+		if (!biosv(p[0] & 0xff, p[1] & 0xff, &r)) {
+			breason = BR_FN;
+			return (B_FN);
+		}
+		m->r[R_AX] = (i16)r;
+		m->r[R_BX] = (i16)r;
+		return (B_RUN);
+	}
 	if (fn == 49) {
 		/* Get system data.  Without a paragraph 0 there is no
 		 * block, and 0FFFFh is what DDT86 reads as "none". */
