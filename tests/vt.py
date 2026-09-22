@@ -16,8 +16,11 @@ Understood: printable ASCII, BS, CR, LF, TAB, FF (form feed = home, which the
 BIOS console layer passes through unchanged rather than translating -- the
 C900 video ROM's own FF handler already homes the cursor, on both the LR and
 HR consoles), and the CSI sequences the BIOS escape layer emits -- CUP (H),
-CUU/CUD/CUF/CUB (A/B/C/D), ED (J, and 2J) and EL (K).  Anything else is
-skipped, not drawn.
+CUU/CUD/CUF/CUB (A/B/C/D), ED (J, 1J, 2J), EL (K, 1K, 2K), IL/DL (L/M), DCH
+(P) and the DEC save/restore pair.  Reverse index (ESC M) is modelled too, so
+a delete-line passed through as those two bytes scrolls here as it would on a
+real terminal.  Anything else is skipped, not drawn -- attributes included, a
+cell holding only its character.
 
 Usage:
     vt.py LOG --dump
@@ -36,10 +39,28 @@ class Screen:
     def __init__(self):
         self.g = [[' '] * COLS for _ in range(ROWS)]
         self.r = self.c = 0
+        self.sr = self.sc = 0
 
     def scroll(self):
         self.g.pop(0)
         self.g.append([' '] * COLS)
+
+    def rscroll(self):
+        self.g.pop()
+        self.g.insert(0, [' '] * COLS)
+
+    def insline(self):
+        self.g.pop()
+        self.g.insert(self.r, [' '] * COLS)
+
+    def delline(self):
+        self.g.pop(self.r)
+        self.g.append([' '] * COLS)
+
+    def delchar(self):
+        row = self.g[self.r]
+        del row[self.c]
+        row.append(' ')
 
     def put(self, ch):
         if self.c >= COLS:
@@ -81,7 +102,19 @@ class Screen:
                     self.csi(chr(data[i]), p)
                     i += 1
                 else:
-                    # ESC not followed by '[': one more byte belongs to it
+                    # ESC not followed by '[': one more byte belongs to it.
+                    # ESC M is reverse index, which is why the BIOS may not
+                    # pass its own delete-line through as those two bytes.
+                    if i < n:
+                        if data[i] == ord('M'):
+                            if self.r > 0:
+                                self.r -= 1
+                            else:
+                                self.rscroll()
+                        elif data[i] == ord('7'):
+                            self.sr, self.sc = self.r, self.c
+                        elif data[i] == ord('8'):
+                            self.r, self.c = self.sr, self.sc
                     i += 1
                 continue
             if b == 0x0d:
@@ -118,10 +151,23 @@ class Screen:
         elif final == 'J':
             if args and args[0] == 2:
                 self.g = [[' '] * COLS for _ in range(ROWS)]
+            elif args and args[0] == 1:
+                self.erase(0, 0, self.r * COLS + self.c + 1)
             else:
                 self.erase(self.r, self.c, (ROWS - self.r) * COLS - self.c)
         elif final == 'K':
-            self.erase(self.r, self.c, COLS - self.c)
+            if args and args[0] == 2:
+                self.erase(self.r, 0, COLS)
+            elif args and args[0] == 1:
+                self.erase(self.r, 0, self.c + 1)
+            else:
+                self.erase(self.r, self.c, COLS - self.c)
+        elif final == 'L':
+            self.insline()
+        elif final == 'M':
+            self.delline()
+        elif final == 'P':
+            self.delchar()
 
     def line(self, r):
         return ''.join(self.g[r]).rstrip()

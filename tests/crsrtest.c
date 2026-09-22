@@ -40,8 +40,18 @@ int c;
 	return (c);
 }
 
+/* Cells are big-endian words: attribute at the even byte, character at the
+   odd one.  A byte write reaches only the character. */
+static hostsetw(off, w)
+int off, w;
+{
+	vram[off] = w >> 8;
+	vram[off + 1] = w;
+}
+
 #define putchar(c)	hostput(c)
-#define VSET(off, ch)	(vram[off] = (ch))
+#define VSET(off, ch)	(vram[(off) + 1] = (ch))
+#define VSETW(off, w)	hostsetw(off, w)
 #define VMOVE(d, s, n)	memmove(&vram[d], &vram[s], (size_t)(n))
 #define SCRST		scr
 
@@ -94,7 +104,7 @@ int ch;
 
 	for (r = 0; r < NR; r++)
 		for (c = 0; c < NC; c++)
-			vram[r * 0xa0 + c * 2] = ch;
+			vram[r * 0xa0 + c * 2 + 1] = ch;
 }
 
 static fillrows()	/* row r gets the character 'A' + r */
@@ -103,10 +113,16 @@ static fillrows()	/* row r gets the character 'A' + r */
 
 	for (r = 0; r < NR; r++)
 		for (c = 0; c < NC; c++)
-			vram[r * 0xa0 + c * 2] = 'A' + r;
+			vram[r * 0xa0 + c * 2 + 1] = 'A' + r;
 }
 
 static int cell(r, c)
+int r, c;
+{
+	return (vram[r * 0xa0 + c * 2 + 1] & 0xff);
+}
+
+static int attr(r, c)
 int r, c;
 {
 	return (vram[r * 0xa0 + c * 2] & 0xff);
@@ -119,6 +135,18 @@ char *what;
 	if (cell(r, c) != want) {
 		printf("crsrtest: cell(%d,%d) = 0x%02x, want 0x%02x\n",
 		       r, c, cell(r, c), want);
+		fail(what);
+	} else
+		ok(what);
+}
+
+static eqattr(r, c, want, what)
+int r, c, want;
+char *what;
+{
+	if (attr(r, c) != want) {
+		printf("crsrtest: attr(%d,%d) = 0x%02x, want 0x%02x\n",
+		       r, c, attr(r, c), want);
 		fail(what);
 	} else
 		ok(what);
@@ -355,6 +383,93 @@ static lrtests()
 	eqcell(5, 1, 'd', "LR: ... and carries on");
 	eqoutn("\000\000\000", 3, "LR: ... with one park per piece");
 
+	/* attributes travel with the character into the cell's high byte */
+	reset(CK_LR);
+	feed("\033pA\033qB");
+	eqcell(5, 5, 'A', "LR: ESC p writes the character ...");
+	eqattr(5, 5, 0x70, "LR: ... in reverse video");
+	eqattr(5, 6, 0x07, "LR: ESC q goes back to ordinary video");
+
+	reset(CK_LR);
+	feed("\033eA\033fB");
+	eqattr(5, 5, 0x0f, "LR: ESC e adds intensity to the video mode");
+	eqattr(5, 6, 0x07, "LR: ESC f takes it away again");
+
+	reset(CK_LR);
+	feed("\033pA\033zB");
+	eqattr(0, 0, 0x07, "LR: ESC z is back to ordinary video ...");
+	eqcell(0, 0, 'B', "LR: ... having cleared and homed");
+
+	/* erasing always leaves ordinary video behind */
+	reset(CK_LR);
+	feed("\033p\033l");
+	eqattr(5, 5, 0x07, "LR: an erased cell is ordinary video");
+
+	/* insert line: rows below the cursor move down, the cursor's is blank */
+	reset(CK_LR);
+	fillrows();
+	feed("\033Y%%\033L");		/* row 5, column 5 */
+	eqcell(4, 0, 'E', "LR: ESC L leaves the rows above alone");
+	blankrun(5, 0, NC, "LR: ... blanks the row it opened ...");
+	eqcell(6, 0, 'F', "LR: ... pushes the old row down ...");
+	eqcell(24, 0, 'X', "LR: ... and the bottom row with it");
+	eqscr(0x00050005L, "LR: ... without moving the cursor");
+
+	/* delete line: rows below move up, the bottom row is blank */
+	reset(CK_LR);
+	fillrows();
+	feed("\033Y%%\033M");
+	eqcell(4, 0, 'E', "LR: ESC M leaves the rows above alone");
+	eqcell(5, 0, 'G', "LR: ... pulls the row below up ...");
+	eqcell(23, 0, 'Y', "LR: ... and the bottom row with it ...");
+	blankrun(24, 0, NC, "LR: ... blanking the row it uncovered");
+	eqscr(0x00050005L, "LR: ... without moving the cursor");
+
+	/* delete character: the rest of the row comes left */
+	reset(CK_LR);
+	fillscreen('#');
+	feed("\033Y%%\033Nx");
+	eqcell(5, 5, 'x', "LR: ESC N makes room at the cursor");
+	eqcell(5, 6, '#', "LR: ... with the row still behind it");
+	blankrun(5, 79, 1, "LR: ... and a blank pulled in at the margin");
+
+	/* the three erases the H19 has and this console did not */
+	reset(CK_LR);
+	fillscreen('#');
+	feed("\033Y#f\033o");		/* row 3, column 70 */
+	blankrun(3, 0, 71, "LR: ESC o erases back to the left margin");
+	eqcell(3, 71, '#', "LR: ... and no further");
+
+	reset(CK_LR);
+	fillscreen('#');
+	feed("\033Y#f\033l");
+	blankrun(3, 0, NC, "LR: ESC l erases the whole line");
+	eqcell(2, 79, '#', "LR: ... and only that line");
+	eqcell(4, 0, '#', "LR: ... from margin to margin");
+
+	reset(CK_LR);
+	fillscreen('#');
+	feed("\033Y\"%\033b");		/* row 2, column 5 */
+	blankrun(0, 0, 2 * NC + 6, "LR: ESC b erases back to the top left");
+	eqcell(2, 6, '#', "LR: ... stopping after the cursor");
+
+	/* save and restore the cursor */
+	reset(CK_LR);
+	feed("\033j\033Y\"%\033k");
+	eqscr(0x00050005L, "LR: ESC k returns to where ESC j was");
+
+	/* a sequence this console cannot do is eaten whole, parameter and
+	   all, so none of it is blitted as text */
+	reset(CK_LR);
+	feed("\033x5X");
+	eqcell(5, 5, 'X', "LR: ESC x eats its parameter byte ...");
+	eqscr(0x00050006L, "LR: ... and nothing else reaches the screen");
+
+	reset(CK_LR);
+	feed("\033(\033)\033@\033FY");
+	eqcell(5, 5, 'Y', "LR: an unimplemented sequence is eaten whole");
+	eqscr(0x00050006L, "LR: ... leaving the cursor one column on");
+
 	/* BEL is the speaker, and is not blitted on a video console */
 	reset(CK_LR);
 	feed("\007");
@@ -402,6 +517,45 @@ static sertests()
 	eqout("\033[J\033[K", "serial: ESC J/K become ED/EL");
 
 	reset(CK_SER);
+	feed("\033b\033l\033o");
+	eqout("\033[1J\033[2K\033[1K", "serial: the three other erases become ANSI");
+
+	/* ESC M is delete-line here and reverse index on the far end, so
+	   passing it through would scroll the terminal instead */
+	reset(CK_SER);
+	feed("\033L\033M\033N");
+	eqout("\033[L\033[M\033[P", "serial: insert, delete line and delete character");
+
+	reset(CK_SER);
+	feed("\033j\033k");
+	eqout("\0337\0338", "serial: ESC j/k become DEC save and restore");
+
+	reset(CK_SER);
+	feed("\033p");
+	eqout("\033[0;7m", "serial: ESC p becomes reverse video");
+
+	reset(CK_SER);
+	feed("\033p\033q");
+	eqout("\033[0;7m\033[0m", "serial: ESC q takes it off again");
+
+	reset(CK_SER);
+	feed("\033h\033e\033c");
+	eqout("\033[0;4m\033[0;4;1m\033[0;4;1;5m",
+	      "serial: underline, intensity and blink accumulate");
+
+	/* a program that exits in reverse video must not leave the terminal
+	   in it */
+	reset(CK_SER);
+	feed("\033p");
+	outn = 0;
+	crsreset();
+	eqout("\033[0m", "serial: the warm boot puts the attribute back");
+
+	reset(CK_SER);
+	feed("\033x5\033y5\033(\033)\033@\033F\0333\0334");
+	eqout("", "serial: an unimplemented sequence emits nothing at all");
+
+	reset(CK_SER);
 	feed("\033[2J");
 	eqout("\033[2J", "serial: an ANSI sequence from the program passes through");
 
@@ -443,6 +597,11 @@ static hrtests()
 	reset(CK_HR);
 	feed("\033Y%*Z");
 	eqout("Z", "HR: an unsupported address is swallowed, not printed");
+
+	/* nor may the attribute and editing sequences reach the blitter */
+	reset(CK_HR);
+	feed("\033p\033L\033x5\033(Z");
+	eqout("Z", "HR: attribute and editing sequences are swallowed too");
 }
 
 int main(argc, argv)

@@ -57,6 +57,27 @@ char *argv[];
 
 	esc('E');			/* clear screen, cursor home	*/
 
+	/*
+	 * Attributes, and the sequences this console does not implement.
+	 * Row 0 must read exactly "REVNORMEND": a sequence that is not
+	 * performed may leave neither its introducer nor its parameter on
+	 * the screen.
+	 */
+	at(0, 0);
+	esc('p');
+	say("REV");
+	esc('q');
+	say("NORM");
+	conout(ESC);
+	conout('x');
+	conout('5');			/* set mode, and its parameter	*/
+	esc('(');
+	esc(')');
+	esc('3');
+	esc('@');
+	esc('F');
+	say("END");
+
 	at(BOXTOP, BOXLFT);
 	run('-', BOXRGT - BOXLFT + 1);
 	at(BOXBOT, BOXLFT);
@@ -141,6 +162,22 @@ char *argv[];
 
 	at(22, 0);
 	say("CRSRDEMO done.");
+
+	/*
+	 * Insert and delete line, which undo each other: ESC L opens row 15
+	 * and pushes the rest of the screen down, ESC M takes the pushed
+	 * line out again, so only row 15 is left changed.  If ESC L were
+	 * ignored the mark would still be under "INS"; if ESC M were, every
+	 * row below would be one too low.
+	 */
+	at(15, 0);
+	say("Z15MARK");
+	at(15, 0);
+	esc('L');
+	say("INS");
+	at(16, 0);
+	esc('M');
+
 	at(23, 0);
 	return (0);
 }

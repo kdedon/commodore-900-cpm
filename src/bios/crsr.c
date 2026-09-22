@@ -60,6 +60,16 @@ extern outb();
 #define VSET(off, ch)	vsetcell(off, ch)
 #define VSETOWN
 #endif
+/*
+ * A WORD store to the same cell, which is the only way to reach the
+ * attribute: the card steers every byte write into the character lane, so
+ * character and attribute can be set together or not at all.  The word is
+ * attribute in the high byte, character in the low.
+ */
+#ifndef VSETW
+#define VSETW(off, w)	vsetword(off, w)
+#define VSETWOWN
+#endif
 #ifndef SCRST
 #define SCRST		(*(long *)ROMV_SCRSTATE)
 #endif
@@ -75,6 +85,17 @@ extern outb();
 #endif
 
 #define CELLOFF(r, c)	((r) * 0xa0 + ((c) << 1))
+
+/*
+ * Cell attributes.  The low field is a video mode, one value at a time;
+ * intensity and blink are flags on top of it.
+ */
+#define A_MODE		0x77
+#define A_UNDERL	0x01
+#define A_NORM		0x07
+#define A_REVERSE	0x70
+#define A_INTENSE	0x08
+#define A_BLINK		0x80
 
 /* console kind */
 #define CK_SER	0
@@ -147,9 +168,12 @@ register char *s;
 #define ST_ESC	1			/* ESC seen				*/
 #define ST_ROW	2			/* ESC Y / ESC = seen: want row		*/
 #define ST_COL	3			/* row taken: want column		*/
+#define ST_SKIP	4			/* eat one parameter byte		*/
 
 static int state;
 static int trow;			/* pending row (mm.c's trow)		*/
+static int cattr;			/* attribute new cells are written with	*/
+static int srow, scol;			/* ESC j / ESC k			*/
 
 /*
  * LR only.  BvidCHR reads scr_state == 0 as "not initialised yet" and
@@ -188,6 +212,30 @@ static csi()
 	putchar('[');
 }
 
+/* The whole attribute as one SGR, so the two paths cannot drift apart. */
+static crsgr()
+{
+	csi();
+	putchar('0');
+	if ((cattr & A_MODE) == A_REVERSE) {
+		putchar(';');
+		putchar('7');
+	}
+	if ((cattr & A_MODE) == A_UNDERL) {
+		putchar(';');
+		putchar('4');
+	}
+	if (cattr & A_INTENSE) {
+		putchar(';');
+		putchar('1');
+	}
+	if (cattr & A_BLINK) {
+		putchar(';');
+		putchar('5');
+	}
+	putchar('m');
+}
+
 /* ------------------------------------------------------------------ video */
 
 /*
@@ -202,6 +250,14 @@ static vsetcell(off, ch)
 int off, ch;
 {
 	*(char *)(0x3a000000L + (long)off) = ch;
+}
+#endif
+
+#ifdef VSETWOWN
+static vsetword(off, w)
+int off, w;
+{
+	*(unsigned *)(0x3a000000L + (long)off) = w;
 }
 #endif
 
@@ -233,7 +289,7 @@ static vblank(r, c, n)
 int r, c, n;
 {
 	while (n-- > 0) {
-		VSET(CELLOFF(r, c), ' ');
+		VSETW(CELLOFF(r, c), (A_NORM << 8) | ' ');
 		if (++c >= NCOL) {
 			c = 0;
 			if (++r >= NROW)
@@ -267,21 +323,35 @@ int r, c;
  * cellput(r, c, s, n) -- store n character cells from s at (r, c).
  * One row only: the caller splits a run at the right margin, because it
  * is the caller that decides what happens there (wrap, scroll, clamp).
- * Only the even byte of each cell is written, so the attribute byte
- * survives -- the same property vsetcell() was written for.
+ * Each cell takes the current attribute with it.
  */
 static cellput(r, c, s, n)
 int r, c;
 register char *s;
 register int n;
 {
-	register int off;
+	register int off, a;
 
 	off = CELLOFF(r, c);
+	a = (cattr & 0xff) << 8;
 	while (n-- > 0) {
-		VSET(off, *s++);
+		VSETW(off, a | (*s++ & 0xff));
 		off += 2;
 	}
+}
+
+/*
+ * cellins(r) -- open row r by pushing rows r..23 down one, and blank it.
+ * Row by row from the bottom: the block move only copies upwards.
+ */
+static cellins(r)
+int r;
+{
+	register int i;
+
+	for (i = NROW - 1; i > r; i--)
+		VMOVE(CELLOFF(i, 0), CELLOFF(i - 1, 0), 0xa0);
+	vblank(r, 0, NCOL);
 }
 
 /*
@@ -460,25 +530,118 @@ static crhome()
 	}
 }
 
-/* erase: eos = 0 to end of line, 1 to end of screen (mm.c:410-424) */
-static crerase(eos)
-int eos;
+/* erase, in the five spans the terminal defines (mm.c:410-424) */
+#define ER_EOL	0			/* cursor to end of line	*/
+#define ER_EOS	1			/* cursor to end of screen	*/
+#define ER_BOS	2			/* start of screen to cursor	*/
+#define ER_LINE	3			/* the whole line		*/
+#define ER_BOL	4			/* start of line to cursor	*/
+
+static crerase(span)
+int span;
 {
 	register int r, c;
 
 	if (ckind == CK_SER) {
 		csi();
-		putchar(eos ? 'J' : 'K');
+		switch (span) {
+		case ER_EOS:	putchar('J'); return;
+		case ER_BOS:	putchar('1'); putchar('J'); return;
+		case ER_LINE:	putchar('2'); putchar('K'); return;
+		case ER_BOL:	putchar('1'); putchar('K'); return;
+		}
+		putchar('K');
 		return;
 	}
 	if (ckind != CK_LR)
 		return;
 	r = vrow();
 	c = vcol();
-	if (eos)
-		vblank(r, c, (NROW - 1 - r) * NCOL + NCOL - c);
+	switch (span) {
+	case ER_EOS:	vblank(r, c, (NROW - 1 - r) * NCOL + NCOL - c); return;
+	case ER_BOS:	vblank(0, 0, r * NCOL + c + 1); return;
+	case ER_LINE:	vblank(r, 0, NCOL); return;
+	case ER_BOL:	vblank(r, 0, c + 1); return;
+	}
+	vblank(r, c, NCOL - c);
+}
+
+/* insert or delete one line at the cursor row; the cursor does not move */
+static crline(ins)
+int ins;
+{
+	register int r;
+
+	if (ckind == CK_SER) {
+		csi();
+		putchar(ins ? 'L' : 'M');
+		return;
+	}
+	if (ckind != CK_LR)
+		return;
+	r = vrow();
+	if (ins)
+		cellins(r);
 	else
-		vblank(r, c, NCOL - c);
+		cellscroll(r, NROW - 1, 1);
+}
+
+/* delete the character under the cursor, pulling the rest of the row left */
+static crdelch()
+{
+	register int r, c;
+
+	if (ckind == CK_SER) {
+		csi();
+		putchar('P');
+		return;
+	}
+	if (ckind != CK_LR)
+		return;
+	r = vrow();
+	c = vcol();
+	if (c < NCOL - 1)
+		VMOVE(CELLOFF(r, c), CELLOFF(r, c + 1), (NCOL - 1 - c) << 1);
+	vblank(r, NCOL - 1, 1);
+}
+
+/* save and restore the cursor */
+static crmark(rest)
+int rest;
+{
+	if (ckind == CK_SER) {
+		putchar(ESC);
+		putchar(rest ? '8' : '7');
+		return;
+	}
+	if (ckind != CK_LR)
+		return;
+	if (rest)
+		cellpark(srow, scol);
+	else {
+		srow = vrow();
+		scol = vcol();
+	}
+}
+
+/* set the video mode field, or one of the flags on top of it */
+static crmode(m)
+int m;
+{
+	cattr = (cattr & ~A_MODE) | m;
+	if (ckind == CK_SER)
+		crsgr();
+}
+
+static crflag(on, bit)
+int on, bit;
+{
+	if (on)
+		cattr |= bit;
+	else
+		cattr &= ~bit;
+	if (ckind == CK_SER)
+		crsgr();
 }
 
 /* ------------------------------------------------------------ ground state */
@@ -540,9 +703,14 @@ register int n;
 }
 
 /*
- * ESC dispatch.  Anything not claimed here is re-emitted literally, which
- * is both the donor's behaviour (mm.c's mmescesc path) and what keeps a
- * serial terminal's own sequences -- ESC [ ... above all -- intact.
+ * ESC dispatch.  Three outcomes: performed, consumed, or -- for anything
+ * this layer does not claim, ESC [ ... above all -- re-emitted literally so
+ * a terminal's own sequences reach it intact (mm.c's mmescesc path).
+ *
+ * A sequence is consumed rather than re-emitted when the terminal we answer
+ * as defines it and this console cannot do it.  Re-emitting spills its
+ * parameter onto the screen as text, and on the far end of a serial line
+ * several of them mean something else entirely.
  */
 static crescape(c)
 int c;
@@ -563,14 +731,89 @@ int c;
 		crhome();
 		return;
 	case 'J':
-		crerase(1);
+		crerase(ER_EOS);
 		return;
 	case 'K':
-		crerase(0);
+		crerase(ER_EOL);
+		return;
+	case 'b':
+		crerase(ER_BOS);
+		return;
+	case 'l':
+		crerase(ER_LINE);
+		return;
+	case 'o':
+		crerase(ER_BOL);
+		return;
+	case 'L':
+		crline(1);
+		return;
+	case 'M':
+		crline(0);
+		return;
+	case 'N':
+		crdelch();
+		return;
+	case 'j':
+		crmark(0);
+		return;
+	case 'k':
+		crmark(1);
+		return;
+	case 'p':
+		crmode(A_REVERSE);
+		return;
+	case 'h':
+		crmode(A_UNDERL);
+		return;
+	case 'q':			/* leave reverse video	*/
+	case 'i':			/* leave underline	*/
+		crmode(A_NORM);
+		return;
+	case 'c':
+		crflag(1, A_BLINK);
+		return;
+	case 'd':
+		crflag(0, A_BLINK);
+		return;
+	case 'e':
+		crflag(1, A_INTENSE);
+		return;
+	case 'f':
+		crflag(0, A_INTENSE);
+		return;
+	case 'z':			/* power-up state	*/
+		cattr = A_NORM;
+		if (ckind == CK_SER)
+			crsgr();
+		crclear();
 		return;
 	case 'Y':			/* H19/VT52 direct addressing	*/
 	case '=':			/* ADM-3A direct addressing	*/
 		state = ST_ROW;
+		return;
+	case 'x':			/* set mode, one parameter	*/
+	case 'y':			/* reset mode, one parameter	*/
+		state = ST_SKIP;
+		return;
+	case '@':			/* insert-character mode	*/
+	case 'O':
+	case 'F':			/* graphics mode		*/
+	case 'G':
+	case '>':			/* keypad modes			*/
+	case 't':
+	case 'u':
+	case 'v':			/* wrap mode			*/
+	case 'w':
+	case '1':			/* the 25th line		*/
+	case '2':
+	case '\\':			/* hold-screen mode		*/
+	case 'n':			/* cursor and terminal reports	*/
+	case 'Z':
+	case '(':			/* half intensity, which on a	*/
+	case ')':			/* serial terminal would swallow*/
+	case '3':			/* the character after it	*/
+	case '4':
 		return;
 	}
 	crput(ESC);
@@ -599,6 +842,9 @@ int c;
 			return;
 		crmove(trow, c - ' ');
 		return;
+	case ST_SKIP:
+		state = ST_GND;
+		return;
 	}
 	if (c == ESC) {
 		state = ST_ESC;
@@ -619,6 +865,9 @@ int k;
 	state = ST_GND;
 	vpend = 0;
 	vheld = 0;
+	cattr = A_NORM;
+	srow = 0;
+	scol = 0;
 	return (k);
 }
 
@@ -628,6 +877,10 @@ int k;
  */
 crsreset()
 {
+	if (ckind == CK_SER && cattr != A_NORM) {
+		cattr = A_NORM;
+		crsgr();		/* a program must not leave the	*/
+	}				/* terminal in reverse video	*/
 	return (crsmode(ckind));
 }
 

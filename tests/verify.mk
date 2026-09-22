@@ -4657,7 +4657,9 @@ verify-gencom: all
 # CRSRDEMO's coordinates (src/tests/crsrdemo.c) are the contract: box corners
 # at (4,10)/(4,60)/(14,10)/(14,60), labels inside it, the four one-step
 # motions around the anchor at (2,40), an erase-to-end-of-line at (16,30)
-# and an erase-to-end-of-screen at (19,20).
+# and an erase-to-end-of-screen at (19,20).  Row 0 carries the attribute
+# and not-implemented sequences, row 15 the insert/delete-line pair, whose
+# two halves cancel so the rest of the frame is left where it was.
 # ---- directory hashing on/off A-B test (PLAN.md sec 9 rows 5 and 8) ----
 # Row 5 (hashing/BCB) was CANNOT-VERIFY and row 8 (GENCPM) was FAIL for the
 # same reason: nothing could turn hashing off, so there was no A-B to run.
@@ -4785,11 +4787,25 @@ verify-crsr: all build/crsrtest
 		|| { echo "verify-crsr: FAIL -- an unclaimed escape or a CAN abort swallowed the text after it"; exit 1; }
 	@grep -q "`printf '\033&'`" $(CRSRLOG) \
 		|| { echo "verify-crsr: FAIL -- the unclaimed ESC & did not reach the console verbatim"; exit 1; }
+	@# a sequence this console does not implement leaves the screen
+	@# merely without the attribute, never with stray text on it
+	python3 tests/vt.py $(CRSRLOG) --cell 0 0 'REVNORMEND' --blank 0 10 20 \
+		|| { echo "verify-crsr: FAIL -- an unimplemented escape left its bytes on the screen"; exit 1; }
+	@for e in p q x '(' ')' 3 '@' F; do \
+		grep -qF "`printf '\033'`$$e" $(CRSRLOG) \
+		&& { echo "verify-crsr: FAIL -- ESC $$e reached the console raw"; exit 1; }; \
+	done; true
+	@grep -qF "`printf '\033[0;7m'`" $(CRSRLOG) \
+		|| { echo "verify-crsr: FAIL -- reverse video did not reach the terminal as ANSI"; exit 1; }
+	@# insert and delete line: row 15 was opened over the mark, and the
+	@# rows below came back to where they started
+	python3 tests/vt.py $(CRSRLOG) --cell 15 0 'INS' --blank 15 3 20 \
+		|| { echo "verify-crsr: FAIL -- ESC L did not open a line over the mark"; exit 1; }
 	@# nothing was broken for ordinary output: the sign-on still reads
 	@# straight, and the CCP prompt is where the program left the cursor
 	python3 tests/vt.py $(CRSRLOG) --cell 22 0 'CRSRDEMO done.' --cell 24 0 'A>' \
-		|| { echo "verify-crsr: FAIL -- the CCP did not resume from where the program left the cursor"; exit 1; }
-	@echo "verify-crsr: PASS -- addressing, motion, erase and pass-through, on the screen"
+		|| { echo "verify-crsr: FAIL -- ESC M did not take it out again, or the CCP did not resume from where the program left the cursor"; exit 1; }
+	@echo "verify-crsr: PASS -- addressing, motion, erase, line editing, attributes and pass-through, on the screen"
 
 # The harness is K&R, like the source it includes.
 
