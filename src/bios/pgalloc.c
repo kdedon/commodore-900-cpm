@@ -175,6 +175,19 @@ int seg;
 	return (1);
 }
 
+/* May the running process write `seg': its TPA, a slot it owns, or the
+ * supervisor stacks, where a debugger's trap handler edits its frame? */
+int pgmine(seg)
+int seg;
+{
+	register int i;
+
+	if (seg == TPASEG || seg == 0x3f)
+		return (1);
+	i = pgslot(seg);
+	return (i >= 0 && i < pgnslot && pgown[i] == pgcur + 1);
+}
+
 /* Mark a slot as a live process's parked image. The scheduler sets this
  * flag on creation and clears it on exit; pgrelall() preserves held slots. */
 pghold(seg, on)

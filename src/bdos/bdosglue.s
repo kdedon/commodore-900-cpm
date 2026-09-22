@@ -64,6 +64,7 @@
 	.globl	faultpanic_
 	.globl	map_adr_	/ BIOS side (SC #1 gate targets)
 	.globl	mem_cpy_
+	.globl	pgmine_
 	.globl	xfer_
 	.globl	spemu_		/ split-I/D shim: SC #255 emulator (splitsc.c)
 	.globl	spusp_		/   user r15/r14 mirrors around spemu_
@@ -202,7 +203,25 @@ memdisp:
 	add	r15, $6
 	ldl	rr14(12), rr0		/ result -> caller rr6
 	jr	scret
+/	A Normal-mode caller may copy only into its own memory.  DDT keeps
+/	four bits of segment number, so its base-page copy into 0x28 named
+/	0x08: the ROM's identity map of the kernel text.
 memcpy:
+	ld	r0, rr14(30)		/ caller's FCW
+	bit	r0, $14
+	jr	nz, memcpyok		/   system: trusted
+	pushl	(rr14), rr2
+	pushl	(rr14), rr4
+	srl	r4, $8			/ destination segment number
+	and	r4, $0x007F
+	push	(rr14), r4
+	call	pgmine_
+	add	r15, $2
+	popl	rr4, (rr14)
+	popl	rr2, (rr14)
+	test	r1
+	jr	z, scret		/   not its own: copy nothing
+memcpyok:
 	pushl	(rr14), rr2		/ len
 	pushl	(rr14), rr4		/ dst
 	pushl	(rr14), rr6		/ src
