@@ -262,17 +262,19 @@ z16 pc;
 struct z80in *in;
 {
 	register int op, sub;
-	register int n;
+	register int n, fl;
 
-	op = fb(m, pc, 0);
+	op = m[pc] & 0xff;
 
-	/* ---- the base map: the grid answers everything but the operand. */
-	if (op != 0xcb && op != 0xed && op != 0xdd && op != 0xfd) {
+	/* ---- the base map: the grid answers everything but the operand,
+	 * and ZF_PFX marks the four bytes that are not on it. */
+	fl = (int)bfl[op];
+	if (!(fl & ZF_PFX)) {
 		n = (int)blen[op];
 		in->op = bop[op];
 		in->x = bx[op];
 		in->y = by[op];
-		in->fl = bfl[op];
+		in->fl = (z8)fl;
 		in->len = (z8)n;
 		in->pfx = 0;
 		in->sub = 0;
