@@ -64,6 +64,9 @@ TMPSFX := .tmp.$(shell echo $$$$)
 # Compiler identity and binary digest; changes invalidate target objects.
 TCSTAMP = build/toolchain.txt
 CPMSYS = build/cpm.sys
+# Operator settings stamped into the linked system; ships the values the
+# sources are compiled with, so a default build is unchanged by it.
+GENCPMDAT = tools/gencpm.dat
 CPMAIMG = build/cpma.img
 # RELEASE = dev image without verify harness guest halves.
 CPMARIMG = build/cpma-rel.img

@@ -20,7 +20,7 @@ $(OBJDIR)/splitimg.s: $(SPLITMOD) tools/mkblob.py src/bios/c900cfg.h
 $(OBJDIR)/splitimg.o: $(OBJDIR)/splitimg.s
 	$(AS) -g -o $@ $< >> $(LOG) 2>&1
 
-$(CPMSYS): $(OBJ)
+$(CPMSYS): $(OBJ) tools/gencpm.py $(GENCPMDAT)
 	$(LD) $(LDSYS) -e start -R 0x30000000 -o $@ $(OBJ) > $(OBJDIR)/link.txt 2>&1
 	@python3 -c 'import struct,sys; \
 b = open("$(CPMSYS)","rb").read(48); \
@@ -33,6 +33,8 @@ print("cpm.sys: %d bytes free below phys 0x0A0000" % free); \
 sys.exit("TEXT > 64K: data seg moves to 0x32 and collides with the TPA" if text > 0x10000 else \
 ("data+bss > 64K" if data+bss > 0x10000 else \
 ("IMAGE OVERRUNS phys 0x0A0000 (the TPA) by %d bytes: crt.s puts data at 0x080000+roundup(text,1K), so roundup(text,1K)+data+bss must stay under 128K.  Past it the image runs into the transient program area." % -free) if free < 0 else None))'
+	python3 tools/gencpm.py $(GENCPMDAT) $@ > $(OBJDIR)/gencpm.txt
+	@cat $(OBJDIR)/gencpm.txt
 
 # cc0 -> cc1 -> cc2.  0012 = VPEEP+VKERN: frame refs in SS=0x3F, matching
 # the ROM routines the BIOS calls (console, wdread).

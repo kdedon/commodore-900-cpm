@@ -37,6 +37,7 @@
 14 verify-ed
 0 verify-extract
 8 verify-gencom
+4 verify-gencpm
 15 verify-get
 15 verify-hash-ab
 2 verify-help

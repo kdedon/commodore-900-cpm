@@ -4816,6 +4816,11 @@ verify-hash-ab: $(HASHABON) $(HASHABOFF)
 # and function 107 returns the configured serial, with nothing recompiled.
 # The copy is what gets patched, so a concurrent target's build/cpm.sys is
 # left alone.
+#
+# The build itself stamps build/cpm.sys from tools/gencpm.dat, so the first
+# assertion is that the shipped settings still match what the sources were
+# compiled with: the stamp report must say it changed nothing.  Without it a
+# default build could quietly ship something other than its own sources.
 GCSYS	= build/gencpm-cpm.sys
 GCDAT	= build/gencpm-test.dat
 GCIMG	= build/gencpm.bin
@@ -4825,6 +4830,8 @@ GCIN	= $(OSSEL)A:\rCPM3FN\r$(ENDIN)
 
 .PHONY: verify-gencpm
 verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
+	@grep -q 'unchanged from $(GENCPMDAT)' $(OBJDIR)/gencpm.txt \
+		|| { cat $(OBJDIR)/gencpm.txt; echo "verify-gencpm: FAIL -- $(GENCPMDAT) no longer agrees with the compiled-in values, so a default build does not ship its own sources"; exit 1; }
 	cp $(CPMSYS) $(GCSYS)
 	@printf 'serial = ZZZZZZ\ndefault_drive = B\nhash_a = on\nhash_b = on\n' \
 		> $(GCDAT)
@@ -4838,7 +4845,7 @@ verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
 		|| { echo "verify-gencpm: FAIL -- fn 107 did not return the configured serial"; exit 1; }
 	@grep -q 'B>A:' $(GCLOG) \
 		|| { echo "verify-gencpm: FAIL -- the CCP did not come up on the configured drive"; exit 1; }
-	@echo "verify-gencpm: PASS -- serial and default drive came from the config file"
+	@echo "verify-gencpm: PASS -- the build stamps the shipped settings without changing them, and a restamped serial and default drive reach a running system"
 
 CRSRIMG	= build/crsrtest.bin
 CRSRLOG	= build/verify-crsr.log

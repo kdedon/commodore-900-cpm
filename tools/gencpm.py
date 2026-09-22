@@ -126,10 +126,17 @@ def main():
     cfgf, sysf = av
     vals = bytes_for(readcfg(cfgf))
     b = bytearray(open(sysf, "rb").read())
+    moved = []
     for nm, off, width in offsets(bytes(b), sysf):
+        if b[off:off + width] != vals[nm]:
+            moved.append(nm)
         b[off:off + width] = vals[nm]
     open(sysf, "wb").write(b)
-    print("gencpm: %s stamped from %s" % (sysf, cfgf))
+    # The report is the build's evidence that a default build ships the
+    # values its sources were compiled with.
+    print("gencpm: %s %s from %s"
+          % (sysf, ("changed " + " ".join(moved)) if moved else "unchanged",
+             cfgf))
 
 
 main()
