@@ -106,20 +106,31 @@ int r, v;
 /* flags								*/
 
 /* PF is EVEN parity of the byte: set when the number of set bits is
- * even.  A loop rather than a 256-byte table: the table costs a register
- * and a segment on the target, and this path only owes correctness. */
+ * even.  A table, because counting the bits costs eight turns of a loop
+ * on a path every arithmetic instruction reaches. */
+static z8 partab[256] = {
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* 00 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* 10 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* 20 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* 30 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* 40 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* 50 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* 60 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* 70 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* 80 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* 90 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* A0 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* B0 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1,	/* C0 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* D0 */
+	0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0,	/* E0 */
+	1, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1	/* F0 */
+};
+
 static int par8(v)
 int v;
 {
-	register int n;
-
-	v &= 0xff;
-	n = 0;
-	while (v) {
-		n += v & 1;
-		v >>= 1;
-	}
-	return ((n & 1) == 0);
+	return ((int)partab[v & 0xff]);
 }
 
 /*
