@@ -22,6 +22,7 @@ static int		bad;
 
 static VOID	setran();
 static int	check();
+static int	opnext();
 
 int main(argc, argv)
 int argc;
@@ -126,6 +127,11 @@ char *argv[];
 		bad++;
 	}
 
+	/* ---- an open on extent EX starts reading at record EX*128 ---- */
+	bad += opnext(1, 128);			/* inside the first entry */
+	bad += opnext(2, 256);			/* the next entry	  */
+	bad += opnext(0x21, 128);		/* extent 1, module bits set */
+
 	cputs(bad ? "RANEXT: FAIL\r\n" : "RANEXT: PASS\r\n");
 	return (bad != 0);
 }
@@ -137,6 +143,42 @@ long r;
 	f.ran0 = (char) ((r >> 16) & 0xff);
 	f.ran1 = (char) ((r >> 8) & 0xff);
 	f.ran2 = (char) (r & 0xff);
+}
+
+
+/* open on extent ex and read one record; nonzero unless it holds stamp want */
+static int opnext(ex, want)
+int ex, want;
+{
+	int	r;
+
+	mkfcb("RANEXT.TXT", &f);
+	f.extent = (char) ex;
+	if ((__bdos(BDOS_OPEN, (long) &f) & 0xff) == 0xff) {
+		cputs("RANEXT: BAD -- cannot open extent ");
+		putdec((unsigned) ex);
+		cputs("\r\n");
+		return (1);
+	}
+	buf[0] = buf[1] = 0;
+	r = __bdos(BDOS_READSEQ, (long) &f) & 0xff;
+	if (r != 0 || (buf[0] & 0xff) != (want & 0xff)
+	    || (buf[1] & 0xff) != ((want >> 8) & 0xff)) {
+		cputs("RANEXT: BAD -- extent ");
+		putdec((unsigned) ex);
+		cputs(" read ");
+		putdec((unsigned) r);
+		cputs(", holds ");
+		putdec((unsigned) (((buf[1] & 0xff) << 8) | (buf[0] & 0xff)));
+		cputs(", want ");
+		putdec((unsigned) want);
+		cputs("\r\n");
+		return (1);
+	}
+	cputs("RANEXT: extent ");
+	putdec((unsigned) ex);
+	cputs(" opens at its own record\r\n");
+	return (0);
 }
 
 

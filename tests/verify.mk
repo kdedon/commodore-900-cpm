@@ -2927,6 +2927,14 @@ verify-trunc: all
 # must restore the FCB's extent and module (bdos30.asm badseek), or the
 # write lands in the blocks the FCB still maps and no entry is made.  The
 # partition is pulled out afterwards so the host reads the file size too.
+#
+# It then opens the same file on extents 1, 2 and 21h.  Function 15 opens
+# the extent it is handed -- v3 clears the module number and nothing else
+# (bdos30.asm func15, and open$copy puts the caller's extent back after
+# the directory entry is copied over it) -- so the first record read is
+# that extent's own, 128 records in and 256 in.  Zeroing it, as this BDOS
+# did, hands back extent 0 and a program that seeks past 16K by opening
+# again reads the front of the file and calls it corrupt.
 RANEXTIMG = build/ranext.bin
 RANEXTLOG = build/verify-ranext.log
 .PHONY: verify-ranext
@@ -2944,7 +2952,8 @@ verify-ranext: all
 	python3 tools/mkcpmfs.py --extract build/ranext-cpma.img build/ranext-fs
 	@test "`wc -c < build/ranext-fs/RANEXT.TXT`" = 76928 \
 		|| { echo "verify-ranext: FAIL -- the file is not 601 records on disk"; exit 1; }
-	@echo "verify-ranext: PASS -- a random write after error 4 made its own extent"
+	@echo "verify-ranext: PASS -- a random write after error 4 made its own extent,"
+	@echo "               and an open on extent N started at record N*128"
 
 # ---- the six refusals: check$wild and file$exists ----
 # CP/M 3 refuses an ambiguous FCB on the four functions that name ONE

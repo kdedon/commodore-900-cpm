@@ -322,13 +322,15 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			}
 			if (pwmode & XP_WRITE) xfcb_ro = 0x80;
 		    }
-		    temp.fptr->extent = 0;
+		    /* the extent asked for is opened: only the module
+		       number goes, with the bits above extent 31 that
+		       the directory compare would otherwise reject */
+		    temp.fptr->extent &= 0x1f;
 		    temp.fptr->s2 = 0;
 		    rtnval = dirscan(openfile, temp.fptr, 0);
 		    if ( rtnval == 255 && GBL.user != 0 && temp.reselect )
 		    {		/* search$user0 (bdos30.asm:3940-3974) */
 			temp.fptr->drvcode = 0;
-			temp.fptr->extent = 0;
 			temp.fptr->s2 = 0;
 			if ( ckpass(temp.fptr, 0) )
 			{   /*  the SECOND check, and it has to be a second
