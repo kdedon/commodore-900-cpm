@@ -5,3 +5,5 @@ serial = C90001
 default_drive = A
 hash_a = on
 hash_b = on
+con_width = 80
+con_page = 0			# lines per page; 0 turns the BDOS pager off

@@ -14,8 +14,8 @@ image's own symbol table.
 Hardware facts -- memory map, bank layout, drive geometry -- are not
 settings: they have one value on this machine and live in c900cfg.h with
 the reasoning attached.  This tool configures only what an operator
-chooses: the serial number, the drive a reset selects, and per-drive
-directory hashing.
+chooses: the serial number, the drive a reset selects, per-drive
+directory hashing, and the console's width and page length.
 """
 
 import struct
@@ -26,8 +26,15 @@ SYMSZ = 22			# ldsym: 16 name + 2 type + 4 addr
 HDRSZ = 48
 DBASE = 0x31000000		# SYSDSEG: the data segment's link address
 
-# symbol -> width, in the order --dump prints them
-FIELDS = [("serial_", 6), ("dflt_drive_", 1), ("hashen_", 2)]
+# setting -> symbol, offset into it, width; also the order --dump prints
+FIELDS = [
+    ("serial",		"serial_",	0,	6),
+    ("default_drive",	"dflt_drive_",	0,	1),
+    ("hash_a",		"hashen_",	0,	1),
+    ("hash_b",		"hashen_",	1,	1),
+    ("con_width",	"scbimg_",	0x1a,	1),	# @CONWIDTH
+    ("con_page",	"scbimg_",	0x1c,	1),	# @CONPAGE
+]
 
 
 def die(msg):
@@ -61,14 +68,14 @@ def offsets(b, path):
         syms[nm] = gl(b, o + 18)
 
     out = []
-    for nm, width in FIELDS:
+    for key, nm, off, width in FIELDS:
         if nm not in syms:
             die("%s: %s is not in the symbol table" % (path, nm))
-        a = syms[nm] - DBASE
+        a = syms[nm] - DBASE + off
         if a < 0 or a + width > dlen:
-            die("%s: %s is at 0x%08x, outside the data segment"
-                % (path, nm, syms[nm]))
-        out.append((nm, doff + a, width))
+            die("%s: %s+%d is at 0x%08x, outside the data segment"
+                % (path, nm, off, syms[nm] + off))
+        out.append((key, doff + a, width))
     return out
 
 
@@ -97,7 +104,15 @@ def onoff(cfg, key):
     return 1 if v == "on" else 0
 
 
-KEYS = ("serial", "default_drive", "hash_a", "hash_b")
+KEYS = tuple(f[0] for f in FIELDS)
+
+
+def lines(cfg, key):
+    """A console dimension in lines or columns."""
+    v = cfg[key]
+    if not v.isdigit() or int(v) > 255:
+        die("%s: expected 0 to 255, got `%s'" % (key, v))
+    return int(v)
 
 
 def bytes_for(cfg, path):
@@ -117,9 +132,12 @@ def bytes_for(cfg, path):
     if drive not in ("A", "B"):
         die("default_drive: expected A or B, got `%s'" % drive)
     return {
-        "serial_": serial.encode("ascii", "replace"),
-        "dflt_drive_": bytes([ord(drive) - ord("A")]),
-        "hashen_": bytes([onoff(cfg, "hash_a"), onoff(cfg, "hash_b")]),
+        "serial": serial.encode("ascii", "replace"),
+        "default_drive": bytes([ord(drive) - ord("A")]),
+        "hash_a": bytes([onoff(cfg, "hash_a")]),
+        "hash_b": bytes([onoff(cfg, "hash_b")]),
+        "con_width": bytes([lines(cfg, "con_width")]),
+        "con_page": bytes([lines(cfg, "con_page")]),
     }
 
 
@@ -127,9 +145,9 @@ def main():
     av = sys.argv[1:]
     if len(av) == 2 and av[0] == "--dump":
         b = open(av[1], "rb").read()
-        for nm, off, width in offsets(b, av[1]):
-            print("%-12s %6d bytes at file offset 0x%x  %s"
-                  % (nm, width, off, b[off:off + width].hex()))
+        for key, off, width in offsets(b, av[1]):
+            print("%-14s %2d bytes at file offset 0x%x  %s"
+                  % (key, width, off, b[off:off + width].hex()))
         return
     if len(av) != 2:
         die("usage: gencpm.py gencpm.dat cpm.sys | gencpm.py --dump cpm.sys")
@@ -138,10 +156,10 @@ def main():
     vals = bytes_for(readcfg(cfgf), cfgf)
     b = bytearray(open(sysf, "rb").read())
     moved = []
-    for nm, off, width in offsets(bytes(b), sysf):
-        if b[off:off + width] != vals[nm]:
-            moved.append(nm)
-        b[off:off + width] = vals[nm]
+    for key, off, width in offsets(bytes(b), sysf):
+        if b[off:off + width] != vals[key]:
+            moved.append(key)
+        b[off:off + width] = vals[key]
     open(sysf, "wb").write(b)
     # The report is the build's evidence that a default build ships the
     # values its sources were compiled with.

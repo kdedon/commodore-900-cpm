@@ -4784,7 +4784,7 @@ $(HASHOFFSYS): $(CPMSYS) $(GENCPMDAT) tools/gencpm.py
 	sed -e 's/^\(hash_[ab]\)[^=]*=.*/\1 = off/' $(GENCPMDAT) > $(HASHOFFDAT)
 	cp $(CPMSYS) $@
 	python3 tools/gencpm.py $(HASHOFFDAT) $@
-	@python3 tools/gencpm.py --dump $@ | grep -q 'hashen_.* 0000$$' \
+	@python3 tools/gencpm.py --dump $@ | grep -c '^hash_[ab] .* 00$$' | grep -qx 2 \
 		|| { echo "hashoff: the stamp left hashing on -- there is no B side to measure"; exit 1; }
 
 $(HASHABB): tools/mkcpmfs.py
@@ -4826,7 +4826,19 @@ GCBADSYS = build/gencpm-bad.sys
 GCIMG	= build/gencpm.bin
 GCLOG	= build/verify-gencpm.log
 # CPM3FN prints the serial; it lives on A:, and the prompt under test is B:.
-GCIN	= $(OSSEL)A:\rCPM3FN\r$(ENDIN)
+# STAT lays its columns out from the console width it reads back (SCB 1ah),
+# so a narrow console drops the header to `Attrib' where 80 says `Attributes'.
+GCIN	= $(OSSEL)A:\rCPM3FN\rSTAT CPM3FN.Z8K\r$(ENDIN)
+# A second image, differing from the shipped settings in the page length
+# alone: the BDOS pager is off at 0 and pauses every third line at 3.  The
+# pager prompt is this run's stop mark, because nothing answers it -- the
+# scripted input reaches the CCP, not a BDOS console read inside the pause.
+GCPSYS	= build/gencpm-page.sys
+GCPDAT	= build/gencpm-page.dat
+GCPIMG	= build/gencpm-page.bin
+GCPLOG	= build/verify-gencpm-page.log
+GCPIN	= $(OSSEL)DIR\r
+GCPMARK	= Press RETURN to Continue
 
 .PHONY: verify-gencpm
 verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
@@ -4846,7 +4858,7 @@ verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
 	@cmp -s $(CPMSYS) $(GCBADSYS) \
 		|| { echo "verify-gencpm: FAIL -- a refused config still altered the image"; exit 1; }
 	cp $(CPMSYS) $(GCSYS)
-	@printf 'serial = ZZZZZZ\ndefault_drive = B\nhash_a = on\nhash_b = on\n' \
+	@printf 'serial = ZZZZZZ\ndefault_drive = B\nhash_a = on\nhash_b = on\ncon_width = 40\ncon_page = 0\n' \
 		> $(GCDAT)
 	python3 tools/gencpm.py $(GCDAT) $(GCSYS)
 	$(MKDISK) $(GCIMG) $(GCSYS) $(CPMAIMG) $(CPMBIMG)
@@ -4858,7 +4870,21 @@ verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
 		|| { echo "verify-gencpm: FAIL -- fn 107 did not return the configured serial"; exit 1; }
 	@grep -q 'B>A:' $(GCLOG) \
 		|| { echo "verify-gencpm: FAIL -- the CCP did not come up on the configured drive"; exit 1; }
-	@echo "verify-gencpm: PASS -- the build stamps the shipped settings without changing them, and a restamped serial and default drive reach a running system"
+	@grep -q 'FCBs Attrib   Name' $(GCLOG) \
+		|| { echo "verify-gencpm: FAIL -- STAT laid out for a wide console, so the configured width never reached the SCB"; exit 1; }
+	cp $(CPMSYS) $(GCPSYS)
+	@printf 'serial = C90001\ndefault_drive = A\nhash_a = on\nhash_b = on\ncon_width = 80\ncon_page = 3\n' \
+		> $(GCPDAT)
+	python3 tools/gencpm.py $(GCPDAT) $(GCPSYS)
+	$(MKDISK) $(GCPIMG) $(GCPSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GCPIMG)) \
+		--input="$(GCPIN)" --max=$(EMUMAX) --stop-on=idle \
+		--stop-mark='$(GCPMARK)' 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GCPLOG))
+	@$(EMUOK)
+	@grep -q '$(GCPMARK)' $(GCPLOG) \
+		|| { echo "verify-gencpm: FAIL -- the pager never paused, so the configured page length never reached the BDOS"; exit 1; }
+	@echo "verify-gencpm: PASS -- the build stamps the shipped settings without changing them, and a restamped serial, default drive, console width and page length all reach a running system"
 
 CRSRIMG	= build/crsrtest.bin
 CRSRLOG	= build/verify-crsr.log

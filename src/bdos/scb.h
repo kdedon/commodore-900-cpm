@@ -93,5 +93,6 @@
 /*  Values this port fixes rather than derives.  */
 
 #define SCB_VER_VALUE	0x31	/* CP/M 3.1, as resbdos.asm ships it	*/
-#define SCB_WIDTH_VALUE	80	/* console width; gencpm-c900 will own it */
+#define SCB_WIDTH_VALUE	80	/* console width as shipped; a dist stamps
+				   its own into the linked image	*/
 #define SCB_BFLGS_VALUE	0x80	/* long error messages, always on here	*/

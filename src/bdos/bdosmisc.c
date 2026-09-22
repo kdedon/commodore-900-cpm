@@ -9,6 +9,7 @@
 #include "bdosdef.h"		/* Type and structure declarations for BDOS */
 
 #include "biosdef.h"		/* BIOS definitions, needed for bios wboot */
+#include "scb.h"		/* SCB offsets; the page length starts there */
 #include "boottrace.h"		/* opt-in cold-boot markers (src/bios) */
 
 /* Generated banner strings are complete dollar-terminated literals;
@@ -28,6 +29,7 @@ EXTERN		pcoldses();		/* the SCC-B session at a video
 EXTERN		initexc();		/* init the exception handler in  */
 					/* exceptn.s			*/
 EXTERN UWORD	dirscan();		/* Directory scanning routine	*/
+EXTERN UBYTE	scbimg[];		/* the SCB image (scb.c)	*/
 EXTERN UWORD	dir_rd();		/* read one directory record	*/
 EXTERN WORD	dirhave();		/* is our cached record current? */
 EXTERN BOOLEAN  set_attr();		/* Set File attributes function */
@@ -111,7 +113,7 @@ bdosinit()
     GBL.retcode = 0;
     /* A zero page length disables the BDOS pager. Keep PM_ON as the published
  * default for utilities that implement their own paging. */
-    GBL.conpage = 0;		/* not configured: the BDOS pager is off */
+    GBL.conpage = scbimg[SCB_CONPAGE];	/* 0 unless stamped: pager off	*/
     GBL.conline = 0;
     GBL.pmdefault = PM_ON;	/* v3's default, for the utilities	*/
     GBL.pagemode = GBL.pmdefault;

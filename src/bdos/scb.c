@@ -23,7 +23,10 @@ EXTERN XADDR	tpa_ht;		/* TPA upper boundary (bdosmain.c)	*/
     long-message flag is 80h, which is the banked build's value and the
     one we always want (this port always builds the banked-class BDOS).  */
 
-MLOCAL UBYTE scbimg[SCBLEN] =
+/*  Global so the system generator can reach a documented SCB offset in
+    the linked image by symbol.  */
+
+GLOBAL UBYTE scbimg[SCBLEN] =
 {
     0,				/* 00 hashl				*/
     0, 0, 0, 0,			/* 01 hash				*/
