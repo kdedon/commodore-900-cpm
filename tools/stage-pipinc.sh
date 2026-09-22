@@ -7,7 +7,7 @@
 # pip.c is Digital Research's PIP.C (Z8000/CP/M-8000 dev-pack source),
 # kept in src/ because we modify and build it; see src/cmd/pip.c's own
 # banner for the one-line fix.  It #includes "portab.h", "bdos.h",
-# "setjmp.h" and "basepage.h" -- DRI's own header set, not our src/cmd/
+# "setjmp.h" and "basepage.h" -- DRI's own header set, not our src/lib/
 # cpm.h.  The vendor drop (vendor/z8001mb/cpm8k/packages/base/) carries
 # these 8.3-truncated (basepa.h) and CP/M-EOF-terminated (a trailing ^Z
 # byte the host cpp chokes on), and never declares the "_base" basepage
@@ -15,8 +15,8 @@
 # kit to do that.  vendor/SOURCES holds the drop unmodified and asks for
 # a tools/ step instead, so this script copies those four headers verbatim
 # up to the ^Z, renames basepa.h to basepage.h, and appends the missing
-# "extern struct b_page *_base;" (the pointer our own src/cmd/cstart.c
-# sets at startup, same base-page layout as src/cmd/cpm.h's struct bpage).
+# "extern struct b_page *_base;" (the pointer our own src/lib/cstart.c
+# sets at startup, same base-page layout as src/lib/cpm.h's struct bpage).
 #
 # Usage: stage-pipinc.sh basedir outdir
 

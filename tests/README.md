@@ -43,11 +43,11 @@ was silent and exited 0.
 **Host builds of target code.** `rtctest.c` + `rtcchip.c`/`.h` + `rtcinc/`
 run the real `src/bios/rtc900.c` and `src/cmd/date.c` against a simulated
 MSM58321; `splitchk.c` and `splittest.c` exercise the split-I/D shim.
-`crsrtest.c` covers the cursor layer. `i86test.c` runs the CP/M-86 shim's
-8086 decoder, executor and `.CMD` loader (`src/cmd/i86*.c`), and is the
+`crsrtest.c` covers the cursor layer. `../src/shim/tests/i86test.c` runs the CP/M-86 shim's
+8086 decoder, executor and `.CMD` loader (`src/shim/i86*.c`), and is the
 only one of these written *before* the target half exists rather than
 after — `CPM86-STAGE-ONE.md` §5.1 is the argument for that ordering. It
-loads real `.CMD` files from `i86corpus/` and generated ones from
+loads real `.CMD` files from `../src/shim/tests/i86corpus/` and generated ones from
 `build/cmdfix/` (`../tools/mkcmdfix.py`), which is where the headers no
 real file contains live. Its `-c` mode sweeps any `.CMD` file by hand.
 

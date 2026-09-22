@@ -8,7 +8,7 @@ __pycache__/
 # vendor/z8001mb/cpm8k/packages/base/libcpm.a, which is Digital Research's
 # CP/M-8000 dev-pack library, staged onto drive A: for the guest's own zcc.
 # This repository cannot regenerate it.  It is NOT what our own programs link
-# against: those use build/user/libcpm.o, compiled here from src/cmd/libcpm.c.
+# against: those use build/user/libcpm.o, compiled here from src/lib/libcpm.c.
 *.o
 *.a
 

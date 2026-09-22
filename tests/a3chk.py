@@ -26,7 +26,7 @@ answer is checked off the disk against one worked out here:
   A3K.TXT  those lines with adjacent duplicates dropped -- README.TXT has
            several blank lines, so there are duplicates to drop.
 
-With --cpmsys the programs are the host-built ones, over src/cmd/cpmsys.c,
+With --cpmsys the programs are the host-built ones, over src/lib/cpmsys.c,
 and the run went on with
 
     CPMSYST ARGS A3?.TXT A3.* NOSUCH?.* PLAIN A:SDB.Z?K >B3W.TXT

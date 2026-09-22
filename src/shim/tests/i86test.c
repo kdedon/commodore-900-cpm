@@ -22,8 +22,8 @@
 #include <signal.h>			/* the prefix section's deadline */
 #include <unistd.h>
 
-#include "../src/cmd/i86.h"
-#include "../src/cmd/gdpb.h"
+#include "../i86.h"
+#include "../gdpb.h"
 
 /* The native character control block functions 111 and 112 take. */
 struct sccb {

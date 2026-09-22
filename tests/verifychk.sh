@@ -9,7 +9,7 @@
 #   sh tests/verifychk.sh reverify build/reverify.log
 #
 # Run from the repository root, like tests/bannerchk.sh, because it reads the
-# sources the sessions exercise (src/cmd/mhello.c, src/cmd/fcopy.c, src/cmd/beep.c)
+# sources the sessions exercise (src/tests/mhello.c, src/cmd/fcopy.c, src/cmd/beep.c)
 # and the file drive A: is packed with (src/dist/disk-a/HELLO.TXT).
 #
 # The two sessions are described by VERIFYIN and REVERIFYIN in the
@@ -82,9 +82,9 @@ wantx() {
 }
 
 # ---- the text this tree owns, read out of the programs that print it ----
-HELLO=`sed -n 's/.*printstr("\([^"]*\)\$");.*/\1/p' src/cmd/mhello.c | head -1`
+HELLO=`sed -n 's/.*printstr("\([^"]*\)\$");.*/\1/p' src/tests/mhello.c | head -1`
 [ -n "$HELLO" ] ||
-	bad source "no printstr() greeting found in src/cmd/mhello.c"
+	bad source "no printstr() greeting found in src/tests/mhello.c"
 FCNOPEN=`sed -n 's/.*cputs("\(fcopy: cannot open \)");.*/\1/p' src/cmd/fcopy.c |
 	head -1`
 [ -n "$FCNOPEN" ] ||

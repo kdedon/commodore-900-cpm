@@ -6,13 +6,13 @@
 
     mkcmdfix.py <destdir>
 
-tests/i86corpus/ holds four of DRI's own .CMD files, and they answer "does
+src/shim/tests/i86corpus/ holds four of DRI's own .CMD files, and they answer "does
 the loader read what a real file says".  They cannot answer anything else:
 all four are small-model, all four carry A-Base 0, and none of them is
 malformed.  So the header space the loader must refuse -- kill criterion K1
-(CPM86-STAGE-ONE.md §6) and every CE_* error in src/cmd/i86.h -- has no real
+(CPM86-STAGE-ONE.md §6) and every CE_* error in src/shim/i86.h -- has no real
 file behind it, and never will.  These fixtures are that half, built from
-the format description in src/cmd/i86load.c: a 128-byte header of eight
+the format description in src/shim/i86load.c: a 128-byte header of eight
 9-byte group descriptors (G-Form, G-Length, A-Base, G-Min, G-Max, all
 little-endian paragraph counts) followed by the group images in descriptor
 order.
@@ -32,7 +32,7 @@ writes FILENAME.CMD, and no corpus of .CMD files can supply its input, so
 around a hand-assembled 8086 program.  See p_hex().
 
 Output is <destdir>/*.CMD plus <destdir>/I86HEX.H86 plus
-<destdir>/MANIFEST, which is what tests/i86test.c reads:
+<destdir>/MANIFEST, which is what src/shim/tests/i86test.c reads:
 
     LOAD <file> <CE_*> [model=|entry=|ng=|alloc=n,n|need=]
     RUN  <file> <X_*>  [ip=|ax=|bx=|cx=|dx=|sp=|steps=|w=seg:off:val]
@@ -46,7 +46,7 @@ executor, which would agree with themselves and prove nothing.
 import os
 import sys
 
-# G-Form values (src/cmd/i86.h).
+# G-Form values (src/shim/i86.h).
 G_CODE = 1
 G_DATA = 2
 G_EXTRA = 3
@@ -245,7 +245,7 @@ def p_multi():
 
     All 15 files in DRI's cpm86pc drop are small model or 8080, so nothing
     real declares an extra, a stack or an auxiliary group and the compact
-    and large paths of src/cmd/i86load.c i86place() have no corpus behind
+    and large paths of src/shim/i86load.c i86place() have no corpus behind
     them.  This is that corpus: five groups -- code, data, extra, stack and
     aux 1 -- built here from the format description, which is why nothing
     binary is shipped for it.
@@ -469,7 +469,7 @@ def h86group(typ, org, data):
 def p_hex():
     """I86HEX.H86 -- a real hex file for GENCMD.CMD to convert.
 
-    tests/i86corpus/ can supply a .CMD to load but nothing to FEED a
+    src/shim/tests/i86corpus/ can supply a .CMD to load but nothing to FEED a
     corpus binary, and GENCMD is the one of the four whose input is not a
     command line: it reads FILENAME.H86 and writes FILENAME.CMD.  Without
     an .H86 the furthest it can be driven is "CANNOT OPEN SOURCE", which
@@ -487,7 +487,7 @@ def p_hex():
 	    int 0E0h
 
     DS:0100 and not DS:0000 because the small model puts the base page at
-    DS:0000 (src/cmd/i86load.c i86hdr), so the first 256 bytes of a data
+    DS:0000 (src/shim/i86load.c i86hdr), so the first 256 bytes of a data
     group are not the program's to use.  INT 0E0h because that is the
     CP/M-86 BDOS entry and therefore our seam.
 

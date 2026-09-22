@@ -1,4 +1,4 @@
-tests/z80corpus/ -- .COM files tests/z80test.c reads.  Test input, nothing else.
+src/shim/tests/z80corpus/ -- .COM files src/shim/tests/z80test.c reads.  Test input, nothing else.
 
 PIP.COM, DUMP.COM, SUBMIT.COM and SAVE.COM are Digital Research's own CP/M 3
 programs, unmodified, from the cpm3bin drop of the Unofficial CP/M Web Site

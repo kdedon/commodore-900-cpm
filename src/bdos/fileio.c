@@ -795,7 +795,7 @@ REG WORD dirindx;
 			/* no allocation vector work: an XFCB's bytes
 			   16..23 are a password and never a disk map,
 			   which is the rule the login scan already keeps
-			   (alloc() above, and src/cmd/xfcbt.c)	*/
+			   (alloc() above, and src/tests/xfcbt.c)	*/
 }
 
 

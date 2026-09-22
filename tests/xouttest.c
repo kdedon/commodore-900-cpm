@@ -487,7 +487,7 @@ int main()
 	   PIP's and STAT's sbrk ceiling (src/cmd/pipmain.c) went with it.
 	   The anchors are exact: with nothing resident the stack goes at
 	   SEGLEN - BPLEN - DEFSTACK and the segmented entry frame is 8
-	   bytes, so the SP is 0xFDF8 -- the value src/cmd/crt0.s has always
+	   bytes, so the SP is 0xFDF8 -- the value src/lib/crt0.s has always
 	   documented as the entry rr14. */
 
 	gsgno = 0x32;			/* c900cfg.h TPASEG: pgmld refuses a

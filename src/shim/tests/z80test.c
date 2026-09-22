@@ -20,8 +20,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "../src/cmd/z80.h"
-#include "../src/cmd/gdpb.h"
+#include "../z80.h"
+#include "../gdpb.h"
 
 static int nfail, ntest;
 

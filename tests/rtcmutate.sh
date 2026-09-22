@@ -32,7 +32,7 @@ seen=$work/seen
 build() {
 	$CC -std=gnu89 -w -Itests/rtcinc -c $work/src/rtc900.c \
 		-o $work/rtc900.o 2>$work/cc.log &&
-	$CC -std=gnu89 -w -Isrc/cmd -Dstatic= -Dmain=date_main \
+	$CC -std=gnu89 -w -Isrc/lib -Dstatic= -Dmain=date_main \
 		-c $work/src/date.c -o $work/date.o 2>>$work/cc.log &&
 	$CC -std=gnu89 -w -Itests -c $work/src/rtcchip.c -o $work/rtcchip.o \
 		2>>$work/cc.log &&

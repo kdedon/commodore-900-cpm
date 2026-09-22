@@ -6,10 +6,23 @@
 $(LOUT2CPM): $(LOUT2CPMSRC) | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ $(LOUT2CPMSRC)
 
-$(UOBJDIR)/%.o: src/cmd/%.c src/cmd/cpm.h $(TCSTAMP) | $(UOBJDIR)
-	$(CC0) $(VAR) $< $(UOBJDIR)/$*.z0 -Isrc/cmd >> $(LOG) 2>&1
-	$(CC1) $(VAR) $(UOBJDIR)/$*.z0 $(UOBJDIR)/$*.z1 >> $(LOG) 2>&1
-	$(CC2) $(UVAR) $(UOBJDIR)/$*.z1 $@ $(UOBJDIR)/$*.scr 0 >> $(LOG) 2>&1
+define UCOMPILE
+$(CC0) $(VAR) $< $(UOBJDIR)/$*.z0 -I$(<D) -Isrc/lib >> $(LOG) 2>&1
+$(CC1) $(VAR) $(UOBJDIR)/$*.z0 $(UOBJDIR)/$*.z1 >> $(LOG) 2>&1
+$(CC2) $(UVAR) $(UOBJDIR)/$*.z1 $@ $(UOBJDIR)/$*.scr 0 >> $(LOG) 2>&1
+endef
+
+$(UOBJDIR)/%.o: src/cmd/%.c src/lib/cpm.h $(TCSTAMP) | $(UOBJDIR)
+	$(UCOMPILE)
+
+$(UOBJDIR)/%.o: src/lib/%.c src/lib/cpm.h $(TCSTAMP) | $(UOBJDIR)
+	$(UCOMPILE)
+
+$(UOBJDIR)/%.o: src/shim/%.c src/lib/cpm.h $(TCSTAMP) | $(UOBJDIR)
+	$(UCOMPILE)
+
+$(UOBJDIR)/%.o: src/tests/%.c src/lib/cpm.h $(TCSTAMP) | $(UOBJDIR)
+	$(UCOMPILE)
 
 # DRI headers need 8.3 filename expansion, CP/M EOF removal and an extern for _base.
 PIPINC = $(UOBJDIR)/pipinc
@@ -48,7 +61,7 @@ $(UOBJDIR)/STAT.Z8K: $(UOBJDIR)/stat.lout $(LOUT2CPM)
 
 # ---- the src/app programs ----
 # Written for DRI's CP/M C library, they link the toolchain's COHERENT
-# stdio, string and malloc from its libc-z8001.a over src/cmd/cpmsys.c,
+# stdio, string and malloc from its libc-z8001.a over src/lib/cpmsys.c,
 # which puts open/read/write/lseek/sbrk/_exit on the BDOS and is also their
 # startup (so no cstart.o).  Linked ahead of the archive, cpmsys.o's
 # definitions keep the archive's system-call trap stubs out.
@@ -67,8 +80,8 @@ $(APPOBJ)/%.o: src/app/%.C $(APPOBJ)/sdbio.h $(TCSTAMP) | $(APPOBJ)
 	$(CC1) $(VAR) $(APPOBJ)/$*.z0 $(APPOBJ)/$*.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(APPOBJ)/$*.z1 $@ $(APPOBJ)/$*.scr 0 >> $(LOG) 2>&1
 
-$(APPOBJ)/cpmsys.o: src/cmd/cpmsys.c src/cmd/cpm.h $(TCSTAMP) | $(APPOBJ)
-	$(CC0) $(VAR) $< $(APPOBJ)/cpmsys.z0 -Isrc/cmd -I$(TCINC) -I$(TCINC)/sys >> $(LOG) 2>&1
+$(APPOBJ)/cpmsys.o: src/lib/cpmsys.c src/lib/cpm.h $(TCSTAMP) | $(APPOBJ)
+	$(CC0) $(VAR) $< $(APPOBJ)/cpmsys.z0 -Isrc/lib -I$(TCINC) -I$(TCINC)/sys >> $(LOG) 2>&1
 	$(CC1) $(VAR) $(APPOBJ)/cpmsys.z0 $(APPOBJ)/cpmsys.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(APPOBJ)/cpmsys.z1 $@ $(APPOBJ)/cpmsys.scr 0 >> $(LOG) 2>&1
 
@@ -86,7 +99,7 @@ $(eval $(call APPLINK,SDB,$(APPSDB:%=$(APPOBJ)/%.o)))
 $(foreach p,SORTFL KILLDU TOHEX FROMHEX,$(eval $(call APPLINK,$(p),$(APPOBJ)/$(p).o)))
 
 # CPMSYST exercises cpmsys.c itself, linked as the programs above are.
-$(APPOBJ)/cpmsyst.o: src/cmd/cpmsyst.c $(TCSTAMP) | $(APPOBJ)
+$(APPOBJ)/cpmsyst.o: src/tests/cpmsyst.c $(TCSTAMP) | $(APPOBJ)
 	$(CC0) $(VAR) $< $(APPOBJ)/cpmsyst.z0 -I$(TCINC) -I$(TCINC)/sys >> $(LOG) 2>&1
 	$(CC1) $(VAR) $(APPOBJ)/cpmsyst.z0 $(APPOBJ)/cpmsyst.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(APPOBJ)/cpmsyst.z1 $@ $(APPOBJ)/cpmsyst.scr 0 >> $(LOG) 2>&1
@@ -97,6 +110,15 @@ $(APPOBJ):
 
 $(UOBJDIR)/%.o: src/cmd/%.s $(TCSTAMP) | $(UOBJDIR)
 	cpp -traditional-cpp -P $< > $(UOBJDIR)/$*.i 2>> $(LOG)
+	$(AS) -g -o $@ $(UOBJDIR)/$*.i >> $(LOG) 2>&1
+
+$(UOBJDIR)/%.o: src/lib/%.s $(TCSTAMP) | $(UOBJDIR)
+	cpp -traditional-cpp -P $< > $(UOBJDIR)/$*.i 2>> $(LOG)
+	$(AS) -g -o $@ $(UOBJDIR)/$*.i >> $(LOG) 2>&1
+
+# The UCASE variants include the shipped module's source.
+$(UOBJDIR)/%.o: src/tests/%.s $(TCSTAMP) | $(UOBJDIR)
+	cpp -traditional-cpp -P -Isrc/cmd $< > $(UOBJDIR)/$*.i 2>> $(LOG)
 	$(AS) -g -o $@ $(UOBJDIR)/$*.i >> $(LOG) 2>&1
 
 $(UOBJDIR)/%.lout: $(UOBJDIR)/%.o $(UOBJDIR)/crt0.o $(ULIB)
@@ -185,9 +207,9 @@ $(UOBJDIR)/kermit.o: src/cmd/kermit.c src/cmd/kermit.h src/cmd/cdefs.h \
 	$(CC1) $(VAR) $(UOBJDIR)/kermit.z0 $(UOBJDIR)/kermit.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(UOBJDIR)/kermit.z1 $@ $(UOBJDIR)/kermit.scr 0 >> $(LOG) 2>&1
 
-$(UOBJDIR)/cpmio.o: src/cmd/cpmio.c src/cmd/cpm.h src/cmd/kermit.h \
+$(UOBJDIR)/cpmio.o: src/cmd/cpmio.c src/lib/cpm.h src/cmd/kermit.h \
 		src/cmd/cdefs.h src/cmd/debug.h $(TCSTAMP) | $(UOBJDIR)
-	$(CC0) $(VAR) $< $(UOBJDIR)/cpmio.z0 -Isrc/cmd $(KFLAGS) >> $(LOG) 2>&1
+	$(CC0) $(VAR) $< $(UOBJDIR)/cpmio.z0 -Isrc/cmd -Isrc/lib $(KFLAGS) >> $(LOG) 2>&1
 	$(CC1) $(VAR) $(UOBJDIR)/cpmio.z0 $(UOBJDIR)/cpmio.z1 >> $(LOG) 2>&1
 	$(CC2) $(UVAR) $(UOBJDIR)/cpmio.z1 $@ $(UOBJDIR)/cpmio.scr 0 >> $(LOG) 2>&1
 
@@ -263,7 +285,7 @@ $(UOBJDIR)/CONCS.Z8K: $(UOBJDIR)/concs.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCV.Z8K: $(UOBJDIR)/concv.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
-# The warm-boot segment-ownership trio (F5); src/cmd/concw.c explains them.
+# The warm-boot segment-ownership trio (F5); src/tests/concw.c explains them.
 $(UOBJDIR)/CONCW.Z8K: $(UOBJDIR)/concw.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
@@ -273,7 +295,7 @@ $(UOBJDIR)/CONCWB.Z8K: $(UOBJDIR)/concwb.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCWC.Z8K: $(UOBJDIR)/concwc.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
-# The F1 directory-guard programs; src/cmd/dgena.c explains them.
+# The F1 directory-guard programs; src/tests/dgena.c explains them.
 $(UOBJDIR)/DGENA.Z8K: $(UOBJDIR)/dgena.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
@@ -373,7 +395,7 @@ $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 # CP/M-80 shim: host tests and target builds use the same engine sources.
 Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80dec.o $(UOBJDIR)/z80exec.o \
 	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o
-$(Z80OBJ): src/cmd/z80.h src/cmd/gdpb.h
+$(Z80OBJ): src/shim/z80.h src/shim/gdpb.h
 
 $(UOBJDIR)/z80.lout: $(Z80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(Z80OBJ) $(ULIB)
@@ -384,7 +406,7 @@ $(UZ80): $(UOBJDIR)/z80.lout $(LOUT2CPM)
 # CP/M-86 shim: host tests and target builds use the same engine sources.
 I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86dec.o $(UOBJDIR)/i86exec.o \
 	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o
-$(I86OBJ): src/cmd/i86.h src/cmd/gdpb.h
+$(I86OBJ): src/shim/i86.h src/shim/gdpb.h
 
 $(UOBJDIR)/i86.lout: $(I86OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(I86OBJ) $(ULIB)
@@ -430,7 +452,7 @@ $(UOBJDIR)/ucrsxh.lout: $(UOBJDIR)/ucrsxh.o
 $(UOBJDIR)/UCASEH.RSX: $(UOBJDIR)/ucrsxh.lout tools/mkrsx.py
 	python3 tools/mkrsx.py $< $@ $(UCHORG)
 
-$(UOBJDIR)/prsxn.o: src/cmd/prsx.s
+$(UOBJDIR)/prsxn.o: src/tests/prsx.s
 
 $(UOBJDIR)/prsxn.lout: $(UOBJDIR)/prsxn.o
 	$(LD) -L -e protbase -R $(PROTLINK) -o $@ $<

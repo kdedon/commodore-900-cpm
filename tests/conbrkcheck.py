@@ -46,7 +46,7 @@ arithmetic has always assumed.
 THE BOUND.  conbrk() looks at the keyboard once every CONBRK_POLL
 characters (read out of src/bdos/conbdos.c below, not restated here), and
 CONBRK P's preamble forces that counter to a known zero before the
-measured loop starts (see src/cmd/conbrk.c).  So in HALTLOG and CTLCLOG
+measured loop starts (see src/tests/conbrk.c).  So in HALTLOG and CTLCLOG
 whatever prefix of the pattern got out before the stop took effect must
 be an exact, unbroken prefix of it, no longer than CONBRK_POLL - 1
 characters.  That is the bound the widened poll interval implies.

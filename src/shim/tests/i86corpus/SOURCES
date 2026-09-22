@@ -1,4 +1,4 @@
-tests/i86corpus/ -- .CMD files tests/i86test.c reads.  Test input, nothing else.
+src/shim/tests/i86corpus/ -- .CMD files src/shim/tests/i86test.c reads.  Test input, nothing else.
 
 PIP.CMD, ED.CMD, GENCMD.CMD and SUBMIT.CMD are Digital Research's own CP/M-86
 1.0 programs, unmodified, from the cpm86pc drop of the Unofficial CP/M Web
