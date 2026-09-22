@@ -356,13 +356,6 @@ char *argv[];
 	dmem = (char *) xa;
 	xa = SEGBASE(sseg);
 	stage = (char *) xa;
-	cputs("i86: code segment ");
-	phex2(cseg);
-	cputs(", data segment ");
-	phex2(dseg);
-	cputs(", staging segment ");
-	phex2(sseg);
-	cputs("\r\n");
 
 	if ((n = cmdread(argv[1], stage)) < 0) {
 		segcall(SEG_PUT, (long) sseg);
@@ -411,6 +404,15 @@ char *argv[];
 		segcall(SEG_PUT, (long) dseg);
 		ngseg = 1;
 	}
+	cputs("i86: code segment ");
+	phex2(cseg);
+	if (ngseg == 2) {
+		cputs(", data segment ");
+		phex2(dseg);
+	}
+	cputs(", staging segment ");
+	phex2(sseg);
+	cputs("\r\n");
 	if (need > I86MAXG) {
 		cputs("i86: this program declares ");
 		putdec((unsigned) C.ng);
