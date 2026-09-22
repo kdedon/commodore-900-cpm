@@ -450,8 +450,7 @@ extern int z80furn();
  * B = H, which is what CP/M-80 itself leaves behind).  That is the whole
  * interface, and it is the reason this file is small: it maps one
  * calling convention onto another and hands the call to the native
- * BDOS, which reads the guest's FCB where the guest left it.  Nothing is
- * copied. */
+ * BDOS, which works on a copy of the guest's FCB. */
 
 /* What servicing a hook did.  Only B_RUN resumes the guest. */
 #define B_RUN	0		/* serviced; carry on			*/

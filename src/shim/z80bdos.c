@@ -70,6 +70,7 @@ z16	z80ver = 0x0031;
 #define Z80BPB	8		/* fn 50: {func, A, BC, DE, HL}		*/
 #define Z80FCB	36		/* sizeof(struct fcb) -- src/cmd/cpm.h	*/
 #define Z80REN	52		/* fn 23: old FCB at 0, new at 16	*/
+#define Z80SEQ	33		/* an FCB without the random record	*/
 #define Z80DMA	128		/* one CP/M record			*/
 
 /* Parameter classes for supported calls through 112. Functions returning
@@ -441,6 +442,16 @@ z16 *offp;
 	return (1);
 }
 
+static char	fbuf[Z80REN];		/* the FCB the native BDOS sees	*/
+static char	sbuf[Z80FCB];		/* ... and the one it searches with */
+
+/* The functions that use the random record, bytes 33-35. */
+static int isrand(fn)
+int fn;
+{
+	return ((fn >= 33 && fn <= 36) || fn == 40 || fn == 99);
+}
+
 /* The five functions src/bdos/bdosrw.c multio() shells. */
 static int ismulti(fn)
 int fn;
@@ -695,7 +706,7 @@ struct z80 *m;
 	register int fn, cls;
 	register char *p;
 	z16 de, dpboff;
-	int r, off, set;
+	int r, off, set, k;
 	long ga;
 	z32 n;
 	/* The native character control block for functions 111 and 112.
@@ -895,13 +906,31 @@ struct z80 *m;
 			breason = BR_ADDR;
 			return (B_ADDR);
 		}
-		ranswap(p, fn);
-		r = z80sys(fn, (z16)0, p);
-		ranswap(p, fn);
 		/* @SEARCHA follows the FCB a search first was given;
-		 * search next keeps using that one. */
-		if (fn == 17)
-			z80srch = de;
+		 * search next keeps using that one, so the copy is kept
+		 * until the next search first. */
+		if (fn == 17 || fn == 18) {
+			for (k = 0; fn == 17 && k < Z80FCB; k++)
+				sbuf[k] = p[k];
+			r = z80sys(fn, (z16)0, sbuf);
+			if (fn == 17)
+				z80srch = de;
+			break;
+		}
+		/* The native BDOS writes back a whole 36-byte FCB, after
+		 * any transfer into the DMA buffer, but a sequential
+		 * call's FCB is 33 bytes and a buffer may follow it.  So
+		 * the call works on a copy and only the bytes the
+		 * function owns go back. */
+		for (k = 0; k < (int)n; k++)
+			fbuf[k] = p[k];
+		ranswap(fbuf, fn);
+		r = z80sys(fn, (z16)0, fbuf);
+		ranswap(fbuf, fn);
+		if (fn != 23 && !isrand(fn))
+			n = Z80SEQ;
+		for (k = 0; k < (int)n; k++)
+			p[k] = fbuf[k];
 		break;
 	case P_STR:
 		/* Function 9's string ends at a `$' the guest put there.

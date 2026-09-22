@@ -7982,8 +7982,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 944 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 944 of its"; \
+	@grep -q 'z80test: 967 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 967 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
 	@grep -q 'i86test: 1731 checks, 0 failures' build/verify-shim-i86.log \

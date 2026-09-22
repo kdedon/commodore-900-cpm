@@ -2699,7 +2699,31 @@ static struct gdpb sdpb = { 64, 5, 31, 1, 0, 2559, 511, 0xF000, 0, 0 };
  * (src/bdos/dskutil.c setaloc). */
 static char salv[(2559 >> 3) + 1] = { (char)0xf0 };
 
+static int stub1(int fn, z16 val, char *addr);
+
+/* Our BDOS works on a 36-byte copy of an FCB and writes all of it back
+ * when the call ends, after any transfer into the DMA buffer.  Search
+ * next ignores its parameter and uses search first's FCB. */
 static int stub(int fn, z16 val, char *addr)
+{
+	static char *srchp;
+	char t[36];
+	int r;
+
+	if (!((fn >= 15 && fn <= 23) || fn == 30 || (fn >= 33 && fn <= 36)
+	 || fn == 40 || fn == 99 || fn == 100 || fn == 102 || fn == 103))
+		return (stub1(fn, val, addr));
+	if (fn == 17)
+		srchp = addr;
+	if (fn == 18 && srchp)
+		addr = srchp;
+	memcpy(t, addr, sizeof t);
+	r = stub1(fn, val, t);
+	memcpy(addr, t, sizeof t);
+	return (r);
+}
+
+static int stub1(int fn, z16 val, char *addr)
 {
 	struct sfile *f;
 	long r, n;
@@ -3038,11 +3062,15 @@ static void t_seam(void)
 	z80bdos(&G);
 	chk("fn 37 passed DE whole", (long)rval, 0x1234L);
 
-	/* an FCB travels by REFERENCE, at the guest's own address */
+	/* an FCB travels as a copy of the guest's bytes */
 	z80setr(&G, R_C, 15);			/* open			*/
 	G.rp[P_DE] = 0x5c;
+	gmem[0x5c] = 0x03;
 	z80bdos(&G);
-	chk("fn 15 passed an address", (long)(raddr - gmem), 0x5cL);
+	ntest++;
+	if (raddr == gmem + 0x5c)
+		fail("fn 15 passed a copy", 1, 0);
+	chk("fn 15's copy holds the FCB", raddr[0] & 0xff, 0x03);
 	chk("fn 15 passed no value", (long)rval, 0L);
 
 	/* ... and an FCB that would run off the top is refused, with
@@ -3974,6 +4002,72 @@ static void t_random(void)
 		(long)G.a, 6L);
 }
 
+static int fcall(int fn, int de)
+{
+	z80hookno = HOOK_BDOS;
+	z80setr(&G, R_C, fn);
+	G.rp[P_DE] = (z16)de;
+	z80bdos(&G);
+	return (G.a & 0xff);
+}
+
+/* A sequential FCB is 33 bytes; the DMA buffer here starts right after
+ * it, where a 36-byte write-back would land. */
+static void t_fcbtail(void)
+{
+	struct sfile *f;
+	int k;
+
+	sreset();
+	sysmode = SYS_CPM;
+	f = &sdisk[0];
+	smkname(f->name, "TAIL.DAT");
+	f->used = 1;
+	f->len = 128;
+	for (k = 0; k < 128; k++)
+		f->d[k] = (char)(0x40 + k);
+	smkname(sdisk[1].name, "TAIL2.DAT");
+	sdisk[1].used = 1;
+
+	memset(gmem + 0x300, 0, 0x100);
+	smkname(gmem + 0x301, "TAIL.DAT");
+	memset(gmem + 0x321, 0x5a, 3);
+	fcall(26, 0x321);
+	chk("tail: open", fcall(15, 0x300), 0);
+	chk("... leaves the bytes after the FCB", gmem[0x323] & 0xff, 0x5a);
+	chk("tail: read", fcall(20, 0x300), 0);
+	chk("... record lands right after the FCB", gmem[0x321] & 0xff, 0x40);
+	chk("... all of it", gmem[0x323] & 0xff, 0x42);
+	chk("... current record advances", gmem[0x320] & 0xff, 1);
+	chk("tail: close", fcall(16, 0x300), 0);
+	chk("... leaves the record", gmem[0x322] & 0xff, 0x41);
+
+	memset(gmem + 0x300, 0, 33);
+	smkname(gmem + 0x301, "OUT.DAT");
+	memset(gmem + 0x321, 0x77, 128);
+	chk("tail: make", fcall(22, 0x300), 0);
+	chk("tail: write", fcall(21, 0x300), 0);
+	chk("tail: close", fcall(16, 0x300), 0);
+	chk("... the record was written", sfind(gmem + 0x301)->d[2], 0x77);
+	chk("... and is still there", gmem[0x323] & 0xff, 0x77);
+
+	memset(gmem + 0x300, 0, 0x100);
+	smkname(gmem + 0x301, "TAIL????.DAT");
+	chk("tail: search first", fcall(17, 0x300), 0);
+	chk("... entry right after the FCB", gmem[0x322], 'T');
+	chk("... TAIL.DAT", gmem[0x326], ' ');
+	chk("tail: search next", fcall(18, 0), 0);
+	chk("... TAIL2.DAT", gmem[0x326], '2');
+	chk("tail: search ends", fcall(18, 0), 0xff);
+
+	/* The random functions own bytes 33-35. */
+	memset(gmem + 0x300, 0, 36);
+	smkname(gmem + 0x301, "TAIL.DAT");
+	chk("tail: compute size", fcall(35, 0x300), 0);
+	chk("... r0", gmem[0x321] & 0xff, 1);
+	chk("... r2", gmem[0x323] & 0xff, 0);
+}
+
 /* ==================================================================
  * THE DMA WINDOW A MULTI-SECTOR TRANSFER ACTUALLY USES, and the
  * length z80rsxhdr() is given.
@@ -4748,6 +4842,7 @@ char **argv;
 	t_dump(argv[1]);
 	t_pip(argv[1]);
 	t_random();
+	t_fcbtail();
 	t_dmabound();
 	t_scb();
 	t_devtbl();
