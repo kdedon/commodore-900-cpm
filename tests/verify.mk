@@ -8071,12 +8071,12 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 981 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 981 of its"; \
+	@grep -q 'z80test: 993 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 993 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1766 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1766 of its"; \
+	@grep -q 'i86test: 1777 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1777 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason

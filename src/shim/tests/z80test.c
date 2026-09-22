@@ -2358,6 +2358,7 @@ struct sfile {
 
 static struct sfile sdisk[SF_MAX];
 static char *sdma;
+static char sbase[128];		/* where function 13 leaves the native DMA */
 static int smultcnt = 1;		/* BDOS function 44's count	*/
 static long sfncount[113];	/* the whole of the shim's map, 0..112 */
 /* The native character control block functions 111 and 112 take. */
@@ -2780,7 +2781,11 @@ static int stub1(int fn, z16 val, char *addr)
 		return (0);
 	case 12:
 		return (0x2031);
-	case 13: case 14: case 28: case 37:
+	case 13:			/* reset disk system: the DMA goes
+					 * back to the CALLER's base page */
+		sdma = sbase;
+		return (0);
+	case 14: case 28: case 37:
 	case 45: case 48:
 		return (0);
 	case 44:				/* set multi-sector count */
@@ -3337,6 +3342,7 @@ static void sreset(void)
 	skeys[0] = '\0';
 	skeyp = 0;
 	sdma = 0;
+	memset(sbase, 0, sizeof sbase);
 	ssearch = 0;
 	smultcnt = 1;
 	sscbreset();
@@ -4107,6 +4113,77 @@ static void t_fcbtail(void)
 	chk("tail: compute size", fcall(35, 0x300), 0);
 	chk("... r0", gmem[0x321] & 0xff, 1);
 	chk("... r2", gmem[0x323] & 0xff, 0);
+}
+
+/* ==================================================================
+ * FUNCTION 13 IS DMA := 0080h.
+ *
+ * The native BDOS answers a reset by taking its own base page back as
+ * the DMA address, which is the shim's base page and not the guest's.
+ * A guest that resets the disk system and reads without setting a DMA
+ * address of its own got its record written there -- the stub models
+ * that by pointing its DMA at sbase -- and read stale content out of
+ * its own buffer.  So the object here is WHERE the second file's
+ * record lands, not what any call returns.
+ */
+static void t_dma13(void)
+{
+	struct sfile *f;
+
+	sreset();
+	sysmode = SYS_CPM;
+
+	f = &sdisk[0];
+	smkname(f->name, "ONE.DAT");
+	f->used = 1;
+	f->len = 128L;
+	memset(f->d, 'A', 128);
+	f = &sdisk[1];
+	smkname(f->name, "TWO.DAT");
+	f->used = 1;
+	f->len = 128L;
+	memset(f->d, 'B', 128);
+
+	memset(gmem, 0, 0x10000);
+	memset(&G, 0, sizeof G);
+	G.m = gmem;
+	G.f = F_ONE;
+	G.lz = LZ_NONE;
+	z80hookno = HOOK_BDOS;
+	chk("z80bdosinit takes the default DMA", z80bdosinit(&G), 1L);
+
+	memset(gmem + 0x0100, 0, 36);
+	smkname(gmem + 0x0100 + 1, "ONE.DAT");
+	memset(gmem + 0x0140, 0, 36);
+	smkname(gmem + 0x0140 + 1, "TWO.DAT");
+
+	z80setr(&G, R_C, 26);			/* a DMA of the guest's own */
+	G.rp[P_DE] = 0x2000;
+	chk("fn 26 sets a DMA away from the default", z80bdos(&G), B_RUN);
+	z80setr(&G, R_C, 15);
+	G.rp[P_DE] = 0x0100;
+	chk("fn 15 opens the first file", z80bdos(&G), B_RUN);
+	z80setr(&G, R_C, 20);
+	G.rp[P_DE] = 0x0100;
+	chk("fn 20 reads it", z80bdos(&G), B_RUN);
+	chk("... into the guest's DMA", (long)(gmem[0x2000] & 0xff), (long)'A');
+
+	z80setr(&G, R_C, 13);			/* reset disk system	*/
+	chk("fn 13 runs", z80bdos(&G), B_RUN);
+	z80setr(&G, R_C, 14);			/* select drive A	*/
+	G.rp[P_DE] = 0;
+	chk("fn 14 runs", z80bdos(&G), B_RUN);
+	z80setr(&G, R_C, 15);
+	G.rp[P_DE] = 0x0140;
+	chk("fn 15 opens the second file", z80bdos(&G), B_RUN);
+	z80setr(&G, R_C, 20);
+	G.rp[P_DE] = 0x0140;
+	chk("fn 20 reads it", z80bdos(&G), B_RUN);
+	chk("a read after fn 13 lands at the guest's 0x0080",
+		(long)(gmem[0x0080] & 0xff), (long)'B');
+	chk("... and nowhere else", (long)(sbase[0] & 0xff), 0L);
+	chk("... leaving the old DMA alone",
+		(long)(gmem[0x2000] & 0xff), (long)'A');
 }
 
 /* ==================================================================
@@ -4884,6 +4961,7 @@ char **argv;
 	t_pip(argv[1]);
 	t_random();
 	t_fcbtail();
+	t_dma13();
 	t_dmabound();
 	t_scb();
 	t_devtbl();

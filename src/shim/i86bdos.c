@@ -965,6 +965,16 @@ struct i86 *m;
 	switch (cls) {
 	case P_NONE:
 		r = i86sys(fn, (i16)0, (char *)0);
+		/* Function 13 is DMA := 0080h, and the native BDOS moved
+		 * its own DMA to ITS base page: without this the guest's
+		 * next record lands there instead of in the guest.  The
+		 * base paragraph is the guest's to choose, so only the
+		 * offset goes back to the default. */
+		if (fn == 13) {
+			i86dmaoff = 0x80;
+			if (!setdma(m))
+				return (breason == BR_SEG ? B_SEG : B_ADDR);
+		}
 		break;
 	case P_BYTE:
 		r = i86sys(fn, (i16)(dx & 0xff), (char *)0);

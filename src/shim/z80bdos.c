@@ -896,6 +896,14 @@ struct z80 *m;
 	switch (cls) {
 	case P_NONE:
 		r = z80sys(fn, (z16)0, (char *)0);
+		/* Function 13 is DMA := 0080h, and the native BDOS moved
+		 * its own DMA to ITS base page: without this the guest's
+		 * next record lands there instead of in the guest. */
+		if (fn == 13) {
+			z80dma = PZ_DMA;
+			if (!setdma(m))
+				return (B_ADDR);
+		}
 		break;
 	case P_BYTE:
 		if (fn == 6) {

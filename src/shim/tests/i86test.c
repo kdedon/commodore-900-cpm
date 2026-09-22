@@ -3351,6 +3351,7 @@ struct sfile {
 
 static struct sfile sdisk[SF_MAX];
 static char *sdma;		/* the native "DMA address"		*/
+static char sbase[128];		/* where function 13 leaves it		*/
 static long sfncount[113];	/* every function the seam reached	*/
 static char scon[8192];		/* the guest's console output		*/
 static int sconn;
@@ -3789,7 +3790,11 @@ static int stub1(int fn, i16 val, char *addr)
 		return (0);
 	case 12:
 		return (0x2031);
-	case 13: case 14: case 28: case 37:
+	case 13:			/* reset disk system: the DMA goes
+					 * back to the CALLER's base page */
+		sdma = sbase;
+		return (0);
+	case 14: case 28: case 37:
 		return (0);
 	case 25:				/* current disk = A:	*/
 		return (0);
@@ -4992,6 +4997,7 @@ static void bsetup2(void)
 	slast_fn = -1;
 	smultcnt = 1;
 	sdma = 0;
+	memset(sbase, 0, sizeof sbase);
 	memset(sdisk, 0, sizeof sdisk);
 	memset(sfncount, 0, sizeof sfncount);
 	sconn = 0;
@@ -5273,6 +5279,57 @@ static void deadline(int sig)
 		"the prefix loop terminates");
 	fflush(stdout);
 	_exit(1);
+}
+
+/* ==================================================================
+ * FUNCTION 13 IS DMA := 0080h.
+ *
+ * The native BDOS answers a reset by taking its own base page back as
+ * the DMA address, which is the shim's base page and not the guest's.
+ * A guest that resets the disk system and reads without setting a DMA
+ * address of its own got its record written there -- the stub models
+ * that by pointing its DMA at sbase -- and read stale content out of
+ * its own buffer.  So the object here is WHERE the second file's
+ * record lands.
+ */
+static void t_dma13(void)
+{
+	struct sfile *f;
+
+	bsetup2();
+
+	f = &sdisk[0];
+	smkname(f->name, "ONE.DAT");
+	f->used = 1;
+	f->len = 128L;
+	memset(f->d, 'A', 128);
+	f = &sdisk[1];
+	smkname(f->name, "TWO.DAT");
+	f->used = 1;
+	f->len = 128L;
+	memset(f->d, 'B', 128);
+
+	memset(dseg2 + 0x0100, 0, 36);
+	smkname(dseg2 + 0x0100 + 1, "ONE.DAT");
+	memset(dseg2 + 0x0140, 0, 36);
+	smkname(dseg2 + 0x0140 + 1, "TWO.DAT");
+
+	chk("fn 26 sets a DMA away from the default",
+		bcall(26, 0x2000), B_RUN);
+	chk("fn 15 opens the first file", bcall(15, 0x0100), B_RUN);
+	chk("fn 20 reads it", bcall(20, 0x0100), B_RUN);
+	chk("... into the guest's DMA", (long)(dseg2[0x2000] & 0xff),
+		(long)'A');
+
+	chk("fn 13 runs", bcall(13, 0), B_RUN);
+	chk("fn 14 runs", bcall(14, 0), B_RUN);
+	chk("fn 15 opens the second file", bcall(15, 0x0140), B_RUN);
+	chk("fn 20 reads it", bcall(20, 0x0140), B_RUN);
+	chk("a read after fn 13 lands at the guest's 0080h",
+		(long)(dseg2[0x0080] & 0xff), (long)'B');
+	chk("... and nowhere else", (long)(sbase[0] & 0xff), 0L);
+	chk("... leaving the old DMA alone",
+		(long)(dseg2[0x2000] & 0xff), (long)'A');
 }
 
 static void t_prefix(void)
@@ -5713,6 +5770,7 @@ char **argv;
 	t_tod(argv[1]);
 	t_dmabound();
 	t_random();
+	t_dma13();
 	t_prefix();
 	t_ddt86(argv[1]);
 
