@@ -8,6 +8,7 @@
 
 #include "z80.h"
 #include "gdpb.h"
+#include "conmode.h"
 
 int	z80bdosfn;		/* function of the last call, or -1	*/
 int	z80biosfn;		/* BIOS vector of the last call, or -1	*/
@@ -459,6 +460,9 @@ int fn;
 	return (fn == 20 || fn == 21 || fn == 33 || fn == 34 || fn == 40);
 }
 
+/* The console mode the CCP was running in, kept for the guest's exit. */
+static int z80conmode = -1;
+
 /*
  * z80bdosinit -- the state CP/M-80 gives a program before its first
  * instruction: the DMA buffer is page zero's own 128-byte tail buffer
@@ -466,10 +470,23 @@ int fn;
  * it until it wants a different one, and a program that reads its
  * command tail with function 10 or copies a record before setting a DMA
  * address of its own is relying on that default.
+ *
+ * Stop-scroll goes off for the run.  The native BDOS polls the console
+ * every eight output characters and KEEPS what it finds: ^S and ^Q are
+ * swallowed and anything else is held in one byte per console, so a
+ * second key typed during a burst of output overwrites the first.  A
+ * guest that does its own key handling loses keystrokes that way.  With
+ * the poll off, every key stays in the BIOS until the guest asks for it.
+ *
+ * ^C is deliberately left terminating.  Nothing polls once the poll is
+ * off, so the native line input is the only ^C left, and it is the only
+ * way off a guest that never returns.
  */
 int z80bdosinit(m)
 struct z80 *m;
 {
+	z80conmode = z80sys(109, (z16)0xffff, (char *)0);
+	z80sys(109, (z16)CM_NOSTOP, (char *)0);
 	z80dma = PZ_DMA;
 	z80mult = 1;		/* src/bdos/bdosmisc.c:171		*/
 	z80srch = 0;
@@ -480,6 +497,17 @@ struct z80 *m;
 	breason = BR_NONE;
 	z80nbdos = 0;
 	return (setdma(m));
+}
+
+/* Give the console back however the run ended: a guest must not leave a
+ * mode behind for whatever the CCP starts next. */
+int z80bdosfini()
+{
+	if (z80conmode < 0)
+		return (0);
+	z80sys(109, (z16)z80conmode, (char *)0);
+	z80conmode = -1;
+	return (1);
 }
 
 /* ------------------------------------------------------------------ */

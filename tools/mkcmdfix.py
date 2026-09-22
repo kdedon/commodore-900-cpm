@@ -317,6 +317,51 @@ def p_poll():
     return bytes(img)
 
 
+def p_keyq():
+    """I86KEYQ.CMD -- keys typed while the guest prints.
+
+    Announces itself, writes 200 characters with function 2, then reads
+    four keys through function 50's CONIN and echoes each.  The BDOS
+    polls the console every eight output characters and keeps what it
+    finds, so a run whose console mode still allows that poll never sees
+    the keys and waits at its first CONIN.
+    """
+    a = Asm(0x100)
+    a.b(0xba, 0x90, 0x01)               # mov dx,0x190   -- go text
+    a.b(0xb1, 0x09)                     # mov cl,9
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0xbe, 0xc8, 0x00)               # mov si,200
+    a.label('dots')
+    a.b(0xb1, 0x02, 0xb2, 0x2e)         # mov cl,2 / mov dl,'.'
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0x4e)                           # dec si
+    a.rel8(0x75, 'dots')                # jnz dots
+    a.b(0xbe, 0x04, 0x00)               # mov si,4
+    a.label('keys')
+    a.b(0xb1, 50)                       # mov cl,50
+    a.b(0xba, 0x80, 0x01)               # mov dx,0x180   -- CONIN block
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0x88, 0xc2)                     # mov dl,al
+    a.b(0xb1, 0x02)                     # mov cl,2
+    a.b(0xcd, 0xe0)                     # int 0xe0       -- echo it
+    a.b(0x4e)                           # dec si
+    a.rel8(0x75, 'keys')                # jnz keys
+    a.b(0xba, 0xa0, 0x01)               # mov dx,0x1a0   -- done text
+    a.b(0xb1, 0x09)                     # mov cl,9
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0xb1, 0x00, 0xb2, 0x00)         # mov cl,0 / mov dl,0
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    code = a.code()
+    if len(code) > 0x80:
+        raise ValueError("I86KEYQ.CMD: code overlaps its data")
+    img = bytearray(0x1b0)
+    img[0x100:0x100 + len(code)] = code
+    img[0x180] = 3                      # CONIN
+    img[0x190:0x190 + 16] = b'\r\nI86KEYQ GO$'.ljust(16, b'\0')
+    img[0x1a0:0x1a0 + 16] = b'\r\nI86KEYQ DONE$'.ljust(16, b'\0')
+    return bytes(img)
+
+
 def p_multi():
     """I86MG.CMD -- the large model, and the only multi-group .CMD there is.
 
@@ -746,6 +791,9 @@ def main(argv):
 
     img = p_poll()
     write(d, 'I86POLL.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
+
+    img = p_keyq()
+    write(d, 'I86KEYQ.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
 
     # ---- and the one fixture that is not a .CMD: GENCMD's input.
     hexf, msg = p_hex()

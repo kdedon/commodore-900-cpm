@@ -395,7 +395,7 @@ $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 # CP/M-80 shim: host tests and target builds use the same engine sources.
 Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80dec.o $(UOBJDIR)/z80exec.o \
 	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o
-$(Z80OBJ): src/shim/z80.h src/shim/gdpb.h
+$(Z80OBJ): src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h
 
 $(UOBJDIR)/z80.lout: $(Z80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(Z80OBJ) $(ULIB)
@@ -406,7 +406,7 @@ $(UZ80): $(UOBJDIR)/z80.lout $(LOUT2CPM)
 # CP/M-86 shim: host tests and target builds use the same engine sources.
 I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86dec.o $(UOBJDIR)/i86exec.o \
 	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o
-$(I86OBJ): src/shim/i86.h src/shim/gdpb.h
+$(I86OBJ): src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h
 
 $(UOBJDIR)/i86.lout: $(I86OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(I86OBJ) $(ULIB)

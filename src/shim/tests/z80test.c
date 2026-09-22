@@ -22,6 +22,7 @@
 
 #include "../z80.h"
 #include "../gdpb.h"
+#include "../conmode.h"
 
 static int nfail, ntest;
 
@@ -2402,8 +2403,66 @@ static void sscbreset(void)
 	ssrchp = 0;
 }
 
+/*
+ * The console the real BDOS presents, flow control included.
+ *
+ * conbrk() polls every eight output characters and CONSUMES what it
+ * finds: ^S/^Q are swallowed and anything else is held in kbchar, one
+ * byte per console, so a second key typed during output overwrites the
+ * first.  CM_NOSTOP makes it return before reading.  Modelling that is
+ * the point -- a stub whose output never touched the keys could not
+ * tell the two modes apart.
+ */
+#define SKQ	64			/* keys waiting in the BIOS	*/
+
+static int sconmode;			/* function 109's word		*/
+static unsigned char skq[SKQ];
+static int skqh, skqt;
+static int skbchar;			/* the BDOS's one byte of it	*/
+static int sbrkctr;
+
+static void skqput(const char *s)
+{
+	while (*s && skqt < SKQ)
+		skq[skqt++] = (unsigned char)*s++;
+}
+
+static void sconbrk(void)
+{
+	if (sconmode & CM_NOSTOP) {
+		sbrkctr = 0;
+		return;
+	}
+	if (++sbrkctr < 8)
+		return;
+	sbrkctr = 0;
+	while (skqh < skqt) {
+		int c = skq[skqh++];
+
+		if (c == 0x13 || c == 0x11)	/* ^S, ^Q		*/
+			continue;
+		skbchar = c;			/* and the one before it
+						   is gone		*/
+		break;
+	}
+}
+
+static int skqget(void)			/* fn 6 FFh, BIOS CONIN		*/
+{
+	if (skbchar) {
+		int c = skbchar;
+
+		skbchar = 0;
+		return (c);
+	}
+	if (skqh < skqt)
+		return (skq[skqh++]);
+	return (0);
+}
+
 static void sputc(int c)
 {
+	sconbrk();
 	if (sconn < (int)sizeof scon - 1)
 		scon[sconn++] = (char)c;
 }
@@ -2737,8 +2796,10 @@ static int stub1(int fn, z16 val, char *addr)
 		sputc(val & 0x7f);
 		return (0);
 	case 6:					/* direct console i/o	*/
-		if ((val & 0xff) == 0xff || (val & 0xff) == 0xfe)
-			return (0);		/* no input waiting	*/
+		if ((val & 0xff) == 0xff)
+			return (skqget());
+		if ((val & 0xff) == 0xfe)
+			return (skbchar || skqh < skqt ? 1 : 0);
 		sputc(val & 0x7f);
 		return (0);
 	case 9:					/* print string		*/
@@ -2778,6 +2839,11 @@ static int stub1(int fn, z16 val, char *addr)
 		return (0);
 	}
 	case 11:				/* console status	*/
+		return (skbchar || skqh < skqt ? 1 : 0);
+	case 109:				/* get/set console mode	*/
+		if ((val & 0xffff) == 0xffff)
+			return (sconmode);
+		sconmode = val & 0xffff;
 		return (0);
 	case 12:
 		return (0x2031);
@@ -3008,7 +3074,7 @@ static void t_seam(void)
 	chk("bdosinit set a DMA address", z80bdosinit(&G), 1);
 	chk("... by calling function 26", rfn, 26);
 	chk("... at guest 0x0080", (long)(raddr - gmem), 0x80L);
-	chk("... exactly once", rn, 1L);
+	chk("... after reading and setting the console mode", rn, 3L);
 
 	/* A CALL 5 reaches the hook and nothing else.  This is the whole
 	 * escape mechanism end to end: the guest calls 5, page zero
@@ -3037,7 +3103,7 @@ static void t_seam(void)
 	rfn = -1;
 	chk("fn 2 runs", z80bdos(&G), B_RUN);
 	chk("fn 2 reached no BDOS of its own", rfn, -1);
-	chk("... and cost no gate crossing", rn, 1L);
+	chk("... and cost no gate crossing", rn, 3L);
 	chk("fn 2 flushes as one call", z80oflush(), 1);
 	chk("... which is function 111", rfn, 111);
 	chk("... with no value parameter", (long)rval, 0L);
@@ -3059,7 +3125,7 @@ static void t_seam(void)
 	z80setr(&G, R_C, 11);			/* console status	*/
 	z80bdos(&G);
 	chk("a pending batch went out before the next function", rfn, 11);
-	chk("... which is two calls, 111 then 11", rn, 4L);
+	chk("... which is two calls, 111 then 11", rn, 6L);
 
 	/* a word parameter travels in DE */
 	z80setr(&G, R_C, 37);			/* reset drive		*/
@@ -3339,6 +3405,10 @@ static void sreset(void)
 	memset(sdisk, 0, sizeof sdisk);
 	memset(sfncount, 0, sizeof sfncount);
 	sconn = 0;
+	sconmode = 0;
+	skqh = skqt = 0;
+	skbchar = 0;
+	sbrkctr = 0;
 	skeys[0] = '\0';
 	skeyp = 0;
 	sdma = 0;
@@ -4730,6 +4800,75 @@ static void t_devtbl(void)
 	sysmode = SYS_REC;
 }
 
+/*
+ * A guest that prints while somebody types, and then reads its own
+ * keys.  With the poll left on, the burst eats them; the seam turns it
+ * off for the length of the run and hands the console back after.
+ */
+static void t_conmode(void)
+{
+	static char img[8];
+	int i, got[4];
+
+	sreset();
+	sysmode = SYS_CPM;
+	img[0] = (char)0xc3;
+	z80load(&G, gmem, img, 1L);
+
+	sconmode = CM_NOSTOP << 1;	/* whatever the CCP was running in */
+	z80bdosinit(&G);
+	chk("the run turns stop-scroll off", sconmode, CM_NOSTOP);
+
+	/* Four keys waiting, then forty characters of output: five polls,
+	 * which is enough to lose all four. */
+	skqput("abcd");
+	z80hookno = HOOK_BDOS;
+	for (i = 0; i < 40; i++) {
+		z80setr(&G, R_C, 2);
+		G.rp[P_DE] = (z16)('.' & 0xff);
+		z80bdos(&G);
+	}
+	z80oflush();
+	chk("the output went out", sconn, 40);
+
+	for (i = 0; i < 4; i++) {
+		z80hookno = HOOK_BIOS + 3;
+		z80bdos(&G);
+		got[i] = G.a & 0xff;
+	}
+	chk("BIOS CONIN got the first key", got[0], 'a');
+	chk("... the second", got[1], 'b');
+	chk("... the third", got[2], 'c');
+	chk("... and the fourth", got[3], 'd');
+
+	chk("the guest's exit gives the console back", z80bdosfini(), 1);
+	chk("... in the mode it found", sconmode, CM_NOSTOP << 1);
+	chk("... once", z80bdosfini(), 0);
+
+	/* The same burst with the poll on, which is what the console does
+	 * to a guest the seam has not spoken for. */
+	sreset();
+	z80bdosinit(&G);
+	sconmode = 0;
+	skqput("abcd");
+	z80hookno = HOOK_BDOS;
+	for (i = 0; i < 40; i++) {
+		z80setr(&G, R_C, 2);
+		G.rp[P_DE] = (z16)('.' & 0xff);
+		z80bdos(&G);
+	}
+	z80oflush();
+	z80hookno = HOOK_BIOS + 3;
+	z80bdos(&G);
+	chk("the poll keeps only the last key it took", (long)(G.a & 0xff),
+		(long)'d');
+	z80bdos(&G);
+	chk("... and the ones before it are gone", (long)(G.a & 0xff), 0L);
+
+	z80bdosfini();
+	sysmode = SYS_REC;
+}
+
 /* ================================================================== */
 
 /*
@@ -4965,6 +5104,7 @@ char **argv;
 	t_dmabound();
 	t_scb();
 	t_devtbl();
+	t_conmode();
 	t_rsx(argv[1]);
 	t_save(argv[1]);
 

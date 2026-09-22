@@ -24,6 +24,7 @@
 
 #include "../i86.h"
 #include "../gdpb.h"
+#include "../conmode.h"
 
 /* The native character control block functions 111 and 112 take. */
 struct sccb {
@@ -3042,6 +3043,10 @@ static char bseg[65536];	/* the guest's data segment		*/
 static char cseg[65536];	/* ... and its code segment		*/
 static struct i86 bm;
 
+/* What i86bdosinit() costs before a guest has asked for anything: the
+ * console mode read and set, and the default DMA address. */
+#define SINIT	3
+
 /* A guest sitting at CS:0 with DS a segment of its own, which is the
  * shape i86place() gives a small-model .CMD. */
 static void bsetup(void)
@@ -3091,7 +3096,7 @@ static void t_seam(void)
 	/* The DMA address a program starts with: DS:0080, the base
 	 * page's own buffer, set before the first instruction runs. */
 	bsetup();
-	chk("init dma call", sncall, 1);
+	chk("init dma calls", sncall, SINIT);
 	chk("init dma fn", slast_fn, 26);
 	ntest++;
 	if (slast_addr != &bseg[0x80])
@@ -3106,7 +3111,7 @@ static void t_seam(void)
 	bsetup();
 	chk("conout rc", bcall(2, (i16)0x4841), B_RUN);
 	chk("conout reached no BDOS of its own", slast_fn, 26);
-	chk("... and cost no gate crossing", sncall, 1);
+	chk("... and cost no gate crossing", sncall, SINIT);
 	chk("conout flushes as one call", i86oflush(), 1);
 	chk("... which is function 111", slast_fn, 111);
 	chk("... with no value parameter", slast_val & 0xffff, 0);
@@ -3125,7 +3130,7 @@ static void t_seam(void)
 	bcall(11, (i16)0);			/* console status	*/
 	chk("a pending batch went out before the next function",
 		slast_fn, 11);
-	chk("... which is two calls, 111 then 11", sncall, 3);
+	chk("... which is two calls, 111 then 11", sncall, SINIT + 2);
 
 	/* Word parameter: the whole of DX. */
 	bsetup();
@@ -3158,7 +3163,7 @@ static void t_seam(void)
 	chk("fcb at limit", bcall(15, (i16)0xffdc), B_RUN);
 	bsetup();
 	chk("fcb past limit", bcall(15, (i16)0xffdd), B_ADDR);
-	chk("fcb past limit no call", sncall, 1);	/* the init only	*/
+	chk("fcb past limit no call", sncall, SINIT);	/* the init only */
 	chk("fcb past limit fn", i86bdosfn, 15);
 
 	/* Rename takes two FCBs in one block, and the check has to know
@@ -3202,13 +3207,13 @@ static void t_seam(void)
 	chk("version rc", bcall(12, (i16)0), B_RUN);
 	chk("version ax", bm.r[R_AX] & 0xffff, 0x0022);
 	chk("version bx", bm.r[R_BX] & 0xffff, 0x0022);
-	chk("version no call", sncall, 1);		/* the init only	*/
+	chk("version no call", sncall, SINIT);		/* the init only */
 
 	/* Function 0 is the guest terminating.  It must NOT reach our
 	 * function 0, which is warmboot() and does not return. */
 	bsetup();
 	chk("reset rc", bcall(0, (i16)0), B_EXIT);
-	chk("reset no call", sncall, 1);
+	chk("reset no call", sncall, SINIT);
 
 	/* The DMA address, in the two halves CP/M-86 splits it into.
 	 * Setting the offset keeps the base; setting the base keeps the
@@ -3219,7 +3224,7 @@ static void t_seam(void)
 	ntest++;
 	if (slast_addr != &bseg[0x400])
 		fail("dma off addr", 1, 0);
-	chk("dma off calls", sncall, 2);
+	chk("dma off calls", sncall, SINIT + 1);
 	chk("dma base rc", bcall(51, (i16)0x1000), B_RUN);
 	ntest++;
 	if (slast_addr != &cseg[0x400])
@@ -3257,13 +3262,13 @@ static void t_seam(void)
 	chk("fn 6 FF no key rc", bcall(6, (i16)0xff), B_RUN);
 	chk("fn 6 FF no key ax", bm.r[R_AX] & 0xffff, 0);
 	chk("fn 6 FF no key asked status", slast_val & 0xffff, 0xfe);
-	chk("fn 6 FF no key did not wait", sncall, 2);
+	chk("fn 6 FF no key did not wait", sncall, SINIT + 1);
 	bsetup();
 	sysret = 'K';
 	bcall(6, (i16)0xff);
 	chk("fn 6 FF key ax", bm.r[R_AX] & 0xffff, 'K');
 	chk("fn 6 FF key read", slast_val & 0xffff, 0xff);
-	chk("fn 6 FF key calls", sncall, 3);
+	chk("fn 6 FF key calls", sncall, SINIT + 2);
 	bsetup();
 	sysret = 1;
 	bcall(6, (i16)0xfe);
@@ -3358,8 +3363,69 @@ static int sconn;
 static int ssearch;		/* search-next cursor			*/
 static char ssname[11];
 
+/*
+ * The console the real BDOS presents, flow control included.
+ *
+ * conbrk() polls every eight output characters and CONSUMES what it
+ * finds: ^S/^Q are swallowed and anything else is held in kbchar, one
+ * byte per console, so a second key typed during output overwrites the
+ * first.  CM_NOSTOP makes it return before reading.  Modelling that is
+ * the point -- a stub whose output never touched the keys could not
+ * tell the two modes apart.
+ */
+#define SKQ	64			/* keys waiting in the BIOS	*/
+
+static int sconmode;			/* function 109's word		*/
+static unsigned char skq[SKQ];
+static int skqh, skqt;
+static int skbchar;			/* the BDOS's one byte of it	*/
+static int sbrkctr;
+
+static int skqon;			/* keys have been typed at this run */
+
+static void skqput(const char *s)
+{
+	skqon = 1;
+	while (*s && skqt < SKQ)
+		skq[skqt++] = (unsigned char)*s++;
+}
+
+static void sconbrk(void)
+{
+	if (sconmode & CM_NOSTOP) {
+		sbrkctr = 0;
+		return;
+	}
+	if (++sbrkctr < 8)
+		return;
+	sbrkctr = 0;
+	while (skqh < skqt) {
+		int c = skq[skqh++];
+
+		if (c == 0x13 || c == 0x11)	/* ^S, ^Q		*/
+			continue;
+		skbchar = c;			/* and the one before it
+						   is gone		*/
+		break;
+	}
+}
+
+static int skqget(void)			/* function 6, E = FFh		*/
+{
+	if (skbchar) {
+		int c = skbchar;
+
+		skbchar = 0;
+		return (c);
+	}
+	if (skqh < skqt)
+		return (skq[skqh++]);
+	return (0);
+}
+
 static void sputc(int c)
 {
+	sconbrk();
 	if (sconn < (int)sizeof scon - 1)
 		scon[sconn++] = (char)c;
 }
@@ -3783,10 +3849,24 @@ static int stub1(int fn, i16 val, char *addr)
 		sputc('\n');
 		return (0);
 	}
+	case 6:					/* direct console i/o	*/
+		if (!skqon)
+			return (0xff);		/* the corpus runs' answer */
+		if ((val & 0xff) == 0xff)
+			return (skqget());
+		if ((val & 0xff) == 0xfe)
+			return (skbchar || skqh < skqt ? 1 : 0);
+		sputc(val & 0x7f);
+		return (0);
 	case 11:				/* console status	*/
-		/* Always "no key waiting", script or not: a scripted
-		 * line is an answer to a read, never the keypress a
-		 * program polls for to abort a listing. */
+		/* A scripted line is an answer to a read, never the
+		 * keypress a program polls for to abort a listing, so
+		 * only typed keys are reported here. */
+		return (skbchar || skqh < skqt ? 1 : 0);
+	case 109:				/* get/set console mode	*/
+		if ((val & 0xffff) == 0xffff)
+			return (sconmode);
+		sconmode = val & 0xffff;
 		return (0);
 	case 12:
 		return (0x2031);
@@ -5332,6 +5412,70 @@ static void t_dma13(void)
 		(long)(dseg2[0x2000] & 0xff), (long)'A');
 }
 
+/*
+ * A guest that prints while somebody types, and then reads its own
+ * keys.  With the poll left on, the burst eats them; the seam turns it
+ * off for the length of the run and hands the console back after.
+ */
+static void t_conmode(void)
+{
+	int i, got[4];
+
+	sconn = 0;
+	skqh = skqt = 0;
+	skbchar = 0;
+	sbrkctr = 0;
+	bsetup();
+	sysmode = SYS_CPM;
+	sconmode = CM_NOSTOP << 1;	/* whatever the CCP was running in */
+	i86bdosinit(&bm);
+	chk("the run turns stop-scroll off", sconmode, CM_NOSTOP);
+
+	/* Four keys waiting, then forty characters of output: five polls,
+	 * which is enough to lose all four. */
+	skqput("abcd");
+	for (i = 0; i < 40; i++)
+		bcall(2, (i16)'.');
+	i86oflush();
+	chk("the output went out", sconn, 40);
+
+	for (i = 0; i < 4; i++) {
+		bcall(6, (i16)0xff);
+		got[i] = bm.r[R_AX] & 0xff;
+	}
+	chk("function 6 got the first key", got[0], 'a');
+	chk("... the second", got[1], 'b');
+	chk("... the third", got[2], 'c');
+	chk("... and the fourth", got[3], 'd');
+
+	chk("the guest's exit gives the console back", i86bdosfini(), 1);
+	chk("... in the mode it found", sconmode, CM_NOSTOP << 1);
+	chk("... once", i86bdosfini(), 0);
+
+	/* The same burst with the poll on, which is what the console does
+	 * to a guest the seam has not spoken for. */
+	sconn = 0;
+	skqh = skqt = 0;
+	skbchar = 0;
+	sbrkctr = 0;
+	bsetup();
+	sysmode = SYS_CPM;
+	i86bdosinit(&bm);
+	sconmode = 0;
+	skqput("abcd");
+	for (i = 0; i < 40; i++)
+		bcall(2, (i16)'.');
+	i86oflush();
+	bcall(6, (i16)0xff);
+	chk("the poll keeps only the last key it took",
+		bm.r[R_AX] & 0xff, 'd');
+	bcall(6, (i16)0xff);
+	chk("... and the ones before it are gone", bm.r[R_AX] & 0xff, 0);
+
+	i86bdosfini();
+	sysmode = SYS_REC;
+}
+
 static void t_prefix(void)
 {
 	struct i86in	in;
@@ -5771,6 +5915,7 @@ char **argv;
 	t_dmabound();
 	t_random();
 	t_dma13();
+	t_conmode();
 	t_prefix();
 	t_ddt86(argv[1]);
 

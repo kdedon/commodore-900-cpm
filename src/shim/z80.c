@@ -282,6 +282,7 @@ char *argv[];
 	 * limit never re-entered the seam, so the last partial line of
 	 * the guest's output is still sitting in the batch. */
 	z80oflush();
+	z80bdosfini();
 
 	cputs("\r\nz80: ");
 	pdecl(k);

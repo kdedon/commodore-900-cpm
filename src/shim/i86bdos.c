@@ -8,6 +8,7 @@
 
 #include "i86.h"
 #include "gdpb.h"
+#include "conmode.h"
 
 /* ------------------------------------------------------------------ */
 /* what the seam reports to its caller				       */
@@ -719,16 +720,32 @@ int *r;
 	return (0);
 }
 
+/* The console mode the CCP was running in, kept for the guest's exit. */
+static int i86conmode = -1;
+
 /*
  * i86bdosinit -- the state CP/M-86 gives a program before its first
  * instruction: the DMA buffer is the base page's own 128-byte tail
  * buffer, DS:0080.  Our BDOS has to be told, because the guest will
  * not tell it until it wants a different one, and PIP reads its command
  * tail through that buffer.
+ *
+ * Stop-scroll goes off for the run.  The native BDOS polls the console
+ * every eight output characters and KEEPS what it finds: ^S and ^Q are
+ * swallowed and anything else is held in one byte per console, so a
+ * second key typed during a burst of output overwrites the first.  A
+ * guest that does its own key handling loses keystrokes that way.  With
+ * the poll off, every key stays in the BIOS until the guest asks for it.
+ *
+ * ^C is deliberately left terminating.  Nothing polls once the poll is
+ * off, so the native line input is the only ^C left, and it is the only
+ * way off a guest that never returns.
  */
 int i86bdosinit(m)
 struct i86 *m;
 {
+	i86conmode = i86sys(109, (i16)0xffff, (char *)0);
+	i86sys(109, (i16)CM_NOSTOP, (char *)0);
 	i86dmaseg = m->sr[S_DS];
 	i86dmaoff = 0x80;
 	i86mult = 1;		/* src/bdos/bdosmisc.c:171		*/
@@ -739,6 +756,17 @@ struct i86 *m;
 	onbuf = 0;
 	i86nbdos = 0;
 	return (setdma(m));
+}
+
+/* Give the console back however the run ended: a guest must not leave a
+ * mode behind for whatever the CCP starts next. */
+int i86bdosfini()
+{
+	if (i86conmode < 0)
+		return (0);
+	i86sys(109, (i16)i86conmode, (char *)0);
+	i86conmode = -1;
+	return (1);
 }
 
 /*

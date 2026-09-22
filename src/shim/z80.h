@@ -463,6 +463,7 @@ extern int z80furn();
 
 extern int z80bdos();		/* service the pending z80hookno	*/
 extern int z80bdosinit();	/* the DMA address a program starts with */
+extern int z80bdosfini();	/* put the console mode back		*/
 extern int z80oflush();		/* send collected fn 2 output as one fn 111 */
 extern char *z80berr();		/* one sentence about the last refusal	*/
 extern int z80bdosfn;		/* the function that asked, or -1	*/

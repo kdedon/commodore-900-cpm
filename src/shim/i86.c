@@ -598,6 +598,7 @@ char *argv[];
 	 * limit never re-entered the seam, so the last partial line of
 	 * the guest's output is still sitting in the batch. */
 	i86oflush();
+	i86bdosfini();
 
 	cputs("\r\ni86: ");
 	pdecl(k);

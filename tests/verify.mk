@@ -413,7 +413,7 @@ I86SRC = src/shim/i86dec.c src/shim/i86exec.c src/shim/i86load.c \
 I86CORPUS = src/shim/tests/i86corpus
 I86FIX = build/cmdfix
 .PHONY: i86test
-build/i86test: src/shim/tests/i86test.c $(I86SRC) src/shim/i86.h src/shim/gdpb.h | $(OBJDIR)
+build/i86test: src/shim/tests/i86test.c $(I86SRC) src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -DHOSTCC -o $@ src/shim/tests/i86test.c $(I86SRC)
 $(I86FIX)/MANIFEST: tools/mkcmdfix.py | $(OBJDIR)
 	python3 tools/mkcmdfix.py $(I86FIX)
@@ -479,7 +479,7 @@ Z80SRC = src/shim/z80dec.c src/shim/z80exec.c src/shim/z80load.c \
 	 src/shim/z80bdos.c src/shim/gdpb.c
 Z80CORPUS = src/shim/tests/z80corpus
 .PHONY: z80test
-build/z80test: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h | $(OBJDIR)
+build/z80test: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -DHOSTCC -o $@ src/shim/tests/z80test.c $(Z80SRC)
 z80test: build/z80test $(Z80CORPUS)/SOURCES
 	build/z80test $(Z80CORPUS)
@@ -783,6 +783,64 @@ verify-z80poll: all
 		|| { echo "verify-z80poll: FAIL -- the guest did not terminate cleanly"; exit 1; }
 	@echo "verify-z80poll: PASS -- BIOS CONIN read a key and 64 function 6"
 	@echo "            polls answered at once"
+
+# ---- CP/M-80 shim, ON THE MACHINE: keys typed while the guest prints ----
+# KEYQ80.COM announces itself, writes 200 characters with function 2, and
+# then reads four keys through the BIOS CONIN vector, echoing each.  The
+# four are typed AT THE OUTPUT: the mark releases the first the moment the
+# announcement appears, and each of the rest as the receiver frees.
+#
+# The BDOS polls the console every eight output characters and KEEPS what
+# it finds -- ^S and ^Q are swallowed, anything else is held in one byte
+# per console -- so with the poll left on the four never reach the guest
+# and its first CONIN waits for a key nobody will type again.  The shim
+# turns the poll off for the length of a run.
+#
+#	lxi d,gomsg / mvi c,9 / call 5 / lxi h,200
+#   dots: push h / mvi e,'.' / mvi c,2 / call 5 / pop h
+#	dcx h / mov a,h / ora l / jnz dots / mvi b,4
+#   keys: push b / lhld 1 / lxi d,6 / dad d / lxi d,back / push d / pchl
+#   back: mov e,a / mvi c,2 / call 5 / pop b / dcr b / jnz keys
+#	lxi d,donemsg / mvi c,9 / call 5 / jmp 0
+KEYQ80HEX = 113f01 0e09 cd0500 \
+	21c800 \
+	e5 1e2e 0e02 cd0500 e1 2b 7c b5 c20b01 \
+	0604 \
+	c5 2a0100 110600 19 112901 d5 e9 \
+	5f 0e02 cd0500 c1 05 c21c01 \
+	114b01 0e09 cd0500 c30000
+KEYQ80DISK = build/keyq80disk
+KEYQ80CPMA = build/keyq80-cpma.img
+KEYQ80IMG  = build/keyq80test.bin
+KEYQ80LOG  = build/verify-z80keyq.log
+.PHONY: verify-z80keyq
+verify-z80keyq: all
+	@rm -rf $(KEYQ80DISK)
+	@mkdir -p $(KEYQ80DISK)
+	@cp $(DISKA)/* $(KEYQ80DISK)/
+	python3 -c 'import sys; sys.stdout.buffer.write(bytes.fromhex("$(KEYQ80HEX)") + b"\r\nKEYQ80 GO$$" + b"\r\nKEYQ80 DONE$$")' \
+		> $(KEYQ80DISK)/KEYQ80.COM
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(KEYQ80CPMA) $(CPMA_BLOCKS) $(KEYQ80DISK)
+	$(MKDISK) $(KEYQ80IMG) $(CPMSYS) $(KEYQ80CPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(KEYQ80IMG)) \
+		--input="$(OSSEL)$(SESS1)Z80 KEYQ80.COM\r\ia\ib\ic\id" \
+		--input-mark='KEYQ80 GO' \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(KEYQ80LOG))
+	@$(EMUOK)
+	@grep -q 'z80: load: ok' $(KEYQ80LOG) \
+		|| { echo "verify-z80keyq: FAIL -- KEYQ80.COM did not load"; exit 1; }
+	@tr -d '\r' < $(KEYQ80LOG) | grep -q '\.\{40\}abcd' \
+		|| { echo "verify-z80keyq: FAIL -- the four keys typed during the guest's"; \
+		     echo "            output did not all reach BIOS CONIN, in order."; \
+		     echo "            The console poll ate them."; exit 1; }
+	@grep -q 'KEYQ80 DONE' $(KEYQ80LOG) \
+		|| { echo "verify-z80keyq: FAIL -- the guest never finished reading"; exit 1; }
+	@grep -q 'z80: the guest terminated' $(KEYQ80LOG) \
+		|| { echo "verify-z80keyq: FAIL -- the guest did not terminate cleanly"; exit 1; }
+	@echo "verify-z80keyq: PASS -- four keys typed at 200 characters of"
+	@echo "            guest output all reached BIOS CONIN, in order"
 
 
 # ---- CP/M-86 shim, ON THE MACHINE: CPM86-STAGE-ONE.md's step 2 ----
@@ -1275,6 +1333,48 @@ verify-i86poll: all $(I86FIX)/MANIFEST
 		|| { echo "verify-i86poll: FAIL -- the guest did not terminate cleanly"; exit 1; }
 	@echo "verify-i86poll: PASS -- function 50 CONIN read a key and 64"
 	@echo "            function 6 polls answered at once"
+
+# ---- CP/M-86 shim, ON THE MACHINE: keys typed while the guest prints ----
+# I86KEYQ.CMD (tools/mkcmdfix.py p_keyq) announces itself, writes 200
+# characters with function 2, and then reads four keys through function 50's
+# CONIN, echoing each.  The four are typed AT THE OUTPUT: the mark releases
+# the first the moment the announcement appears, and each of the rest as the
+# receiver frees.
+#
+# The BDOS polls the console every eight output characters and KEEPS what
+# it finds -- ^S and ^Q are swallowed, anything else is held in one byte
+# per console -- so with the poll left on the four never reach the guest
+# and its first CONIN waits for a key nobody will type again.  The shim
+# turns the poll off for the length of a run.
+I86KDISK = build/i86keyqdisk
+I86KCPMA = build/i86keyq-cpma.img
+I86KIMG	 = build/i86keyqtest.bin
+I86KLOG	 = build/verify-i86keyq.log
+.PHONY: verify-i86keyq
+verify-i86keyq: all $(I86FIX)/MANIFEST
+	@rm -rf $(I86KDISK)
+	@mkdir -p $(I86KDISK)
+	@cp $(DISKA)/* $(I86KDISK)/
+	cp $(I86FIX)/I86KEYQ.CMD $(I86KDISK)/
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(I86KCPMA) $(CPMA_BLOCKS) $(I86KDISK)
+	$(MKDISK) $(I86KIMG) $(CPMSYS) $(I86KCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(I86KIMG)) \
+		--input="$(OSSEL)$(SESS1)CPM86 I86KEYQ.CMD\r\ia\ib\ic\id" \
+		--input-mark='I86KEYQ GO' \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(I86KLOG))
+	@$(EMUOK)
+	@tr -d '\r' < $(I86KLOG) | grep -q '\.\{40\}abcd' \
+		|| { echo "verify-i86keyq: FAIL -- the four keys typed during the guest's"; \
+		     echo "            output did not all reach function 50 CONIN, in"; \
+		     echo "            order.  The console poll ate them."; exit 1; }
+	@grep -q 'I86KEYQ DONE' $(I86KLOG) \
+		|| { echo "verify-i86keyq: FAIL -- the guest never finished reading"; exit 1; }
+	@grep -q 'i86: the guest terminated' $(I86KLOG) \
+		|| { echo "verify-i86keyq: FAIL -- the guest did not terminate cleanly"; exit 1; }
+	@echo "verify-i86keyq: PASS -- four keys typed at 200 characters of"
+	@echo "            guest output all reached function 50 CONIN, in order"
 
 # CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
 # cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.
@@ -8060,10 +8160,10 @@ verify-xout: all $(CPMAXOUT) build/xouttest
 # prefix bytes hung inside one decode.  A hang is not an exit status.
 # (src/shim/tests/i86test.c t_prefix() carries its own alarm too, so the failure
 # is named rather than merely timed out.)
-build/z80test-asan: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h | $(OBJDIR)
+build/z80test-asan: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -DHOSTCC -fsanitize=address -g -o $@ \
 		src/shim/tests/z80test.c $(Z80SRC)
-build/i86test-asan: src/shim/tests/i86test.c $(I86SRC) src/shim/i86.h src/shim/gdpb.h | $(OBJDIR)
+build/i86test-asan: src/shim/tests/i86test.c $(I86SRC) src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -DHOSTCC -fsanitize=address -g -o $@ \
 		src/shim/tests/i86test.c $(I86SRC)
 
@@ -8087,12 +8187,12 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 993 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 993 of its"; \
+	@grep -q 'z80test: 1004 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 1004 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1777 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1777 of its"; \
+	@grep -q 'i86test: 1788 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1788 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason

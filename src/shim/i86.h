@@ -281,6 +281,7 @@ extern char *i86mnem();		/* mnemonic of a decoded instruction	*/
 
 extern int i86bdos();		/* service the pending i86intno		*/
 extern int i86bdosinit();	/* the DMA address a program starts with	*/
+extern int i86bdosfini();	/* put the console mode back		*/
 extern int i86oflush();		/* send collected fn 2 output as one fn 111 */
 extern char *i86berr();		/* one sentence about the last refusal	*/
 extern int i86bdosfn;		/* the function that asked, or -1	*/
