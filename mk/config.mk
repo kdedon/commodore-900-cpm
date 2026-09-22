@@ -133,7 +133,8 @@ UPROGS	= $(UOBJDIR)/MHELLO.Z8K $(UOBJDIR)/FCOPY.Z8K $(UOBJDIR)/BEEP.Z8K \
 	  $(UPROGS3) $(UPROGSU) $(UPROGSR) $(UPIP) $(USTAT) $(UZ80) $(UI86) \
 	  $(UKERMIT) $(UV5) $(UGP) $(USESSION)
 UKERMIT	= $(UOBJDIR)/KERMIT.Z8K
-# Compatibility shims are built but excluded from the release disk.
+# Compatibility shims, shipped on the release disk.  They run a guest
+# program the user supplies; nothing on either disk is one.
 UZ80	= $(UOBJDIR)/Z80.Z8K
 UI86	= $(UOBJDIR)/CPM86.Z8K
 # Concurrency exercisers, excluded from the release disk.
