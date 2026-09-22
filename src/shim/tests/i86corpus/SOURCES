@@ -1,18 +1,17 @@
 src/shim/tests/i86corpus/ -- .CMD files src/shim/tests/i86test.c reads.  Test input, nothing else.
 
-PIP.CMD, ED.CMD, GENCMD.CMD and SUBMIT.CMD are Digital Research's own CP/M-86
-1.0 programs, unmodified, from the cpm86pc drop of the Unofficial CP/M Web
+PIP.CMD, ED.CMD, GENCMD.CMD, SUBMIT.CMD, ASM86.CMD, STAT.CMD, HELP.CMD,
+TOD.CMD and HELP's data file HELP.HLP are Digital Research's own CP/M-86 1.1
+(IBM PC) files, unmodified, from the cpm86pc drop of the Unofficial CP/M Web
 Site.  Licensed by the 9 July 2022 grant from Bryan Sparks (President, DRDOS,
 Inc.) at <http://cpm.z80.de/license.html>, which carries no distribution
 restriction.
 
-They are 8086 code.  Nothing on this machine executes them and nothing stages
-them onto a disk image: our utilities are native Z8000 programs -- src/cmd/
-pip.c and src/cmd/stat.c are DRI's sources rebuilt as .Z8K, and they beat
-anything a shim can interpret.  These four are here because a loader needs
-real headers to be tested against, and because a PIP copy is a known-answer
-test for the day the CP/M-86 shim can make a BDOS call.
+They are 8086 code, run by the CP/M-86 shim on the host and, through
+tests/verify.mk, on the machine.  Our own utilities are native Z8000 programs
+-- src/cmd/pip.c and src/cmd/stat.c are DRI's sources rebuilt as .Z8K -- so
+these are here as known-answer tests for the shim, not as the system's tools.
 
 DDT86.CMD is DRI's CP/M-86 debugger (version 1.2), unmodified, from the same
-drop under the same grant.  It is the one real caller of BDOS functions 49,
-57 and 59, and it drives INT 3, the trap flag and the vector table.
+drop under the same grant.  It is the one real caller of BDOS functions 57
+and 59, and it drives INT 3, the trap flag and the vector table.

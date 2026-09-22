@@ -41,7 +41,9 @@
 15 verify-hash-ab
 2 verify-help
 119 verify-i86
+123 verify-i86asm
 8 verify-i86ddt
+22 verify-i86util
 11 verify-initdir
 54 verify-initdir-mutants
 5 verify-kbcon

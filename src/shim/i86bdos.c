@@ -98,6 +98,7 @@ i16	i86ver = 0x0022;
 
 #define I86FCB	36		/* sizeof(struct fcb)			*/
 #define I86REN	52		/* fn 23: old FCB at 0, new at 16	*/
+#define I86SEQ	33		/* an FCB without the random record	*/
 #define I86DMA	128		/* one CP/M record			*/
 
 /* Parameter classes for supported calls. Refuse native-pointer APIs and
@@ -152,7 +153,7 @@ static i8 pmap[53] = {
 	P_BYTE,		/* 46 get disk free space -> the DMA buffer	*/
 	P_NO,		/* 47 chain to program				*/
 	P_NONE,		/* 48 flush buffers				*/
-	P_NO,		/* 49 get/set SCB -- handled before this table	*/
+	P_NO,		/* 49 get system data -- handled before this table */
 	P_NO,		/* 50 direct BIOS call				*/
 	P_WORD,		/* 51 set DMA base -- handled before this table	*/
 	P_NO		/* 52 get DMA base				*/
@@ -538,6 +539,145 @@ done:
 	return (bpar);
 }
 
+/* ------------------------------------------------------------------ */
+/* function 49: the system data block				       */
+
+/*
+ * CP/M-86 1.1 answers function 49 with ES:BX at the BIOS's system data.
+ * Guests read two things there: the clock, kept as ASCII that the BIOS
+ * rewrites every tick and TOD rewrites to set the time, and the console
+ * width.  The block lives in paragraph 0, above the vector table.
+ *
+ *	+20	"MM/DD/YY,HH:MM:SS"
+ *	+40	console width, 80
+ *
+ * The clock is refilled from function 105 when the guest asks for the
+ * block or polls the console; a string the guest changed is handed to
+ * function 104 first.  Our clock keeps no seconds across a set.
+ */
+#define I86SDOFF	0x400		/* offset in paragraph 0	*/
+#define I86SDTOD	0x20
+#define I86SDLEN	0x50
+#define I86TODLEN	17
+
+static char	*sdat;			/* the block, once handed out	*/
+static char	sdtod[I86TODLEN];	/* its clock as last written	*/
+static char	mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+static int bcd(v)
+int v;
+{
+	return (((v >> 4) & 0xf) * 10 + (v & 0xf));
+}
+
+static int dig2(p)
+char *p;
+{
+	if (p[0] < '0' || p[0] > '9' || p[1] < '0' || p[1] > '9')
+		return (-1);
+	return ((p[0] - '0') * 10 + p[1] - '0');
+}
+
+static void put2(p, v)
+char *p;
+int v;
+{
+	p[0] = (char)('0' + v / 10);
+	p[1] = (char)('0' + v % 10);
+}
+
+/* Refill the clock string from function 105: day 1 is 1 January 1978. */
+static void sdget()
+{
+	char t[4];
+	int s, y, mo, n, k;
+	long d;
+
+	s = bcd(i86sys(105, (i16)0, t) & 0xff);
+	d = (long)((t[0] & 0xff) | ((t[1] & 0xff) << 8));
+	for (y = 1978; d > (k = (y % 4 == 0) ? 366 : 365); y++)
+		d -= k;
+	for (mo = 0; mo < 11; mo++) {
+		n = mdays[mo] + (mo == 1 && y % 4 == 0);
+		if (d <= n)
+			break;
+		d -= n;
+	}
+	put2(sdat + I86SDTOD, mo + 1);
+	sdat[I86SDTOD + 2] = '/';
+	put2(sdat + I86SDTOD + 3, (int)d);
+	sdat[I86SDTOD + 5] = '/';
+	put2(sdat + I86SDTOD + 6, y % 100);
+	sdat[I86SDTOD + 8] = ',';
+	put2(sdat + I86SDTOD + 9, bcd(t[2] & 0xff));
+	sdat[I86SDTOD + 11] = ':';
+	put2(sdat + I86SDTOD + 12, bcd(t[3] & 0xff));
+	sdat[I86SDTOD + 14] = ':';
+	put2(sdat + I86SDTOD + 15, s);
+	for (k = 0; k < I86TODLEN; k++)
+		sdtod[k] = sdat[I86SDTOD + k];
+}
+
+/* Hand a clock string the guest rewrote to function 104.  Years 78-99
+ * are 19xx, the rest 20xx.  A malformed string sets nothing. */
+static void sdput()
+{
+	char t[4], *p;
+	int y, mo, dd, hh, mi, k;
+	long d;
+
+	p = sdat + I86SDTOD;
+	mo = dig2(p);
+	dd = dig2(p + 3);
+	y = dig2(p + 6);
+	hh = dig2(p + 9);
+	mi = dig2(p + 12);
+	if (mo < 1 || mo > 12 || dd < 1 || y < 0 || hh < 0 || hh > 23
+	 || mi < 0 || mi > 59)
+		return;
+	y += y < 78 ? 2000 : 1900;
+	if (dd > mdays[mo - 1] + (mo == 2 && y % 4 == 0))
+		return;
+	d = dd;
+	for (k = 1978; k < y; k++)
+		d += (k % 4 == 0) ? 366 : 365;
+	for (k = 0; k < mo - 1; k++)
+		d += mdays[k] + (k == 1 && y % 4 == 0);
+	t[0] = (char)(d & 0xff);
+	t[1] = (char)((d >> 8) & 0xff);
+	t[2] = (char)((hh / 10) << 4 | hh % 10);
+	t[3] = (char)((mi / 10) << 4 | mi % 10);
+	i86sys(104, (i16)0, t);
+}
+
+/* Called on every seam entry; `fn' is the function being made. */
+static void sdsync(fn)
+int fn;
+{
+	int k, moved;
+
+	if (sdat == (char *)0)
+		return;
+	moved = 0;
+	for (k = 0; k < I86TODLEN; k++)
+		if (sdat[I86SDTOD + k] != sdtod[k])
+			moved = 1;
+	if (moved)
+		sdput();
+	if (moved || fn == 11)
+		sdget();
+}
+
+static char	fbuf[I86REN];		/* the FCB the native BDOS sees	*/
+static char	sbuf[I86FCB];		/* ... and the one it searches with */
+
+/* The functions that use the random record, bytes 33-35. */
+static int isrand(fn)
+int fn;
+{
+	return ((fn >= 33 && fn <= 36) || fn == 40);
+}
+
 /* The five functions src/bdos/bdosrw.c multio() shells. */
 static int ismulti(fn)
 int fn;
@@ -559,6 +699,7 @@ struct i86 *m;
 	i86dmaoff = 0x80;
 	i86mult = 1;		/* src/bdos/bdosmisc.c:171		*/
 	plfree();
+	sdat = (char *)0;
 	i86bdosfn = -1;
 	breason = BR_NONE;
 	onbuf = 0;
@@ -604,7 +745,7 @@ struct i86 *m;
 	register int fn, cls;
 	register char *p;
 	i16 dx, dpboff;
-	int r;
+	int r, k;
 	i32 n;
 
 	breason = BR_NONE;
@@ -627,6 +768,7 @@ struct i86 *m;
 	dx = m->r[R_DX];
 	i86bdosfn = fn;
 	i86nbdos++;
+	sdsync(fn);
 
 	/* ---- console output, collected rather than passed on. */
 
@@ -684,14 +826,26 @@ struct i86 *m;
 	}
 
 	if (fn == 49) {
-		/* Get/set SCB.  There is no CP/M-86 system control block
-		 * behind this seam to hand out or to alter, and 0FFFFh is
-		 * what a caller reads as "there is none": DDT86 asks for
-		 * the block's address once at startup, compares the answer
-		 * with 0FFFFh and carries on without it.  Refusing instead
-		 * stopped it on its ninth BDOS call. */
-		m->r[R_AX] = (i16)0xffff;
-		m->r[R_BX] = (i16)0xffff;
+		/* Get system data.  Without a paragraph 0 there is no
+		 * block, and 0FFFFh is what DDT86 reads as "none". */
+		p = i86resolve((i16)0);
+		if (p == (char *)0) {
+			m->r[R_AX] = (i16)0xffff;
+			m->r[R_BX] = (i16)0xffff;
+			return (B_RUN);
+		}
+		if (sdat == (char *)0) {
+			sdat = p + I86SDOFF;
+			for (n = 0; n < I86SDLEN; n++)
+				sdat[n] = 0;
+			sdat[0x40] = 80;
+		}
+		sdget();
+		m->sr[S_ES] = 0;
+		m->sb[S_ES] = p;
+		m->so[S_ES] = 0;
+		m->r[R_AX] = (i16)I86SDOFF;
+		m->r[R_BX] = (i16)I86SDOFF;
 		return (B_RUN);
 	}
 	if (fn == 57) {
@@ -789,9 +943,27 @@ struct i86 *m;
 			breason = BR_ADDR;
 			return (B_ADDR);
 		}
-		ranswap(p, fn);
-		r = i86sys(fn, (i16)0, p);
-		ranswap(p, fn);
+		/* Search next uses the FCB search first was given, so
+		 * that copy is kept until the next search first. */
+		if (fn == 17 || fn == 18) {
+			for (k = 0; fn == 17 && k < I86FCB; k++)
+				sbuf[k] = p[k];
+			r = i86sys(fn, (i16)0, sbuf);
+			break;
+		}
+		/* The native BDOS writes back a whole 36-byte FCB, but a
+		 * sequential call's FCB is 33 bytes and ASM86 keeps its
+		 * read buffer right after one.  So the call works on a
+		 * copy and only the bytes the function owns go back. */
+		for (k = 0; k < (int)n; k++)
+			fbuf[k] = p[k];
+		ranswap(fbuf, fn);
+		r = i86sys(fn, (i16)0, fbuf);
+		ranswap(fbuf, fn);
+		if (fn != 23 && !isrand(fn))
+			n = I86SEQ;
+		for (k = 0; k < (int)n; k++)
+			p[k] = fbuf[k];
 		break;
 	case P_STR:
 		/* Function 9's string ends at a `$' the guest put there.

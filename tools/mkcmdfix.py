@@ -29,9 +29,10 @@ is the property that keeps future widening honest.
 One fixture is not a .CMD at all.  GENCMD.CMD reads FILENAME.H86 and
 writes FILENAME.CMD, and no corpus of .CMD files can supply its input, so
 <destdir>/I86HEX.H86 is built here too -- real DRI hex, real checksums,
-around a hand-assembled 8086 program.  See p_hex().
+around a hand-assembled 8086 program.  See p_hex().  I86T.A86 is ASM86's
+input, the same program's shape in source form.  See p_asm().
 
-Output is <destdir>/*.CMD plus <destdir>/I86HEX.H86 plus
+Output is <destdir>/*.CMD plus <destdir>/I86HEX.H86, I86T.A86 plus
 <destdir>/MANIFEST, which is what src/shim/tests/i86test.c reads:
 
     LOAD <file> <CE_*> [model=|entry=|ng=|alloc=n,n|need=]
@@ -337,9 +338,9 @@ def p_pload():
 
     Function 59 is how a CP/M-86 debugger gets the program it debugs into
     memory.  Nothing DRI shipped but DDT86 calls it, and DDT86's answer is
-    an interactive transcript, so this is the caller: it asks for a system
-    control block (49), loads PIP.CMD by the FCB the command tail filled,
-    and gives the segments back (57).
+    an interactive transcript, so this is the caller: it reads the console
+    width out of the system data (49), loads PIP.CMD by the FCB the command
+    tail filled, and gives the segments back (57).
 
     IT DOES NOT TAKE THE LOADER'S WORD FOR ANY OF IT.  The answer is a
     paragraph, and the program reads through it: the group table at the
@@ -353,8 +354,8 @@ def p_pload():
     a.b(0xb9, 0x31, 0x00)               # mov cx,49      -- get SCB
     a.b(0xba, 0x00, 0x02)               # mov dx,0x200
     a.b(0xcd, 0xe0)                     # int 0e0h
-    a.b(0x39, 0xf3)                     # cmp bx,si      -- there is none
-    a.rel8(0x75, 'fail')
+    a.b(0x26, 0x80, 0x7f, 0x40, 0x50)   # cmp byte es:[bx+40h],80
+    a.rel8(0x75, 'fail')                #                -- console width
     a.b(0xb9, 0x3b, 0x00)               # mov cx,59      -- program load
     a.b(0xba, 0x5c, 0x00)               # mov dx,0x5c    -- the tail's FCB
     a.b(0xcd, 0xe0)
@@ -515,6 +516,28 @@ def p_hex():
     return hexf, msg
 
 
+def textfile(s):
+    """CRLF lines, ^Z, padded to a whole record."""
+    b = s.replace('\n', '\r\n').encode('ascii') + b'\x1a'
+    return b + b'\x1a' * (-len(b) % 128)
+
+
+def p_asm():
+    """I86T.A86 -- ASM86's input: print a string, then system reset."""
+    return textfile(
+        "\tCSEG\n"
+        "\tMOV\tCL,9\n"
+        "\tMOV\tDX,OFFSET MSG\n"
+        "\tINT\t224\n"
+        "\tMOV\tCL,0\n"
+        "\tMOV\tDL,0\n"
+        "\tINT\t224\n"
+        "\tDSEG\n"
+        "\tORG\t100H\n"
+        "MSG\tDB\t'HELLO FROM ASM86$'\n"
+        "\tEND\n")
+
+
 # --------------------------------------------------------------------- main
 
 def main(argv):
@@ -640,6 +663,7 @@ def main(argv):
     # ---- and the one fixture that is not a .CMD: GENCMD's input.
     hexf, msg = p_hex()
     open(os.path.join(d, 'I86HEX.H86'), 'wb').write(hexf)
+    open(os.path.join(d, 'I86T.A86'), 'wb').write(p_asm())
 
     n = len(man)
     fp = open(os.path.join(d, 'MANIFEST'), 'w')

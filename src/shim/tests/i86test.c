@@ -2513,15 +2513,15 @@ static void ldsweep(struct ld *L, long *ninsn, long *nbad, long *nunimp)
 }
 
 /*
- * The four files, and every number here was measured with the -c sweep
- * and then written down -- none of it is a guess about the format.
+ * The small-model files, and every number here was measured with the -c
+ * sweep and then written down -- none of it is a guess about the format.
  *
- * All four are small-model with G-Max 0 in the code group, which is the
+ * All are small-model with G-Max 0 in the code group, which is the
  * shape i86load.c's two findings describe: G-Min above G-Length in every
  * one of them (PIP supplies 84 paragraphs of data and asks for 640), and
  * G-Max 0 in every code group, meaning "no maximum" and not "no memory".
- * Each file is longer than its groups, because a .CMD is padded to a
- * 128-byte CP/M record; that padding is not truncation.
+ * No file is shorter than its groups; most are longer, because a .CMD is
+ * padded to a 128-byte CP/M record, and that padding is not truncation.
  *
  * The two `npar' columns are the only ones here that are not read out of
  * the file: they are what galloc() grants, and every one of them moved on
@@ -2558,6 +2558,12 @@ static struct crow crows[] = {
 					 134, 688, 4080, 4080,  515, 0x0029},
 	{"SUBMIT.CMD", 3968, 3936,  435, 1,  65,  65,    0, 4096,
 					 173, 173,    0, 4096, 1625, 0x006b},
+	{"ASM86.CMD", 26240, 26240, 8015, 32, 1197, 1197, 0, 4096,
+					 435, 1102, 4095, 4095,  362, 0x0086},
+	{"STAT.CMD",   9344, 9344, 2400,  3, 360, 360,    0, 4096,
+					 216, 848, 2048, 2048,   24, 0x0021},
+	{"HELP.CMD",   6656, 6560, 1865,  1, 294, 294,    0, 4096,
+					 108, 364, 4095, 4095, 1121, 0x001b},
 	{0}
 };
 
@@ -2595,7 +2601,7 @@ static void t_corpus(const char *dir)
 		chk(nm(r->name, "ng"), L.c.ng, 2);
 		chk(nm(r->name, "need"), (long)L.c.need, r->need);
 		ntest++;
-		if (L.flen <= (long)L.c.need)
+		if (L.flen < (long)L.c.need)
 			fail(nm(r->name, "record padding"), L.flen, r->need);
 		chk(nm(r->name, "code form"), L.c.g[0].form, G_CODE);
 		chk(nm(r->name, "code A-Base"), L.c.g[0].base, 0);
@@ -2612,7 +2618,7 @@ static void t_corpus(const char *dir)
 		chk(nm(r->name, "data alloc"), L.c.g[1].npar, r->dnpar);
 		chk(nm(r->name, "data offset"), (long)L.c.g[1].foff,
 			128 + (long)r->clen * 16);
-		/* G-Min above G-Length is DRI's own shape, in all four */
+		/* G-Min above G-Length is DRI's own shape, in all of them */
 		ntest++;
 		if (L.c.g[1].min < L.c.g[1].len)
 			fail(nm(r->name, "data G-Min >= G-Length"), 0, 0);
@@ -2635,7 +2641,7 @@ static void t_corpus(const char *dir)
 		 * And then RUN it, from the entry point the loader chose,
 		 * until it asks the operating system for something.
 		 *
-		 * All four reach INT 0E0h -- the CP/M-86 BDOS entry -- with
+		 * All of them reach INT 0E0h -- the CP/M-86 BDOS entry -- with
 		 * no refusal and no undecodable byte on the way, which is
 		 * the strongest statement this file can make before the
 		 * seam behind that INT exists: the image was placed where
@@ -3131,16 +3137,17 @@ static void t_seam(void)
 	chk("result ax", bm.r[R_AX] & 0xffff, 0x09ff);
 	chk("result bx", bm.r[R_BX] & 0xffff, 0x09ff);
 
-	/* An FCB goes by REFERENCE: the address handed to the native
-	 * BDOS is the guest's own bytes, not a copy of them. */
+	/* An FCB goes by copy, holding the guest's bytes: the native BDOS
+	 * writes back 36 of them and a sequential FCB is 33 (section 8h,
+	 * ASM86). */
 	bsetup();
 	bseg[0x180] = 0x03;
 	chk("open rc", bcall(15, (i16)0x180), B_RUN);
 	chk("open fn", slast_fn, 15);
 	ntest++;
-	if (slast_addr != &bseg[0x180])
+	if (slast_addr == &bseg[0x180])
 		fail("open addr", 1, 0);
-	chk("open fcb not copied", slast_addr[0] & 0xff, 0x03);
+	chk("open fcb copied", slast_addr[0] & 0xff, 0x03);
 
 	/* ... and it is checked for length.  36 bytes at 0xFFDC fit;
 	 * at 0xFFDD they do not, and the call never leaves. */
@@ -3283,7 +3290,7 @@ static void t_seam(void)
  * failed copy plus a number saying which function it was.
  */
 #define SF_MAX	8
-#define SF_CAP	16384
+#define SF_CAP	32768
 
 struct sfile {
 	char	name[11];	/* 8 + 3, blank padded, upper case	*/
@@ -3513,6 +3520,9 @@ static int ranw1(int fn, char *addr)
 	r = srrec(addr);
 	if (r >= 0x40000L)
 		return (6);		/* past maximum file size	*/
+	/* A sequential call after this one starts at the same record. */
+	addr[12] = (char)((r >> 7) & 0x1f);
+	addr[32] = (char)(r & 0x7f);
 	if (fn == 33) {				/* read random		*/
 		if (r * 128L >= f->len)
 			return (1);		/* reading unwritten data */
@@ -3613,8 +3623,51 @@ static struct gdpb sdpb = { 64, 5, 31, 1, 0, 2559, 511, 0xF000, 0, 0 };
  * blocks and nothing else, block 0 in the TOP bit of the first byte
  * (src/bdos/dskutil.c setaloc). */
 static char salv[(2559 >> 3) + 1] = { (char)0xf0 };
+static char sclk[5];		/* day count, BCD hour, minute, second	*/
 
+/* The extent, record count and 4 KB block numbers of file `i', as its one
+ * directory entry would hold them: 256 records per entry at EXM 1, so
+ * every stub file fits in one.  Blocks are 8 apart per file, after the
+ * four the directory takes. */
+static void sdirent(char *e, int i)
+{
+	long r;
+	int b;
+
+	r = (sdisk[i].len + 127) / 128;
+	e[12] = (char)(r > 128 ? 1 : 0);
+	e[15] = (char)(r > 128 ? r - 128 : r);
+	for (b = 0; b < (int)((r + 31) / 32); b++) {
+		e[16 + 2 * b] = (char)(4 + 8 * i + b);
+		e[17 + 2 * b] = 0;
+	}
+}
+
+static int stub1(int fn, i16 val, char *addr);
+
+/* Our BDOS works on a 36-byte copy of an FCB and writes all of it back
+ * when the call ends, after any transfer into the DMA buffer.  Search
+ * next ignores its parameter and uses search first's FCB. */
 static int stub(int fn, i16 val, char *addr)
+{
+	static char *srchp;
+	char t[36];
+	int r;
+
+	if (!((fn >= 15 && fn <= 23) || fn == 30 || (fn >= 33 && fn <= 36)
+	 || fn == 40))
+		return (stub1(fn, val, addr));
+	if (fn == 17)
+		srchp = addr;
+	if (fn == 18 && srchp)
+		addr = srchp;
+	memcpy(t, addr, sizeof t);
+	r = stub1(fn, val, t);
+	memcpy(addr, t, sizeof t);
+	return (r);
+}
+
+static int stub1(int fn, i16 val, char *addr)
 {
 	struct sfile *f;
 	long r, n;
@@ -3773,16 +3826,20 @@ static int stub(int fn, i16 val, char *addr)
 			}
 		return (n ? 0 : 0xff);
 	case 17:				/* search first		*/
-		memcpy(ssname, addr + 1, 11);
 		ssearch = 0;
 		/* fall through */
 	case 18:				/* search next		*/
+		/* Drive `?' asks for every entry, whatever the name. */
+		memset(ssname, '?', 11);
+		if (addr[0] != '?')
+			memcpy(ssname, addr + 1, 11);
 		for (i = ssearch; i < SF_MAX; i++)
 			if (sdisk[i].used && smatch(sdisk[i].name, ssname, 1)) {
 				ssearch = i + 1;
 				if (sdma) {
 					memset(sdma, 0, 32);
 					memcpy(sdma + 1, sdisk[i].name, 11);
+					sdirent(sdma, i);
 				}
 				return (0);
 			}
@@ -3802,6 +3859,13 @@ static int stub(int fn, i16 val, char *addr)
 			return (0xff);
 		smultcnt = i;
 		return (0);
+	case 104:			/* set date and time: seconds to 0 */
+		memcpy(sclk, addr, 4);
+		sclk[4] = 0;
+		return (0);
+	case 105:				/* get date and time	*/
+		memcpy(addr, sclk, 4);
+		return (sclk[4] & 0xff);
 	default:
 		return (0xff);
 	}
@@ -4002,9 +4066,8 @@ static void t_pload(const char *dir)
 	chk("... refuses with 0FFFFh", bm.r[R_AX] & 0xffff, 0xffff);
 	chk("... and took no segment", lsheld(), 0);
 
-	/* Function 49 is answered, not refused: DDT86 asks for a system
-	 * control block once before it does anything else, and reads
-	 * 0FFFFh as there being none. */
+	/* Function 49 is answered, not refused.  With no paragraph 0 there
+	 * is no system data block, and DDT86 reads 0FFFFh as none. */
 	chk("fn 49 answered", bcall(49, (i16)0x20), B_RUN);
 	chk("... with 0FFFFh in BX", bm.r[R_BX] & 0xffff, 0xffff);
 
@@ -4534,6 +4597,291 @@ static void t_gencmd(const char *dir, const char *fixdir)
 	if (strcmp(scon, "I86HEX OK\r\n") != 0)
 		fail("round trip printed I86HEX OK", 1, 0);
 	ldfree(&L);
+}
+
+/* ---- 8h: ASM86, STAT, HELP and TOD ---- */
+
+/* Put a text file on the stub disk, ^Z padded to a whole record. */
+static struct sfile *sput(const char *name, const char *s, long n)
+{
+	struct sfile *f;
+	char fn[11];
+	long k;
+
+	smkname(fn, name);
+	f = smake(fn);
+	if (f == 0)
+		return (0);
+	memcpy(f->d, s, (size_t)n);
+	f->len = (n + 127) / 128 * 128;
+	for (k = n; k < f->len; k++)
+		f->d[k] = 0x1a;
+	return (f);
+}
+
+static struct sfile *sget(const char *name)
+{
+	char fn[11];
+
+	smkname(fn, name);
+	return (sfind(fn));
+}
+
+/* Is `s' in the first `n' bytes of `d'? */
+static int shas(const char *d, long n, const char *s)
+{
+	long k, m;
+
+	m = (long)strlen(s);
+	for (k = 0; k + m <= n; k++)
+		if (memcmp(d + k, s, (size_t)m) == 0)
+			return (1);
+	return (0);
+}
+
+/*
+ * Run `path' against the stub disk as it stands, with `keys' as console
+ * input.  Returns the B_ code the run ended on, or -1 if it did not load;
+ * the console is left NUL-terminated in scon[].
+ */
+static int crun(const char *path, const char *tail, const char *keys,
+	long *nstep)
+{
+	struct ld L;
+	struct i86in in;
+	int rc, brc;
+
+	rc = ldread(path, &L);
+	if (rc != CE_OK) {
+		printf("i86test: %s: %s\n", path,
+			rc < 0 ? "unreadable" : i86cerr(rc));
+		ldfree(&L);
+		return (-1);
+	}
+	if (ldplace(&L, tail) != CE_OK) {
+		ldfree(&L);
+		return (-1);
+	}
+	memset(sfncount, 0, sizeof sfncount);
+	sconn = 0;
+	sdma = 0;
+	skeys = keys;
+	skeyeof = 0;
+	sysmode = SYS_CPM;
+	i86bdosinit(&L.m);
+	sysmode = SYS_CPM;
+	brc = -2;
+	for (*nstep = 0; *nstep < 20000000L; (*nstep)++) {
+		rc = i86step(&L.m, &in);
+		if (rc == X_OK)
+			continue;
+		if (rc != X_INT)
+			break;
+		brc = i86bdos(&L.m);
+		if (brc != B_RUN)
+			break;
+	}
+	i86oflush();
+	skeys = 0;
+	scon[sconn < (int)sizeof scon ? sconn : (int)sizeof scon - 1] = 0;
+	printf("i86test: %s%s: %ld instructions, console \"", path, tail,
+		*nstep);
+	for (rc = 0; rc < sconn; rc++)
+		if (scon[rc] == '\n')
+			printf("\\n");
+		else if (scon[rc] != '\r')
+			putchar(scon[rc]);
+	printf("\"\n");
+	ldfree(&L);
+	return (brc);
+}
+
+/* Copy a stub file out for tests/verify.mk to compare the machine's with. */
+static int sdump(struct sfile *f, const char *path)
+{
+	FILE *fp;
+
+	if (f == 0 || (fp = fopen(path, "wb")) == 0)
+		return (0);
+	fwrite(f->d, 1, (size_t)f->len, fp);
+	fclose(fp);
+	return (1);
+}
+
+/*
+ * ASM86 assembles I86T.A86 (tools/mkcmdfix.py p_asm()), GENCMD turns the
+ * hex into a .CMD, and the .CMD runs.  The code bytes checked in the hex
+ * are the 8086 encodings of the six source lines, worked by hand.
+ */
+static void t_asm86(const char *dir, const char *fixdir)
+{
+	char path[512];
+	struct sfile *f;
+	FILE *fp;
+	long nstep, n;
+	int brc;
+
+	memset(sdisk, 0, sizeof sdisk);
+	sprintf(path, "%s/I86T.A86", fixdir);
+	fp = fopen(path, "rb");
+	if (fp == 0) {
+		fail("asm86 source fixture", 0, 1);
+		return;
+	}
+	f = sput("I86T.A86", "", 0L);
+	f->len = (long)fread(f->d, 1, sizeof f->d, fp);
+	fclose(fp);
+
+	sprintf(path, "%s/ASM86.CMD", dir);
+	brc = crun(path, " I86T", 0, &nstep);
+	chk("asm86 exited", brc, B_EXIT);
+	ntest++;
+	if (strstr(scon, "END OF ASSEMBLY.  NUMBER OF ERRORS:   0.") == 0)
+		fail("asm86 reported no errors", 1, 0);
+
+	f = sget("I86T.H86");
+	n = f ? f->len : 0;
+	ntest++;
+	if (f == 0 || !shas(f->d, n, ":0D000081B109BA0001CDE0B100B200CDE040")
+	 || !shas(f->d, n,
+		":1101008248454C4C4F2046524F4D2041534D38362411")
+	 || !shas(f->d, n, ":00000001FF"))
+		fail("asm86 hex holds the code and data records", 1, 0);
+	sdump(f, "build/i86asm-host.h86");
+	f = sget("I86T.LST");
+	n = f ? f->len : 0;
+	ntest++;
+	if (f == 0 || !shas(f->d, n, " 0002 BA0001")
+	 || !shas(f->d, n, " 0100 48454C4C4F20      MSG"))
+		fail("asm86 listing", 1, 0);
+	f = sget("I86T.SYM");
+	ntest++;
+	if (f == 0 || !shas(f->d, f->len, "0100 MSG"))
+		fail("asm86 symbol file", 1, 0);
+
+	sprintf(path, "%s/GENCMD.CMD", dir);
+	brc = crun(path, " I86T", 0, &nstep);
+	chk("asm86 gencmd exited", brc, B_EXIT);
+	f = sget("I86T.CMD");
+	ntest++;
+	if (!sdump(f, "build/i86asm-host.cmd")) {
+		fail("gencmd made I86T.CMD", 0, 1);
+		return;
+	}
+	memset(sdisk, 0, sizeof sdisk);
+	brc = crun("build/i86asm-host.cmd", "", 0, &nstep);
+	chk("I86T.CMD exited", brc, B_EXIT);
+	ntest++;
+	if (strcmp(scon, "HELLO FROM ASM86") != 0)
+		fail("I86T.CMD printed its string", 1, 0);
+}
+
+/* STAT sizes files from their directory entries: 1 and 40 records, one
+ * and two 4 KB blocks. */
+static void t_stat(const char *dir)
+{
+	static char two[5000];
+	char path[512];
+	long nstep;
+
+	memset(sdisk, 0, sizeof sdisk);
+	sput("ONE.TXT", "x", 1L);
+	sput("TWO.DAT", two, (long)sizeof two);
+	sprintf(path, "%s/STAT.CMD", dir);
+	chk("stat exited", crun(path, "", 0, &nstep), B_EXIT);
+	ntest++;
+	if (strstr(scon, "A: RW, Free Space:    10,224k") == 0)
+		fail("stat free space", 1, 0);
+	chk("stat *.* exited", crun(path, " *.*", 0, &nstep), B_EXIT);
+	ntest++;
+	if (strstr(scon, "    1     4k    1 Dir RW        A:ONE     .TXT") == 0
+	 || strstr(scon, "   40     8k    1 Dir RW        A:TWO     .DAT") == 0
+	 || strstr(scon, "Total:   12k    2") == 0)
+		fail("stat *.* sizes", 1, 0);
+	crun(path, " TWO.DAT", 0, &nstep);
+	ntest++;
+	if (strstr(scon, "A:ONE") != 0 || strstr(scon, "Total:    8k    1") == 0)
+		fail("stat one file", 1, 0);
+}
+
+static void t_help(const char *dir)
+{
+	char path[512];
+	FILE *fp;
+	struct sfile *f;
+	long nstep;
+
+	memset(sdisk, 0, sizeof sdisk);
+	sprintf(path, "%s/HELP.HLP", dir);
+	fp = fopen(path, "rb");
+	if (fp == 0) {
+		fail("HELP.HLP readable", 0, 1);
+		return;
+	}
+	f = sput("HELP.HLP", "", 0L);
+	f->len = (long)fread(f->d, 1, sizeof f->d, fp);
+	fclose(fp);
+	sprintf(path, "%s/HELP.CMD", dir);
+	/* The topic lives at record 114, reached by a random read; the
+	 * wrong record shows ASM86's text instead. */
+	chk("help exited", crun(path, " PIP", "", &nstep), B_EXIT);
+	ntest++;
+	if (strstr(scon, "PIP filespec{[Gn]}=filespec{[O]}") == 0
+	 || strstr(scon, "Copies files, combines  files") == 0
+	 || strstr(scon, "hex file drive") != 0)
+		fail("help shows the PIP topic", 1, 0);
+}
+
+/*
+ * TOD reads and writes the clock string in function 49's block.  Day
+ * 17797 is 22 September 2026; 03/01/84 is day 2252.  Setting drops the
+ * seconds, as our function 104 does.
+ */
+static void t_tod(const char *dir)
+{
+	char path[512];
+	struct ld L;
+	long nstep, ninsn, nbad, nunimp;
+
+	/* The corpus's one 8080-model file: a single group, measured. */
+	sprintf(path, "%s/TOD.CMD", dir);
+	chk("TOD.CMD rc", ldread(path, &L), CE_OK);
+	chk("TOD.CMD file length", L.flen, 2688);
+	chk("TOD.CMD model", L.c.model, M_8080);
+	chk("TOD.CMD ng", L.c.ng, 1);
+	chk("TOD.CMD code G-Length", L.c.g[0].len, 154);
+	chk("TOD.CMD place", ldplace(&L, ""), CE_OK);
+	ldsweep(&L, &ninsn, &nbad, &nunimp);
+	chk("TOD.CMD instructions", ninsn, 957);
+	chk("TOD.CMD undecodable bytes", nbad, 0);
+	chk("TOD.CMD refused classes", nunimp, 3);
+	ldfree(&L);
+
+	memset(sdisk, 0, sizeof sdisk);
+	sclk[0] = (char)0x85; sclk[1] = 0x45;
+	sclk[2] = 0x12; sclk[3] = 0x34; sclk[4] = 0x56;
+	chk("tod exited", crun(path, "", 0, &nstep), B_EXIT);
+	ntest++;
+	if (strstr(scon, "09/22/26       12:34:56") == 0)
+		fail("tod read the clock", 1, 0);
+	chk("tod console width", zseg[0x440], 80);
+
+	chk("tod set exited", crun(path, " 03/01/84 07:08:09", "x", &nstep),
+		B_EXIT);
+	chk("tod set day", (sclk[0] & 0xff) | (sclk[1] & 0xff) << 8, 2252);
+	chk("tod set hour", sclk[2], 0x07);
+	chk("tod set minute", sclk[3], 0x08);
+	ntest++;
+	if (strstr(scon, "Strike key to set time") == 0
+	 || strstr(scon, "03/01/84       07:08:00") == 0)
+		fail("tod set shows the new time", 1, 0);
+
+	/* TOD's own check: its calendar starts in 1978. */
+	crun(path, " 01/02/03 04:05:06", "x", &nstep);
+	ntest++;
+	if (strstr(scon, "Invalid Date & Time Format") == 0)
+		fail("tod refused 2003", 1, 0);
+	chk("... and left the clock", sclk[0] & 0xff, 0xcc);
 }
 
 /* ==================================================================
@@ -5309,6 +5657,10 @@ char **argv;
 	t_pip(argv[1]);
 	t_submit(argv[1]);
 	t_gencmd(argv[1], argv[2]);
+	t_asm86(argv[1], argv[2]);
+	t_stat(argv[1]);
+	t_help(argv[1]);
+	t_tod(argv[1]);
 	t_dmabound();
 	t_random();
 	t_prefix();

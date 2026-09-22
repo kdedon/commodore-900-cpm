@@ -49,9 +49,8 @@ long p1, p2;
 /*
  * i86sys -- the native BDOS, reached the way every other transient
  * program reaches it.  `addr' non-null means the function's parameter
- * is that address -- and it is a far pointer into a guest segment, so
- * the BDOS reads the guest's FCB where the guest left it, which is the
- * whole of i86bdos.c's hazard 1 being cashed.  Otherwise the parameter
+ * is that address -- a far pointer into a guest segment, or to the
+ * seam's own copy of an FCB.  Otherwise the parameter
  * is the byte or word value.
  */
 int i86sys(fn, val, addr)
