@@ -76,6 +76,129 @@ int op;
 }
 
 /*
+ * The rest of the base map, the same way: outside the four prefixes an
+ * opcode byte fixes the operation and its operand fields on its own, so
+ * a decode is four loads and an operand fetch.  Read them as a 16-wide
+ * grid -- the row comment is the opcode of the first entry on the line.
+ *
+ * bx is the operand field the opcode carries in the place its group
+ * puts it: the register pair for LXI/DAD/INX/DCX/PUSH/POP, the
+ * destination register for MOV/MVI/INR/DCR, the operation for the ALU
+ * eight and the rotates, the condition for Jcc/Ccc/Rcc and JR, the
+ * vector for RST.  by is the source register, 6 meaning the byte at
+ * (HL).  The prefix rows are never reached; they are filled so the
+ * grid stays a grid.
+ */
+static z8 bop[256] = {
+	Z_NOP, Z_LXI, Z_STAX, Z_INX, Z_INR, Z_DCR, Z_LDRI, Z_ROT,	/* 00 */
+	Z_EXAF, Z_DAD, Z_LDAX, Z_DCX, Z_INR, Z_DCR, Z_LDRI, Z_ROT,	/* 08 */
+	Z_DJNZ, Z_LXI, Z_STAX, Z_INX, Z_INR, Z_DCR, Z_LDRI, Z_ROT,	/* 10 */
+	Z_JR, Z_DAD, Z_LDAX, Z_DCX, Z_INR, Z_DCR, Z_LDRI, Z_ROT,	/* 18 */
+	Z_JR, Z_LXI, Z_SHLD, Z_INX, Z_INR, Z_DCR, Z_LDRI, Z_DAA,	/* 20 */
+	Z_JR, Z_DAD, Z_LHLD, Z_DCX, Z_INR, Z_DCR, Z_LDRI, Z_CMA,	/* 28 */
+	Z_JR, Z_LXI, Z_STA, Z_INX, Z_INR, Z_DCR, Z_LDRI, Z_STC,		/* 30 */
+	Z_JR, Z_DAD, Z_LDA, Z_DCX, Z_INR, Z_DCR, Z_LDRI, Z_CMC,		/* 38 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 40 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 48 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 50 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 58 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 60 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 68 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_HLT, Z_LDRR,	/* 70 */
+	Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR, Z_LDRR,	/* 78 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* 80 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* 88 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* 90 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* 98 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* A0 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* A8 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* B0 */
+	Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU, Z_ALU,		/* B8 */
+	Z_RCC, Z_POP, Z_JCC, Z_JMP, Z_CCC, Z_PUSH, Z_ALU, Z_RST,	/* C0 */
+	Z_RCC, Z_RET, Z_JCC, Z_CB, Z_CCC, Z_CALL, Z_ALU, Z_RST,		/* C8 */
+	Z_RCC, Z_POP, Z_JCC, Z_OUT, Z_CCC, Z_PUSH, Z_ALU, Z_RST,	/* D0 */
+	Z_RCC, Z_EXX, Z_JCC, Z_IN, Z_CCC, Z_IX, Z_ALU, Z_RST,		/* D8 */
+	Z_RCC, Z_POP, Z_JCC, Z_XTHL, Z_CCC, Z_PUSH, Z_ALU, Z_RST,	/* E0 */
+	Z_RCC, Z_PCHL, Z_JCC, Z_XCHG, Z_CCC, Z_ED, Z_ALU, Z_RST,	/* E8 */
+	Z_RCC, Z_POP, Z_JCC, Z_DI, Z_CCC, Z_PUSH, Z_ALU, Z_RST,		/* F0 */
+	Z_RCC, Z_SPHL, Z_JCC, Z_EI, Z_CCC, Z_IX, Z_ALU, Z_RST		/* F8 */
+};
+
+static z8 bx[256] = {
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,	/* 00 */
+	0, 1, 1, 1, 2, 2, 2, 2, 4, 1, 1, 1, 3, 3, 3, 3,	/* 10 */
+	0, 2, 0, 2, 4, 4, 4, 0, 1, 2, 0, 2, 5, 5, 5, 0,	/* 20 */
+	2, 3, 0, 3, 6, 6, 6, 0, 3, 3, 0, 3, 7, 7, 7, 0,	/* 30 */
+	0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,	/* 40 */
+	2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,	/* 50 */
+	4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,	/* 60 */
+	6, 6, 6, 6, 6, 6, 0, 6, 7, 7, 7, 7, 7, 7, 7, 7,	/* 70 */
+	0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,	/* 80 */
+	2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,	/* 90 */
+	4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5,	/* A0 */
+	6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7,	/* B0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1,	/* C0 */
+	2, 1, 2, 0, 2, 1, 2, 2, 3, 0, 3, 0, 3, 0, 3, 3,	/* D0 */
+	4, 2, 4, 0, 4, 2, 4, 4, 5, 0, 5, 0, 5, 0, 5, 5,	/* E0 */
+	6, 3, 6, 0, 6, 3, 6, 6, 7, 0, 7, 0, 7, 0, 7, 7	/* F0 */
+};
+
+static z8 by[256] = {
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 00 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 10 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 20 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 30 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* 40 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* 50 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* 60 */
+	0, 1, 2, 3, 4, 5, 0, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* 70 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* 80 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* 90 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* A0 */
+	0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7,	/* B0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* C0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* D0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* E0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0	/* F0 */
+};
+
+static z8 bfl[256] = {
+	0, ZF_IMM, ZF_MEM, 0, 0, 0, ZF_IMM, 0,			/* 00 */
+	0, 0, ZF_MEM, 0, 0, 0, ZF_IMM, 0,			/* 08 */
+	0, ZF_IMM, ZF_MEM, 0, 0, 0, ZF_IMM, 0,			/* 10 */
+	0, 0, ZF_MEM, 0, 0, 0, ZF_IMM, 0,			/* 18 */
+	0, ZF_IMM, ZF_IMM|ZF_MEM|ZF_ADDR, 0, 0, 0, ZF_IMM, 0,	/* 20 */
+	0, 0, ZF_IMM|ZF_MEM|ZF_ADDR, 0, 0, 0, ZF_IMM, 0,	/* 28 */
+	0, ZF_IMM, ZF_IMM|ZF_MEM|ZF_ADDR, 0,
+		ZF_MEM, ZF_MEM, ZF_IMM|ZF_MEM, 0,		/* 30 */
+	0, 0, ZF_IMM|ZF_MEM|ZF_ADDR, 0, 0, 0, ZF_IMM, 0,	/* 38 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 40 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 48 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 50 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 58 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 60 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 68 */
+	ZF_MEM, ZF_MEM, ZF_MEM, ZF_MEM, ZF_MEM, ZF_MEM, 0, ZF_MEM, /* 70 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 78 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 80 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 88 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 90 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* 98 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* A0 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* A8 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* B0 */
+	0, 0, 0, 0, 0, 0, ZF_MEM, 0,				/* B8 */
+	0, 0, ZF_ADDR, ZF_ADDR, ZF_ADDR, 0, ZF_IMM, 0,		/* C0 */
+	0, 0, ZF_ADDR, ZF_PFX, ZF_ADDR, ZF_ADDR, ZF_IMM, 0,	/* C8 */
+	0, 0, ZF_ADDR, 0, ZF_ADDR, 0, ZF_IMM, 0,		/* D0 */
+	0, 0, ZF_ADDR, 0, ZF_ADDR, ZF_PFX, ZF_IMM, 0,		/* D8 */
+	0, 0, ZF_ADDR, ZF_MEM, ZF_ADDR, 0, ZF_IMM, 0,		/* E0 */
+	0, 0, ZF_ADDR, 0, ZF_ADDR, ZF_PFX, ZF_IMM, 0,		/* E8 */
+	0, 0, ZF_ADDR, 0, ZF_ADDR, 0, ZF_IMM, 0,		/* F0 */
+	0, 0, ZF_ADDR, 0, ZF_ADDR, ZF_PFX, ZF_IMM, 0		/* F8 */
+};
+
+/*
  * Does this base opcode name the memory byte at (HL)?
  *
  * It matters twice.  Here, because under a DD/FD prefix every one of
@@ -141,6 +264,30 @@ struct z80in *in;
 	register int op, sub;
 	register int n;
 
+	op = fb(m, pc, 0);
+
+	/* ---- the base map: the grid answers everything but the operand. */
+	if (op != 0xcb && op != 0xed && op != 0xdd && op != 0xfd) {
+		n = (int)blen[op];
+		in->op = bop[op];
+		in->x = bx[op];
+		in->y = by[op];
+		in->fl = bfl[op];
+		in->len = (z8)n;
+		in->pfx = 0;
+		in->sub = 0;
+		in->disp = 0;
+		if (n == 1)
+			in->imm = 0;
+		else if (n == 3)
+			in->imm = iw(m, pc, 1);
+		else if (in->op == Z_JR || in->op == Z_DJNZ)
+			in->imm = (z16)(sx(fb(m, pc, 1)) + pc + 2);
+		else
+			in->imm = (z16)fb(m, pc, 1);
+		return (n);
+	}
+
 	in->op = Z_BAD;
 	in->fl = 0;
 	in->x = 0;
@@ -150,11 +297,8 @@ struct z80in *in;
 	in->imm = 0;
 	in->disp = 0;
 
-	op = fb(m, pc, 0);
-	n = baselen(op);
-
-	/* ---- the four prefixes, first, because everything they cover
-	 * is a different opcode space with a different length rule. */
+	/* ---- the four prefixes: each is a different opcode space with a
+	 * different length rule. */
 	if (op == 0xcb) {
 		/* CB is the one prefix group with a SINGLE regular
 		 * encoding: two bits of group, three of operation or bit
@@ -251,184 +395,6 @@ struct z80in *in;
 		if (usesm(sub))
 			in->disp = sx(fb(m, pc, 2));
 		goto done;
-	}
-
-	/* ---- 40-7F: MOV, and HLT where MOV M,M would be. */
-	if (op >= 0x40 && op <= 0x7f) {
-		if (op == 0x76) {
-			in->op = Z_HLT;
-			goto done;
-		}
-		in->op = Z_LDRR;
-		in->x = (z8)((op >> 3) & 7);
-		in->y = (z8)(op & 7);
-		if (in->x == R_M || in->y == R_M)
-			in->fl |= ZF_MEM;
-		goto done;
-	}
-
-	/* ---- 80-BF: the ALU eight against a register or (HL). */
-	if (op >= 0x80 && op <= 0xbf) {
-		in->op = Z_ALU;
-		in->x = (z8)((op >> 3) & 7);
-		in->y = (z8)(op & 7);
-		if (in->y == R_M)
-			in->fl |= ZF_MEM;
-		goto done;
-	}
-
-	switch (op) {
-
-	case 0x00: in->op = Z_NOP; break;
-
-	/* ---- 01/11/21/31 and the register-pair one-byte forms. */
-	case 0x01: case 0x11: case 0x21: case 0x31:
-		in->op = Z_LXI;
-		in->x = (z8)((op >> 4) & 3);
-		in->imm = iw(m, pc, 1);
-		in->fl |= ZF_IMM;
-		break;
-	case 0x09: case 0x19: case 0x29: case 0x39:
-		in->op = Z_DAD; in->x = (z8)((op >> 4) & 3);
-		break;
-	case 0x03: case 0x13: case 0x23: case 0x33:
-		in->op = Z_INX; in->x = (z8)((op >> 4) & 3);
-		break;
-	case 0x0b: case 0x1b: case 0x2b: case 0x3b:
-		in->op = Z_DCX; in->x = (z8)((op >> 4) & 3);
-		break;
-
-	case 0x02: case 0x12:
-		in->op = Z_STAX; in->x = (z8)((op >> 4) & 1);
-		in->fl |= ZF_MEM;
-		break;
-	case 0x0a: case 0x1a:
-		in->op = Z_LDAX; in->x = (z8)((op >> 4) & 1);
-		in->fl |= ZF_MEM;
-		break;
-	case 0x22: in->op = Z_SHLD; goto addr;
-	case 0x2a: in->op = Z_LHLD; goto addr;
-	case 0x32: in->op = Z_STA;  goto addr;
-	case 0x3a: in->op = Z_LDA;
-	addr:
-		in->imm = iw(m, pc, 1);
-		in->fl |= ZF_IMM | ZF_ADDR | ZF_MEM;
-		break;
-
-	/* ---- INR/DCR/MVI: the destination is the middle field. */
-	case 0x04: case 0x0c: case 0x14: case 0x1c:
-	case 0x24: case 0x2c: case 0x34: case 0x3c:
-		in->op = Z_INR;
-		in->x = (z8)((op >> 3) & 7);
-		if (in->x == R_M)
-			in->fl |= ZF_MEM;
-		break;
-	case 0x05: case 0x0d: case 0x15: case 0x1d:
-	case 0x25: case 0x2d: case 0x35: case 0x3d:
-		in->op = Z_DCR;
-		in->x = (z8)((op >> 3) & 7);
-		if (in->x == R_M)
-			in->fl |= ZF_MEM;
-		break;
-	case 0x06: case 0x0e: case 0x16: case 0x1e:
-	case 0x26: case 0x2e: case 0x36: case 0x3e:
-		in->op = Z_LDRI;
-		in->x = (z8)((op >> 3) & 7);
-		in->imm = (z16)fb(m, pc, 1);
-		in->fl |= ZF_IMM;
-		if (in->x == R_M)
-			in->fl |= ZF_MEM;
-		break;
-
-	case 0x07: case 0x0f: case 0x17: case 0x1f:
-		in->op = Z_ROT;
-		in->x = (z8)((op >> 3) & 3);
-		break;
-
-	case 0x27: in->op = Z_DAA; break;
-	case 0x2f: in->op = Z_CMA; break;
-	case 0x37: in->op = Z_STC; break;
-	case 0x3f: in->op = Z_CMC; break;
-
-	/* ---- the Z80 base-map opcodes an 8080 leaves undefined.  DRI's
-	 * own CP/M 3 binaries reach these and nothing else in the Z80,
-	 * which is why they are executable here and the prefix groups
-	 * are not. */
-	case 0x08: in->op = Z_EXAF; break;
-	case 0xd9: in->op = Z_EXX; break;
-	case 0x10:
-		in->op = Z_DJNZ;
-		in->imm = (z16)(sx(fb(m, pc, 1)) + pc + 2);
-		break;
-	case 0x18:
-		in->op = Z_JR; in->x = 4;		/* unconditional */
-		in->imm = (z16)(sx(fb(m, pc, 1)) + pc + 2);
-		break;
-	case 0x20: case 0x28: case 0x30: case 0x38:
-		in->op = Z_JR;
-		in->x = (z8)((op >> 3) & 3);		/* NZ Z NC C	*/
-		in->imm = (z16)(sx(fb(m, pc, 1)) + pc + 2);
-		break;
-
-	/* ---- C0-FF: the control-flow block, plus the odds and ends. */
-	case 0xc0: case 0xc8: case 0xd0: case 0xd8:
-	case 0xe0: case 0xe8: case 0xf0: case 0xf8:
-		in->op = Z_RCC; in->x = (z8)((op >> 3) & 7);
-		break;
-	case 0xc9: in->op = Z_RET; break;
-	case 0xc1: case 0xd1: case 0xe1: case 0xf1:
-		in->op = Z_POP; in->x = (z8)((op >> 4) & 3);
-		break;
-	case 0xc5: case 0xd5: case 0xe5: case 0xf5:
-		in->op = Z_PUSH; in->x = (z8)((op >> 4) & 3);
-		break;
-	case 0xc2: case 0xca: case 0xd2: case 0xda:
-	case 0xe2: case 0xea: case 0xf2: case 0xfa:
-		in->op = Z_JCC; in->x = (z8)((op >> 3) & 7);
-		in->imm = iw(m, pc, 1);
-		in->fl |= ZF_ADDR;
-		break;
-	case 0xc3:
-		in->op = Z_JMP; in->imm = iw(m, pc, 1); in->fl |= ZF_ADDR;
-		break;
-	case 0xc4: case 0xcc: case 0xd4: case 0xdc:
-	case 0xe4: case 0xec: case 0xf4: case 0xfc:
-		in->op = Z_CCC; in->x = (z8)((op >> 3) & 7);
-		in->imm = iw(m, pc, 1);
-		in->fl |= ZF_ADDR;
-		break;
-	case 0xcd:
-		in->op = Z_CALL; in->imm = iw(m, pc, 1); in->fl |= ZF_ADDR;
-		break;
-	case 0xc6: case 0xce: case 0xd6: case 0xde:
-	case 0xe6: case 0xee: case 0xf6: case 0xfe:
-		in->op = Z_ALU;
-		in->x = (z8)((op >> 3) & 7);
-		in->imm = (z16)fb(m, pc, 1);
-		in->fl |= ZF_IMM;
-		break;
-	case 0xc7: case 0xcf: case 0xd7: case 0xdf:
-	case 0xe7: case 0xef: case 0xf7: case 0xff:
-		in->op = Z_RST; in->x = (z8)((op >> 3) & 7);
-		break;
-
-	case 0xd3: in->op = Z_OUT; in->imm = (z16)fb(m, pc, 1); break;
-	case 0xdb: in->op = Z_IN;  in->imm = (z16)fb(m, pc, 1); break;
-
-	case 0xe3: in->op = Z_XTHL; in->fl |= ZF_MEM; break;
-	case 0xe9: in->op = Z_PCHL; break;
-	case 0xeb: in->op = Z_XCHG; break;
-	case 0xf9: in->op = Z_SPHL; break;
-	case 0xf3: in->op = Z_DI; break;
-	case 0xfb: in->op = Z_EI; break;
-
-	default:
-		/* Unreachable: baselen() and the ranges above between
-		 * them account for all 256 base opcodes.  Kept so that a
-		 * future edit that removes a case fails loudly here
-		 * instead of falling through to Z_NOP. */
-		in->op = Z_BAD;
-		break;
 	}
 
 done:
