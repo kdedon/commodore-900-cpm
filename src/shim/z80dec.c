@@ -46,29 +46,33 @@ int k;
  *		(11xxx110), IN, OUT, and the Z80 relative branches
  *		(10 18 20 28 30 38), whose operand is a displacement.
  *   1 byte  -- everything else.
+ *
+ * Held as data: a compare chain over 26 labels costs more than the
+ * decode it serves.
  */
+static z8 blen[256] = {
+	1, 3, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 2, 1,	/* 00 */
+	2, 3, 1, 1, 1, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1,	/* 10 */
+	2, 3, 3, 1, 1, 1, 2, 1, 2, 1, 3, 1, 1, 1, 2, 1,	/* 20 */
+	2, 3, 3, 1, 1, 1, 2, 1, 2, 1, 3, 1, 1, 1, 2, 1,	/* 30 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* 40 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* 50 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* 60 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* 70 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* 80 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* 90 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* A0 */
+	1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,	/* B0 */
+	1, 1, 3, 3, 3, 1, 2, 1, 1, 1, 3, 1, 3, 3, 2, 1,	/* C0 */
+	1, 1, 3, 2, 3, 1, 2, 1, 1, 1, 3, 2, 3, 1, 2, 1,	/* D0 */
+	1, 1, 3, 1, 3, 1, 2, 1, 1, 1, 3, 1, 3, 1, 2, 1,	/* E0 */
+	1, 1, 3, 1, 3, 1, 2, 1, 1, 1, 3, 1, 3, 1, 2, 1	/* F0 */
+};
+
 static int baselen(op)
 int op;
 {
-	switch (op) {
-	case 0x01: case 0x11: case 0x21: case 0x31:	/* LXI rp,nn	*/
-	case 0x22: case 0x2a: case 0x32: case 0x3a:	/* SHLD LHLD STA LDA */
-	case 0xc3: case 0xcd:				/* JMP, CALL	*/
-	case 0xc2: case 0xca: case 0xd2: case 0xda:	/* Jcc		*/
-	case 0xe2: case 0xea: case 0xf2: case 0xfa:
-	case 0xc4: case 0xcc: case 0xd4: case 0xdc:	/* Ccc		*/
-	case 0xe4: case 0xec: case 0xf4: case 0xfc:
-		return (3);
-	case 0x06: case 0x0e: case 0x16: case 0x1e:	/* MVI r,n	*/
-	case 0x26: case 0x2e: case 0x36: case 0x3e:
-	case 0xc6: case 0xce: case 0xd6: case 0xde:	/* ALU A,n	*/
-	case 0xe6: case 0xee: case 0xf6: case 0xfe:
-	case 0xd3: case 0xdb:				/* OUT n, IN n	*/
-	case 0x10:					/* DJNZ e	*/
-	case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:	/* JR	*/
-		return (2);
-	}
-	return (1);
+	return ((int)blen[op & 0xff]);
 }
 
 /*
