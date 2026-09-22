@@ -4764,30 +4764,28 @@ verify-gencom: all
 # Row 5 (hashing/BCB) was CANNOT-VERIFY and row 8 (GENCPM) was FAIL for the
 # same reason: nothing could turn hashing off, so there was no A-B to run.
 # src/bdos/dskhash.c hashen[2] is that switch (see its own comment); this
-# builds a second cpm.sys with it compiled off and compares the two on the
+# stamps a second cpm.sys with it turned off and compares the two on the
 # EMULATOR's own instruction count (see tests/hashab.py's own docstring
 # for why a wildcard `DIR' cannot show this and TYPE can).
+#
+# The two systems are the same link: only the config file differs, which is
+# what makes this an A-B of the generator and not of two builds.
 HASHOFFDIR = build/hashoff
-HASHOFFOBJ = $(HASHOFFDIR)/obj
 HASHOFFSYS = $(HASHOFFDIR)/cpm.sys
+HASHOFFDAT = $(HASHOFFDIR)/gencpm.dat
 HASHABSRC  = build/hashab-src
 HASHABB    = build/hashab-b.img
 HASHABON   = build/hashab-on.bin
 HASHABOFF  = build/hashab-off.bin
 HASHABN    = 384
 
-# A phony name DISTINCT from $(HASHOFFSYS) itself: this recurses into the
-# same Makefile with OBJDIR/CPMSYS/DEFS overridden, so the normal build's
-# own build/obj and build/cpm.sys are never touched by it.  Naming this
-# phony target $(HASHOFFSYS) instead would make the recursive $(MAKE)
-# see the very same rule for that target name and recurse forever --
-# there being no OTHER rule left to build the real file with.
-.PHONY: hashoff-cpmsys
-hashoff-cpmsys:
+$(HASHOFFSYS): $(CPMSYS) $(GENCPMDAT) tools/gencpm.py
 	@mkdir -p $(HASHOFFDIR)
-	$(MAKE) OBJDIR=$(HASHOFFOBJ) CPMSYS=$(HASHOFFSYS) \
-		SPLITMOD=$(HASHOFFDIR)/split.mod LOG=$(HASHOFFDIR)/build.log \
-		DEFS='-DHASH_A_DEFAULT=0 -DHASH_B_DEFAULT=0' $(HASHOFFSYS)
+	sed -e 's/^\(hash_[ab]\)[^=]*=.*/\1 = off/' $(GENCPMDAT) > $(HASHOFFDAT)
+	cp $(CPMSYS) $@
+	python3 tools/gencpm.py $(HASHOFFDAT) $@
+	@python3 tools/gencpm.py --dump $@ | grep -q 'hashen_.* 0000$$' \
+		|| { echo "hashoff: the stamp left hashing on -- there is no B side to measure"; exit 1; }
 
 $(HASHABB): tools/mkcpmfs.py
 	@rm -rf $(HASHABSRC) && mkdir -p $(HASHABSRC)
@@ -4802,7 +4800,7 @@ $(HASHABB): tools/mkcpmfs.py
 $(HASHABON): $(CPMSYS) $(CPMARIMG) $(HASHABB) $(wildcard $(KBOOT)) tools/mkcpmdisk.py
 	$(MKDISK) $@ $(CPMSYS) $(CPMARIMG) $(HASHABB)
 
-$(HASHABOFF): hashoff-cpmsys $(CPMARIMG) $(HASHABB) $(wildcard $(KBOOT)) tools/mkcpmdisk.py
+$(HASHABOFF): $(HASHOFFSYS) $(CPMARIMG) $(HASHABB) $(wildcard $(KBOOT)) tools/mkcpmdisk.py
 	$(MKDISK) $@ $(HASHOFFSYS) $(CPMARIMG) $(HASHABB)
 
 .PHONY: verify-hash-ab
