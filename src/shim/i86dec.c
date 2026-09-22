@@ -34,6 +34,28 @@ int b;
 
 /* ALU sub-op names live in the opcode's own bits, so nothing maps them. */
 
+/* The eight prefix bytes: the four segment overrides, LOCK and its alias,
+ * REPNE and REP.  One load says whether the prefix loop has anything to
+ * do, which for almost every instruction it has not. */
+static i8 ispfx[256] = {
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 00 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 10 */
+	0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0,	/* 20 */
+	0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0,	/* 30 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 40 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 50 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 60 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 70 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 80 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* 90 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* A0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* B0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* C0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* D0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* E0 */
+	1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0	/* F0 */
+};
+
 /* The default segment for a mod r/m memory operand.  BP as a base means
  * the stack segment; everything else means the data segment.  rm = 6
  * with mod = 0 is not BP at all -- it is a direct address. */
@@ -143,7 +165,8 @@ struct i86in *in;
 	 * LOCK -- so no legal instruction decodes differently for this.
 	 * A sixteenth byte that is still a prefix falls out of the loop
 	 * and reaches the switch as an opcode, where it is I_BAD. */
-	for (;;) {
+	op = cs[ip] & 0xff;
+	while (ispfx[op]) {
 		if (n >= I86MAXPFX) {
 			op = fb(cs, ip, n);
 			break;
