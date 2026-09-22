@@ -497,6 +497,15 @@ $(UOBJDIR)/sczero.lout: $(UOBJDIR)/sczero.o $(UOBJDIR)/sczerosc.o \
 $(UOBJDIR)/SCZERO.Z8K: $(UOBJDIR)/sczero.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# SSTKT (verify-sstk): the C driver and its SC #1 copy.
+$(UOBJDIR)/sstkt.lout: $(UOBJDIR)/sstkt.o $(UOBJDIR)/sstktsc.o \
+			$(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o \
+		$(UOBJDIR)/sstkt.o $(UOBJDIR)/sstktsc.o $(ULIB)
+
+$(UOBJDIR)/SSTKT.Z8K: $(UOBJDIR)/sstkt.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/CONBRK.Z8K: $(UOBJDIR)/conbrk.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

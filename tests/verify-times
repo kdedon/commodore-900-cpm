@@ -74,6 +74,7 @@
 6 verify-shim
 3 verify-signon
 109 verify-split
+2 verify-sstk
 3 verify-stamp
 1 verify-stampa
 3 verify-stamp-dri

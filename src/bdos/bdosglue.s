@@ -212,11 +212,16 @@ memcpy:
 	jr	nz, memcpyok		/   system: trusted
 	pushl	(rr14), rr2
 	pushl	(rr14), rr4
+	ld	r0, r15
+	add	r0, $44			/ end of this gate's frame
+	push	(rr14), r0
+	push	(rr14), r3		/ len: the low word is what is copied
+	push	(rr14), r5		/ destination offset
 	srl	r4, $8			/ destination segment number
 	and	r4, $0x007F
 	push	(rr14), r4
 	call	pgmine_
-	add	r15, $2
+	add	r15, $8
 	popl	rr4, (rr14)
 	popl	rr2, (rr14)
 	test	r1

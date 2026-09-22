@@ -28,6 +28,7 @@
 #include "c900cfg.h"
 
 extern int mapseg();
+extern short sysstk;
 
 /* Segment 1 offset zero contains a CPU far pointer, (seg<<24)|offset,
  * to the ROM configuration block. rom_bram/rom_eram are its first two
@@ -175,15 +176,24 @@ int seg;
 	return (1);
 }
 
-/* May the running process write `seg': its TPA, a slot it owns, or the
- * supervisor stacks, where a debugger's trap handler edits its frame? */
-int pgmine(seg)
+/* May the running process write len bytes at seg:off?  Its TPA, a slot it
+ * owns, or, in the supervisor stacks, its own stack from lo (the end of
+ * the copying gate's frame) to its top: the trap frame a debugger's
+ * handler edits.  A copy wraps within its segment, so only 0x3F needs
+ * the range checked. */
+int pgmine(seg, off, len, lo)
 int seg;
+unsigned off, len, lo;
 {
 	register int i;
+	register unsigned top;
 
-	if (seg == TPASEG || seg == 0x3f)
+	if (seg == TPASEG)
 		return (1);
+	if (seg == 0x3f) {
+		top = sysstk;
+		return (off >= lo && off <= top && len <= top - off);
+	}
 	i = pgslot(seg);
 	return (i >= 0 && i < pgnslot && pgown[i] == pgcur + 1);
 }

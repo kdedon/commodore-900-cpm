@@ -6816,6 +6816,29 @@ verify-ddtseg: all $(CPMAGP)
 	@echo "               segment 0x3F is untouched: no program wrote over"
 	@echo "               another process's supervisor stack"
 
+# ---- verify-sstk: SC #1 refuses a user copy into the supervisor stacks ----
+# SSTKT copies a pattern over five windows of segment 0x3F -- the headroom,
+# another process's stack, its own stack below the gate's frame, a copy
+# running past its own stack top and one wrapping to 3F:0000 -- and reads
+# each back unchanged; then a TPA copy must land.  DIR afterwards shows
+# the kernel survived.
+SSTKIMG = build/sstktest.bin
+SSTKLOG = build/verify-sstk.log
+SSTKIN  = $(OSSEL)SSTKT\rDIR SSTKT.Z8K\r$(ENDIN)
+.PHONY: verify-sstk
+verify-sstk: all
+	$(MKDISK) $(SSTKIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(SSTKIMG)) \
+		--input='$(SSTKIN)' --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; \
+		$(EMUSTAT); } | tee $(abspath $(SSTKLOG))
+	@$(EMUOK)
+	@grep -q 'SSTKT: PASS' $(SSTKLOG) \
+		|| { echo "verify-sstk: FAIL -- a user SC #1 copy wrote segment 0x3F, or a TPA copy did not land: see the BAD lines above"; exit 1; }
+	@grep -q '$(ENDMARK)' $(SSTKLOG) \
+		|| { echo "verify-sstk: FAIL -- the CCP did not come back after SSTKT"; exit 1; }
+	@echo "verify-sstk: PASS -- user SC #1 copies into segment 0x3F were refused"
+	@echo "               and a TPA copy still works"
+
 # ---- verify-ddtbrk: DDT.Z8K takes real breakpoints ----
 # DDT records its SC #0 handler through BDOS fn 50 carrying BIOS fn 22
 # for vector 32 (src/bdos/iosys.c), and reads the frame it is called with
