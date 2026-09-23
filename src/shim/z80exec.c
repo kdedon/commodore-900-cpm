@@ -319,9 +319,12 @@ static lazy(m, cls, a, b, r, c)
 struct z80 *m;
 int cls, a, b, r, c;
 {
-	if (cls == LZ_INR || cls == LZ_DCR)
-		z80flags(m);		/* CY must survive: fold first	*/
-	else if (cls == LZ_BIT || cls == LZ_LDBLK || cls == LZ_CPBLK) {
+	if (cls == LZ_INR || cls == LZ_DCR) {
+		/* CY must survive: fold first, unless a pending INR or
+		 * DCR already left it in m->f. */
+		if (m->lz != LZ_INR && m->lz != LZ_DCR)
+			z80flags(m);
+	} else if (cls == LZ_BIT || cls == LZ_LDBLK || cls == LZ_CPBLK) {
 		/* The same rule -- all three read bits they do not
 		 * write -- with the one exception that is the whole of
 		 * the lazy scheme's value in a block move: if the
@@ -330,12 +333,7 @@ int cls, a, b, r, c;
 		 * because preserving them is what the pending record
 		 * does.  Folding again would materialise once per
 		 * iteration and buy nothing, so an LDIR over 4 KB costs
-		 * ONE materialisation and not 4,096.
-		 *
-		 * The identical argument holds for a run of INR/DCR and
-		 * is deliberately NOT made there: it would move the
-		 * asserted instruction counts, which is a change worth
-		 * measuring on its own. */
+		 * ONE materialisation and not 4,096. */
 		if (m->lz != (z8)cls)
 			z80flags(m);
 	}
@@ -345,6 +343,55 @@ int cls, a, b, r, c;
 	m->lr = (z16)(r & 0xff);
 	m->lc = (z8)c;
 	return (0);
+}
+
+/*
+ * z80cond(z80flags(m), cc) without materialising: the one flag tested
+ * comes straight from the record by z80flags()' rule for it.  CY of a
+ * class that preserves it is already in m->f, as lazy() folded first.
+ */
+int z80lcond(m, cc)
+register struct z80 *m;
+register int cc;
+{
+	register int t;
+
+	if (m->lz == LZ_NONE)
+		return (z80cond((int)m->f, cc));
+	if (m->lz == LZ_LDBLK)
+		return (z80cond((int)z80flags(m), cc));
+	switch (cc >> 1) {
+	case 0:						/* Z	*/
+		t = m->lr == 0;
+		break;
+	case 1:						/* CY	*/
+		switch (m->lz) {
+		case LZ_ADD:
+			t = m->lc ? m->lr <= m->la : m->lr < m->la;
+			break;
+		case LZ_SUB:
+			t = m->lc ? m->la <= m->lb : m->la < m->lb;
+			break;
+		case LZ_AND:
+		case LZ_LOG:
+			t = 0;
+			break;
+		case LZ_ROT:
+			t = m->lc;
+			break;
+		default:
+			t = m->f & F_CY;
+			break;
+		}
+		break;
+	case 2:						/* PE	*/
+		t = m->lz == LZ_CPBLK ? m->lc : par8(m->lr);
+		break;
+	default:					/* M	*/
+		t = m->lr & 0x80;
+		break;
+	}
+	return ((cc & 1) ? t != 0 : t == 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -728,11 +775,9 @@ z16 pc0;
 		t = (z32)(r + 1) * T_DEC + (z32)r * T_JRY + T_JRN;
 	} else
 		return (0);
-	z80flags(m);			/* the first jump's read	*/
+	/* Neither the jumps nor a DCR after a DCR materialise. */
 	z80setr(m, x, 0);
 	lazy(m, LZ_DCR, 1, 1, 0, 0);
-	z80flags(m);			/* the last jump's read		*/
-	z80nflag += r - 1;
 	z80ninsn += 2 * r + 1;
 	z80nskip += 2 * r + 1;
 	m->pc = (z16)(pc0 + 1 + len);
@@ -881,7 +926,7 @@ struct z80in *in;
 		m->pc = in->imm;
 		break;
 	case Z_JCC:
-		if (z80cond((int)z80flags(m), (int)in->x))
+		if (z80lcond(m, (int)in->x))
 			m->pc = in->imm;
 		break;
 	case Z_CALL:
@@ -889,7 +934,7 @@ struct z80in *in;
 		m->pc = in->imm;
 		break;
 	case Z_CCC:
-		if (z80cond((int)z80flags(m), (int)in->x)) {
+		if (z80lcond(m, (int)in->x)) {
 			push(m, m->pc);
 			m->pc = in->imm;
 		}
@@ -898,7 +943,7 @@ struct z80in *in;
 		m->pc = pop(m);
 		break;
 	case Z_RCC:
-		if (z80cond((int)z80flags(m), (int)in->x))
+		if (z80lcond(m, (int)in->x))
 			m->pc = pop(m);
 		break;
 	case Z_RST:
@@ -958,7 +1003,7 @@ struct z80in *in;
 	/* ---- the four Z80 base-map opcodes, none of which costs a
 	 * register or a table. */
 	case Z_JR:
-		if (in->x == 4 || z80cond((int)z80flags(m), (int)in->x))
+		if (in->x == 4 || z80lcond(m, (int)in->x))
 			m->pc = in->imm;
 		break;
 	case Z_DJNZ:

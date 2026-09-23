@@ -233,6 +233,7 @@ extern int z80cond();
 
 extern int z80step();		/* decode + execute one instruction	*/
 extern z8 z80flags();		/* materialise and return F		*/
+extern int z80lcond();		/* z80cond() on the pending record	*/
 extern int z80hookno;		/* hook left by X_HOOK			*/
 
 /* Instructions executed, and lazy records actually materialised.  Their

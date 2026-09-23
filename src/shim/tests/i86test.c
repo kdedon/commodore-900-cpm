@@ -463,6 +463,98 @@ static void t_incdec(void)
 	}
 }
 
+/*
+ * i86lcond() against i86cond(i86flags()) for every class and all
+ * sixteen conditions: bytes exhaustively (with junk above the byte),
+ * words over the boundary values above plus 100,000 random pairs.
+ * The record must come back untouched, so a later PUSHF still folds it.
+ */
+static long lcbad[6];
+static unsigned long lcseed = 1;
+
+static unsigned lcrand(void)
+{
+	lcseed = lcseed * 1103515245UL + 12345UL;
+	return ((unsigned)(lcseed >> 16) & 0xffff);
+}
+
+static void lcone(int cls, int w, unsigned a, unsigned b, unsigned r,
+		  int c, unsigned fl)
+{
+	struct i86 m, m2;
+	int cc, want;
+
+	memset(&m, 0, sizeof m);
+	m.lz = (i8)cls;
+	m.lw = (i8)w;
+	m.la = (i16)a;
+	m.lb = (i16)b;
+	m.lr = (i16)r;
+	m.lc = (i8)c;
+	m.fl = (i16)(fl | F_ONES);
+	for (cc = 0; cc < 16; cc++) {
+		m2 = m;
+		want = i86cond((int)i86flags(&m2), cc);
+		m2 = m;
+		if (i86lcond(&m2, cc) != want
+		 || memcmp(&m2, &m, sizeof m) != 0) {
+			if (lcbad[cls]++ == 0)
+				printf("i86test: lcond class %d w %d cc %d "
+					"a %04x b %04x r %04x c %d fl %04x\n",
+					cls, w, cc, m.la, m.lb, m.lr, c, fl);
+		}
+	}
+}
+
+/* Every class on (a, b, carry-in); fl is the state INC/DEC preserve. */
+static void lcops(int w, unsigned a, unsigned b, int c, unsigned fl)
+{
+	unsigned k;
+
+	k = w ? 0 : lcrand() & 0xff00;	/* a byte record's junk high half */
+	lcone(LZ_ADD, w, a | k, b | k, (a + b + c) | k, c, 0);
+	lcone(LZ_SUB, w, a | k, b | k, (a - b - c) & 0xffff, c, 0);
+	if (c)
+		return;
+	lcone(LZ_LOG, w, a, b, a & b, 0, 0);
+	lcone(LZ_LOG, w, a, b, a ^ b, 0, 0);
+	lcone(LZ_INC, w, a, 1, a + 1, 0, fl);
+	lcone(LZ_DEC, w, a, 1, a - 1, 0, fl);
+}
+
+static void t_lazycond(void)
+{
+	static unsigned v[] = {
+		0x0000, 0x0001, 0x000f, 0x0010, 0x007f, 0x0080, 0x00ff,
+		0x0100, 0x7ffe, 0x7fff, 0x8000, 0x8001, 0xfffe, 0xffff,
+		0x1234, 0xabcd, 0x5a5a, 0xa5a5
+	};
+	unsigned a, b;
+	int c, i, j;
+	i32 n0;
+
+	n0 = i86nflag;
+	for (a = 0; a < 0x1000; a++)
+		lcone(LZ_NONE, 0, 0, 0, 0, 0, a & F_LAZY);
+	for (a = 0; a < 256; a++)
+		for (b = 0; b < 256; b++)
+			for (c = 0; c < 2; c++)
+				lcops(0, a, b, c, (b << 4 | b) & F_LAZY);
+	for (i = 0; i < 18; i++)
+		for (j = 0; j < 18; j++)
+			for (c = 0; c < 2; c++)
+				lcops(1, v[i], v[j], c, v[j] & F_LAZY);
+	for (i = 0; i < 100000; i++) {
+		a = lcrand();
+		b = lcrand();
+		lcops(1, a, b, i & 1, lcrand() & F_LAZY);
+	}
+	i86nflag = n0;
+	for (c = 0; c <= LZ_DEC; c++)
+		chk("lazy condition matches the materialised one",
+			lcbad[c], 0L);
+}
+
 /* NEG is SUB from zero, and its CF rule ("set unless the operand was
  * zero") is the one people get wrong, so it is swept too. */
 static void t_neg(void)
@@ -6033,6 +6125,7 @@ char **argv;
 	t_flags_byte();
 	t_flags_word();
 	t_incdec();
+	t_lazycond();
 	t_neg();
 	t_delay();
 	t_exec();

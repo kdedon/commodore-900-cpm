@@ -217,6 +217,8 @@ extern int i86dec();
 
 extern int i86step();		/* decode + execute one instruction	*/
 extern i16 i86flags();		/* materialise and return FLAGS		*/
+extern int i86cond();		/* (FLAGS, cc 0..15) -> 0 or 1		*/
+extern int i86lcond();		/* i86cond() on the pending record	*/
 extern int i86intno;		/* vector left by X_INT			*/
 extern i16 i86segbad;		/* paragraph that caused X_SEGESC	*/
 

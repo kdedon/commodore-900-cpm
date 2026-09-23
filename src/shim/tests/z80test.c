@@ -1991,6 +1991,75 @@ static void t_delay(void)
 	z80nskip = 0;
 }
 
+/*
+ * z80lcond() against z80cond(z80flags()) for every class, every
+ * condition and every operand pair, carry-in and preserved CY.  The
+ * record must come back untouched or materialised, so a later PUSH PSW
+ * still sees the same flags.
+ */
+static long lcbad[11];
+
+static void lcone(int cls, int a, int b, int r, int c, int f)
+{
+	struct z80 m, m2, mf;
+	int cc, want;
+
+	memset(&m, 0, sizeof m);
+	m.lz = (z8)cls;
+	m.la = (z16)(a & 0xff);
+	m.lb = (z16)(b & 0xff);
+	m.lr = (z16)(r & 0xff);
+	m.lc = (z8)c;
+	m.f = (z8)((f | F_ONE) & ~F_Z80X);
+	for (cc = 0; cc < 8; cc++) {
+		mf = m;
+		want = z80cond((int)z80flags(&mf), cc);
+		m2 = m;
+		if (z80lcond(&m2, cc) != want
+		 || (memcmp(&m2, &m, sizeof m) != 0
+		  && memcmp(&m2, &mf, sizeof m) != 0)) {
+			if (lcbad[cls]++ == 0)
+				printf("z80test: lcond class %d cc %d a %02x "
+					"b %02x r %02x c %d f %02x\n",
+					cls, cc, m.la, m.lb, m.lr, c, m.f);
+		}
+	}
+}
+
+static void t_lazycond(void)
+{
+	int a, b, c, f;
+	z32 n0;
+
+	n0 = z80nflag;
+	for (f = 0; f < 256; f++) {
+		lcone(LZ_NONE, 0, 0, 0, 0, f);
+		lcone(LZ_LDBLK, 0, 0, 0, f & 1, f);
+	}
+	for (a = 0; a < 256; a++)
+		for (b = 0; b < 256; b++) {
+			for (c = 0; c < 2; c++) {
+				lcone(LZ_ADD, a, b, a + b + c, c, 0);
+				lcone(LZ_SUB, a, b, a - b - c, c, 0);
+				lcone(LZ_CPBLK, a, b, a - b, c, b);
+				lcone(LZ_ROT, a, 0, b, c, 0);
+			}
+			lcone(LZ_AND, a, b, a & b, 0, 0);
+			lcone(LZ_LOG, a, b, a | b, 0, 0);
+			lcone(LZ_LOG, a, b, a ^ b, 0, 0);
+			/* b stands in for the flags the class preserves */
+			lcone(LZ_INR, a, 1, a + 1, 0, b);
+			lcone(LZ_DCR, a, 1, a - 1, 0, b);
+			if (b < 8)
+				for (f = 0; f < 256; f++)
+					lcone(LZ_BIT, a, b, a & (1 << b), 0, f);
+		}
+	z80nflag = n0;
+	for (c = 0; c <= LZ_CPBLK; c++)
+		chk("lazy condition matches the materialised one",
+			lcbad[c], 0L);
+}
+
 /* ================================================================== */
 /* 5. refusals							      */
 /* ================================================================== */
@@ -5230,6 +5299,7 @@ char **argv;
 	t_ed_arith();
 	t_lazyrate();
 	t_delay();
+	t_lazycond();
 	t_refuse();
 	t_loader();
 	t_corpus(argv[1]);

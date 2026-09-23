@@ -311,8 +311,11 @@ struct i86 *m;
 int cls, w, c;
 i16 a, b, r;
 {
-	if (cls == LZ_INC || cls == LZ_DEC)
-		i86flags(m);		/* CF must survive: fold first	*/
+	/* CF must survive: fold first, unless a pending INC or DEC
+	 * already left it in m->fl. */
+	if ((cls == LZ_INC || cls == LZ_DEC)
+	 && m->lz != LZ_INC && m->lz != LZ_DEC)
+		i86flags(m);
 	m->lz = (i8)cls;
 	m->lw = (i8)w;
 	m->la = a;
@@ -442,15 +445,13 @@ struct i86 *m;
 /* condition codes						       */
 
 /* The sixteen 8086 conditions in encoding order, so the decoder can
- * hand the low four opcode bits straight through. */
-static int cond(m, cc)
-struct i86 *m;
+ * hand the low four opcode bits straight through.  (f, cc) -> 0 or 1. */
+int i86cond(f, cc)
+register int f;
 int cc;
 {
-	register i16 f;
 	register int t;
 
-	f = i86flags(m);
 	switch (cc >> 1) {
 	case 0: t = (f & F_OF) != 0; break;			/* O	*/
 	case 1: t = (f & F_CF) != 0; break;			/* B	*/
@@ -461,6 +462,76 @@ int cc;
 	case 6: t = ((f & F_SF) != 0) != ((f & F_OF) != 0); break;   /* L */
 	default: t = (((f & F_SF) != 0) != ((f & F_OF) != 0))
 			|| (f & F_ZF) != 0; break;		/* LE	*/
+	}
+	return ((cc & 1) ? !t : t);
+}
+
+/*
+ * i86cond(i86flags(m), cc) without materialising: each flag the
+ * condition needs comes straight from the record by i86flags()' rule
+ * for it.  CF of INC/DEC is already in m->fl, as lazy() folded first.
+ */
+int i86lcond(m, cc)
+register struct i86 *m;
+int cc;
+{
+	register i16 msb, a, b, r;
+	register int t, c, o;
+
+	if (m->lz == LZ_NONE)
+		return (i86cond((int)m->fl, cc));
+	if (m->lw) {
+		msb = 0x8000;
+		a = m->la;
+		b = m->lb;
+		r = m->lr;
+	} else {
+		msb = 0x80;
+		a = (i16)(m->la & 0xff);
+		b = (i16)(m->lb & 0xff);
+		r = (i16)(m->lr & 0xff);
+	}
+	switch (cc >> 1) {
+	case 2:						/* E	*/
+		t = r == 0;
+		break;
+	case 4:						/* S	*/
+		t = (r & msb) != 0;
+		break;
+	case 5:						/* P	*/
+		t = par8(r);
+		break;
+	default:
+		/* CF, OF and the pairs built from them. */
+		switch (m->lz) {
+		case LZ_ADD:
+			c = m->lc ? r <= a : r < a;
+			o = ((a ^ r) & (b ^ r) & msb) != 0;
+			break;
+		case LZ_SUB:
+			c = m->lc ? a <= b : a < b;
+			o = ((a ^ b) & (a ^ r) & msb) != 0;
+			break;
+		case LZ_INC:
+			c = (m->fl & F_CF) != 0;
+			o = ((a ^ r) & (b ^ r) & msb) != 0;
+			break;
+		case LZ_DEC:
+			c = (m->fl & F_CF) != 0;
+			o = ((a ^ b) & (a ^ r) & msb) != 0;
+			break;
+		default:				/* LZ_LOG */
+			c = o = 0;
+			break;
+		}
+		switch (cc >> 1) {
+		case 0: t = o; break;				/* O	*/
+		case 1: t = c; break;				/* B	*/
+		case 3: t = c || r == 0; break;			/* BE	*/
+		case 6: t = (r & msb ? 1 : 0) != o; break;	/* L	*/
+		default: t = (r & msb ? 1 : 0) != o || r == 0; break; /* LE */
+		}
+		break;
 	}
 	return ((cc & 1) ? !t : t);
 }
@@ -847,14 +918,12 @@ i16 ip0, r;
 		return (0);
 	n = (i32)r;
 	t = (n + 1) * t + n * C_JCCY + C_JCCN;
-	i86flags(m);			/* the first jump's read	*/
+	/* Neither the jumps nor a DEC after a DEC materialise. */
 	if (in->w)
 		m->r[in->rm] = 0;
 	else
 		setb(m, in->rm, 0);
 	lazy(m, LZ_DEC, in->w, (i16)1, (i16)1, (i16)0, 0);
-	i86flags(m);			/* the last jump's read		*/
-	i86nflag += n - 1;
 	i86ninsn += 2 * n + 1;
 	i86nskip += 2 * n + 1;
 	m->ip = (i16)(ip0 + len + 2);
@@ -1098,7 +1167,7 @@ exec:
 		m->ip = in->disp;
 		break;
 	case I_JCC:
-		if (cond(m, in->x))
+		if (i86lcond(m, in->x))
 			m->ip = in->disp;
 		break;
 	case I_LOOP:
@@ -1111,8 +1180,8 @@ exec:
 		if (m->r[R_CX] == 0)
 			break;
 		if (in->x == 2				/* LOOP		*/
-		 || (in->x == 1 && (i86flags(m) & F_ZF))	/* LOOPE	*/
-		 || (in->x == 0 && !(i86flags(m) & F_ZF)))	/* LOOPNE */
+		 || (in->x == 1 && i86lcond(m, 4))		/* LOOPE	*/
+		 || (in->x == 0 && i86lcond(m, 5)))		/* LOOPNE */
 			m->ip = in->disp;
 		break;
 	case I_CALL:

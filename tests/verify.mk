@@ -549,7 +549,7 @@ verify-z80: all
 	@grep -q '0000: 00 01 02 03' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP did not print the file's own bytes"; exit 1; }
 	@grep -q '0070: 70 71 72 73' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP stopped before the end of the record"; exit 1; }
 	@grep -q '0123456789' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP printed no ASCII column"; exit 1; }
-	@grep -q 'z80: 14314 instructions, 605 BDOS calls, 872 flag' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- the target run did not take the same path"; 		     echo "            through DUMP as the host run (14,314 instructions,"; 		     echo "            605 BDOS calls, 872 flag materialisations --"; 		     echo "            src/shim/tests/z80test.c t_dump()).  Read the divergence;"; 		     echo "            do not relax this."; exit 1; }
+	@grep -q 'z80: 14314 instructions, 605 BDOS calls, 164 flag' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- the target run did not take the same path"; 		     echo "            through DUMP as the host run (14,314 instructions,"; 		     echo "            605 BDOS calls, 164 flag materialisations --"; 		     echo "            src/shim/tests/z80test.c t_dump()).  Read the divergence;"; 		     echo "            do not relax this."; exit 1; }
 	@grep -q 'z80: the guest terminated' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- the guest did not terminate cleanly"; exit 1; }
 	@echo "verify-z80: PASS -- a TPA program was given a 64 KB segment and ran"
 	@echo "            DRI's DUMP.COM in it through the real BDOS"
@@ -623,10 +623,10 @@ verify-z80pip: all
 		|| { echo "verify-z80pip: FAIL -- PIP.COM did not load"; exit 1; }
 	@grep -q '0080: 15 20 56 45 52 49 46 59' $(Z80PLOG) \
 		|| { echo "verify-z80pip: FAIL -- the command tail did not reach 0x0080"; exit 1; }
-	@grep -q 'z80: 13024 instructions, 29 BDOS calls, 1831 flag' $(Z80PLOG) \
+	@grep -q 'z80: 13024 instructions, 29 BDOS calls, 1205 flag' $(Z80PLOG) \
 		|| { echo "verify-z80pip: FAIL -- the target run did not take the same"; \
 		     echo "            path through PIP as the host run (13,024"; \
-		     echo "            instructions, 29 BDOS calls, 1831 flag"; \
+		     echo "            instructions, 29 BDOS calls, 1205 flag"; \
 		     echo "            materialisations -- src/shim/tests/z80test.c"; \
 		     echo "            t_pip()).  Read the divergence; do not relax this."; exit 1; }
 	@grep -q 'z80: the guest terminated' $(Z80PLOG) \
@@ -710,10 +710,10 @@ verify-z80save: all
 	@grep -q 'Beginning hex address' $(Z80SLOG) \
 		|| { echo "verify-z80save: FAIL -- the module was entered but did not run"; \
 		     echo "                on to ask for a range"; exit 1; }
-	@grep -q 'z80: 1520 instructions, 21 BDOS calls, 319 flag' $(Z80SLOG) \
+	@grep -q 'z80: 1520 instructions, 21 BDOS calls, 47 flag' $(Z80SLOG) \
 		|| { echo "verify-z80save: FAIL -- the target run did not take the same"; \
 		     echo "                path through SAVE as the host run (1,520"; \
-		     echo "                instructions, 21 BDOS calls, 319 flag"; \
+		     echo "                instructions, 21 BDOS calls, 47 flag"; \
 		     echo "                materialisations -- src/shim/tests/z80test.c t_save())."; \
 		     echo "                Read the divergence; do not relax this."; exit 1; }
 	@grep -q 'z80: the guest terminated' $(Z80SLOG) \
@@ -8309,19 +8309,19 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		     echo "             address-sanitizer report):"; \
 		     grep -E '^FAIL|ERROR: AddressSanitizer|SUMMARY:' build/verify-shim-i86.log; \
 		     exit 1; }
-	@grep -q 'z80test: 1011 checks, 0 failures' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 1011 of its"; \
+	@grep -q 'z80test: 1022 checks, 0 failures' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 1022 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1795 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1795 of its"; \
+	@grep -q 'i86test: 1801 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1801 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason
 	@# this target reads two lines of a log at all: a DMA bound that
 	@# changed the path DUMP or PIP takes would be a different program.
-	@grep -q 'z80test: DUMP ran 14314 instructions, 605 BDOS calls, 872 flag' build/verify-shim-z80.log \
-		|| { echo "verify-shim: FAIL -- DUMP no longer takes the 14,314/605/872 path"; \
+	@grep -q 'z80test: DUMP ran 14314 instructions, 605 BDOS calls, 164 flag' build/verify-shim-z80.log \
+		|| { echo "verify-shim: FAIL -- DUMP no longer takes the 14,314/605/164 path"; \
 		     echo "             verify-z80 gates on.  Read the divergence; do not"; \
 		     echo "             relax this."; exit 1; }
 	@grep -q 'i86test: PIP ran 9248 instructions, 58 BDOS calls' build/verify-shim-i86.log \
