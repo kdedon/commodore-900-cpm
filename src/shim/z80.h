@@ -116,62 +116,72 @@ struct z80 {
  * .x exactly as the hardware encodes them, so the executor's switch is
  * over classes and its inner dispatch is over a field the opcode already
  * gave us. */
+/*
+ * The values themselves are ORDERED BY MEASURED FREQUENCY over the
+ * corpus programs, most executed first.  The executor's switch compiles
+ * to a compare chain costing two instructions per case skipped, so an
+ * id's number is a per-execution tax and the ordering is worth about
+ * thirty Z8000 instructions a guest instruction.  Nothing else depends
+ * on the numbering -- change it by re-running tools/gen-z80dectab.c,
+ * which rebuilds the base map src/shim/z80deca.s carries.
+ */
 #define Z_BAD		0	/* not decodable as an instruction	*/
-#define Z_NOP		1
-#define Z_LDRR		2	/* MOV r,r'   .x = dst, .y = src	*/
-#define Z_LDRI		3	/* MVI r,n    .x = dst, .imm = n	*/
-#define Z_ALU		4	/* .x = 0..7 add adc sub sbb ana xra ora cmp */
+#define Z_ALU		1	/* .x = 0..7 add adc sub sbb ana xra ora cmp */
 				/* .y = src reg, or ZF_IMM and .imm	*/
-#define Z_INR		5	/* .x = reg				*/
-#define Z_DCR		6
-#define Z_LXI		7	/* .x = rp, .imm = nn			*/
-#define Z_DAD		8	/* .x = rp				*/
-#define Z_INX		9
-#define Z_DCX		10
-#define Z_LDAX		11	/* .x = 0 (BC) or 1 (DE)		*/
-#define Z_STAX		12
-#define Z_LDA		13	/* .imm = address			*/
-#define Z_STA		14
-#define Z_LHLD		15
+#define Z_JCC		2	/* .x = condition 0..7, .imm = target	*/
+#define Z_PUSH		3	/* .x = rp, 3 meaning PSW		*/
+#define Z_POP		4
+#define Z_LDRR		5	/* MOV r,r'   .x = dst, .y = src	*/
+#define Z_LDRI		6	/* MVI r,n    .x = dst, .imm = n	*/
+#define Z_JMP		7	/* .imm = target			*/
+#define Z_LHLD		8
+#define Z_CALL		9
+#define Z_RET		10
+#define Z_LXI		11	/* .x = rp, .imm = nn			*/
+#define Z_LDA		12	/* .imm = address			*/
+#define Z_INX		13
+#define Z_ROT		14	/* .x = 0 RLC 1 RRC 2 RAL 3 RAR		*/
+#define Z_HOOK		15	/* ED FE nn: OUR escape, see below	*/
 #define Z_SHLD		16
-#define Z_ROT		17	/* .x = 0 RLC 1 RRC 2 RAL 3 RAR		*/
-#define Z_DAA		18
-#define Z_CMA		19
-#define Z_STC		20
-#define Z_CMC		21
-#define Z_JMP		22	/* .imm = target			*/
-#define Z_JCC		23	/* .x = condition 0..7, .imm = target	*/
-#define Z_CALL		24
-#define Z_CCC		25
-#define Z_RET		26
-#define Z_RCC		27
-#define Z_RST		28	/* .x = 0..7; target is .x * 8		*/
-#define Z_PCHL		29
-#define Z_SPHL		30
-#define Z_XTHL		31
-#define Z_XCHG		32
-#define Z_PUSH		33	/* .x = rp, 3 meaning PSW		*/
-#define Z_POP		34
-#define Z_IN		35	/* no port hardware here		*/
-#define Z_OUT		36
-#define Z_EI		37
-#define Z_DI		38
-#define Z_HLT		39
+#define Z_DAD		17	/* .x = rp				*/
+#define Z_STA		18
+#define Z_INR		19	/* .x = reg				*/
+#define Z_LDAX		20	/* .x = 0 (BC) or 1 (DE)		*/
+#define Z_DCR		21
+#define Z_RCC		22
+#define Z_DCX		23
+#define Z_XCHG		24
+#define Z_NOP		25
+#define Z_CMA		26
+#define Z_PCHL		27
+#define Z_CCC		28
+/* --- below here the corpus never went.  Ordering among them is free. */
+#define Z_STAX		29
+#define Z_DAA		30
+#define Z_STC		31
+#define Z_CMC		32
+#define Z_RST		33	/* .x = 0..7; target is .x * 8		*/
+#define Z_SPHL		34
+#define Z_XTHL		35
+#define Z_IN		36	/* no port hardware here		*/
+#define Z_OUT		37
+#define Z_EI		38
+#define Z_DI		39
+#define Z_HLT		40
 /* --- the Z80 base-map additions.  These are the only Z80 opcodes DRI's
  * own CP/M 3 binaries reach: JR, one DJNZ, a pair of EX AF,AF', and no
  * CB/ED/DD/FD at all.  Hence these and not the groups below. */
-#define Z_JR		40	/* .x = 4 unconditional, else cc 0..3	*/
-#define Z_DJNZ		41
-#define Z_EXAF		42	/* EX AF,AF'				*/
-#define Z_EXX		43
+#define Z_JR		41	/* .x = 4 unconditional, else cc 0..3	*/
+#define Z_DJNZ		42
+#define Z_EXAF		43	/* EX AF,AF'				*/
+#define Z_EXX		44
 /* --- decoded for their LENGTH and their name, never executed.  Without
  * them a refusal could not tell an unimplemented instruction from bytes
  * that are not an instruction at all. */
-#define Z_CB		44	/* CB xx:  rotates and bit operations	*/
-#define Z_ED		45	/* ED xx:  block moves, 16-bit arithmetic */
-#define Z_IX		46	/* DD/FD xx: the index-register overlay	*/
-#define Z_IXCB		47	/* DD/FD CB d xx			*/
-#define Z_HOOK		48	/* ED FE nn: OUR escape, see below	*/
+#define Z_CB		45	/* CB xx:  rotates and bit operations	*/
+#define Z_ED		46	/* ED xx:  block moves, 16-bit arithmetic */
+#define Z_IX		47	/* DD/FD xx: the index-register overlay	*/
+#define Z_IXCB		48	/* DD/FD CB d xx			*/
 
 /* ED FE nn is the shim's three-byte hook encoding: one dispatch path
  * serves BDOS, BIOS vectors, and exit. Z80 prefixes remain decodable. */

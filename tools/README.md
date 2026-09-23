@@ -13,7 +13,7 @@ that reads them back — and it lives here because `make all` cannot run
 without it.
 
 Contents: `mkcpmfs.py`, `mkcpmdisk.py`, `cohfs.py`, `mkrsx.py`,
-`mkblob.py`, `mksig.py`, `stage-devpack.sh`, and the four fixture
+`mkblob.py`, `mksig.py`, `stage-devpack.sh`, `gen-z80dectab.c`, and the four fixture
 builders `ccpuser.py`, `setbfill.py`, `u0fill.py` and `mkcmdfix.py` (the
 CP/M-86 `.CMD` headers `make i86test` needs and no real file contains — a
 nonzero A-Base, an oversized group, a malformed file).
@@ -243,3 +243,22 @@ ownership manifests, no subdirectories.  Proven by producing a byte-identical
 `--mutate` breaks the boot chain on purpose and exists for `verify-bootgate`,
 which requires `bootgate.sh` to reject each broken medium.  Do not use it to
 build anything anyone is meant to boot.
+
+## gen-z80dectab.c — the CP/M-80 decoder's base map
+
+```
+cc -std=gnu89 -w -DHOSTCC -o build/gen-z80dectab \
+	tools/gen-z80dectab.c src/shim/z80dec.c
+build/gen-z80dectab
+```
+
+`src/shim/z80deca.s` carries a 256-entry table with the `Z_*` opcode-class
+numbers from `src/shim/z80.h` baked into it.  This emits that table, taking
+every field from the reference decoder `src/shim/z80dec.c`, so renumbering the
+classes — which is worth doing, because the executor's switch is a compare
+chain and a class's number is a per-execution cost — means re-running it and
+pasting the output back below the `btab:` label.
+
+Run by hand, deliberately: the build never invokes it, and `make verify-zdec`
+compares the two decoders field by field on the machine, which is what catches
+a table left stale.
