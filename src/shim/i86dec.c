@@ -32,8 +32,6 @@ int b;
 	return ((i16)(b & 0x80 ? (0xff00 | b) : b));
 }
 
-/* ALU sub-op names live in the opcode's own bits, so nothing maps them. */
-
 /* The eight prefix bytes: the four segment overrides, LOCK and its alias,
  * REPNE and REP.  One load says whether the prefix loop has anything to
  * do, which for almost every instruction it has not. */
@@ -54,6 +52,166 @@ static i8 ispfx[256] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* D0 */
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* E0 */
 	1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0	/* F0 */
+};
+
+/*
+ * The base map, held as data.  Outside the prefixes an opcode byte fixes
+ * the operation, its variant, and the shape of everything that follows,
+ * so a decode is three loads and an operand fetch.  Read the tables as a
+ * grid -- the row comment is the opcode of the first entry on the line.
+ *
+ * bop is the executable class and bx the variant it carries in .x: the
+ * ALU operation, the condition for Jcc and LOOP, the segment slot for
+ * the segment pushes and for LES/LDS, the string operation, the flag
+ * action.  bform is what follows the opcode.
+ *
+ * 60-6F are filled as 70-7F: an 8086 ignores the top bits there and
+ * executes the conditional branch, so both the length and the mnemonic
+ * come out right without folding the opcode first.
+ */
+#define D_IMM	0x0007		/* mask: the operand the opcode carries	*/
+#define D_IB	1		/* byte immediate			*/
+#define D_IW	2		/* word immediate			*/
+#define D_SB	3		/* sign-extended byte immediate		*/
+#define D_J8	4		/* signed byte branch displacement	*/
+#define D_JW	5		/* signed word branch displacement	*/
+#define D_DA	6		/* direct address, into .disp		*/
+#define D_FP	7		/* far pointer: offset, then segment	*/
+#define D_M	0x0008		/* a mod r/m byte follows		*/
+#define D_X	0x0010		/* .x is that byte's reg field		*/
+#define D_3	0x0020		/* the operand is a register: mod = 3	*/
+#define D_L	0x0040		/* ... named by the opcode's low three	*/
+#define D_O	0x0080		/* the tail below has the rest		*/
+#define D_I	0x0100		/* sets IN_IMM				*/
+#define D_D	0x0200		/* sets IN_DIR				*/
+#define D_W	0x0400		/* word operand				*/
+
+static i8 bop[256] = {
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_PUSHSR, I_POPSR,	/* 00 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_PUSHSR, I_POPSR,	/* 08 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_PUSHSR, I_POPSR,	/* 10 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_PUSHSR, I_POPSR,	/* 18 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_BAD, I_DAA,	/* 20 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_BAD, I_DAS,	/* 28 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_BAD, I_AAA,	/* 30 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_ALU, I_BAD, I_AAS,	/* 38 */
+	I_INC, I_INC, I_INC, I_INC, I_INC, I_INC, I_INC, I_INC,	/* 40 */
+	I_DEC, I_DEC, I_DEC, I_DEC, I_DEC, I_DEC, I_DEC, I_DEC,	/* 48 */
+	I_PUSH, I_PUSH, I_PUSH, I_PUSH, I_PUSH, I_PUSH, I_PUSH, I_PUSH,	/* 50 */
+	I_POP, I_POP, I_POP, I_POP, I_POP, I_POP, I_POP, I_POP,	/* 58 */
+	I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC,	/* 60 */
+	I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC,	/* 68 */
+	I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC,	/* 70 */
+	I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC, I_JCC,	/* 78 */
+	I_ALU, I_ALU, I_ALU, I_ALU, I_TEST, I_TEST, I_XCHG, I_XCHG,	/* 80 */
+	I_MOV, I_MOV, I_MOV, I_MOV, I_MOVSR, I_LEA, I_MOVSR, I_POP,	/* 88 */
+	I_NOP, I_XCHG, I_XCHG, I_XCHG, I_XCHG, I_XCHG, I_XCHG, I_XCHG,	/* 90 */
+	I_CBW, I_CWD, I_CALLF, I_WAIT, I_PUSHF, I_POPF, I_SAHF, I_LAHF,	/* 98 */
+	I_MOV, I_MOV, I_MOV, I_MOV, I_STRING, I_STRING, I_STRING,
+		I_STRING,					/* A0 */
+	I_TEST, I_TEST, I_STRING, I_STRING, I_STRING, I_STRING,
+		I_STRING, I_STRING,				/* A8 */
+	I_MOV, I_MOV, I_MOV, I_MOV, I_MOV, I_MOV, I_MOV, I_MOV,	/* B0 */
+	I_MOV, I_MOV, I_MOV, I_MOV, I_MOV, I_MOV, I_MOV, I_MOV,	/* B8 */
+	I_RET, I_RET, I_RET, I_RET, I_LXS, I_LXS, I_MOV, I_MOV,	/* C0 */
+	I_RETF, I_RETF, I_RETF, I_RETF, I_INT, I_INT, I_INTO, I_IRET,	/* C8 */
+	I_SHIFT, I_SHIFT, I_SHIFT, I_SHIFT, I_AAM, I_AAD, I_BAD, I_XLAT, /* D0 */
+	I_ESC, I_ESC, I_ESC, I_ESC, I_ESC, I_ESC, I_ESC, I_ESC,	/* D8 */
+	I_LOOP, I_LOOP, I_LOOP, I_LOOP, I_IO, I_IO, I_IO, I_IO,	/* E0 */
+	I_CALL, I_JMP, I_JMPF, I_JMP, I_IO, I_IO, I_IO, I_IO,	/* E8 */
+	I_BAD, I_BAD, I_BAD, I_BAD, I_HLT, I_FLAG, I_BAD, I_BAD,	/* F0 */
+	I_FLAG, I_FLAG, I_FLAG, I_FLAG, I_FLAG, I_FLAG, I_BAD, I_BAD	/* F8 */
+};
+
+static i8 bx[256] = {
+	0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,		/* 00 */
+	2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,		/* 10 */
+	4, 4, 4, 4, 4, 4, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0,		/* 20 */
+	6, 6, 6, 6, 6, 6, 0, 0, 7, 7, 7, 7, 7, 7, 0, 0,		/* 30 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/* 40 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/* 50 */
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,	/* 60 */
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,	/* 70 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/* 80 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/* 90 */
+	0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 2, 2, 3, 3, 4, 4,		/* A0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/* B0 */
+	0, 0, 0, 0, S_ES, S_DS, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	/* C0 */
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		/* D0 */
+	0, 1, 2, 3, 0, 0, 1, 1, 0, 0, 0, 0, 2, 2, 3, 3,		/* E0 */
+	0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0		/* F0 */
+};
+
+static i16 bform[256] = {
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 00 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 04 */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 08 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 0C */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 10 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 14 */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 18 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 1C */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 20 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 24 */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 28 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 2C */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 30 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 34 */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 38 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, 0,				/* 3C */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 40 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 44 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 48 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 4C */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 50 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 54 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 58 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 5C */
+	D_J8, D_J8, D_J8, D_J8,					/* 60 */
+	D_J8, D_J8, D_J8, D_J8,					/* 64 */
+	D_J8, D_J8, D_J8, D_J8,					/* 68 */
+	D_J8, D_J8, D_J8, D_J8,					/* 6C */
+	D_J8, D_J8, D_J8, D_J8,					/* 70 */
+	D_J8, D_J8, D_J8, D_J8,					/* 74 */
+	D_J8, D_J8, D_J8, D_J8,					/* 78 */
+	D_J8, D_J8, D_J8, D_J8,					/* 7C */
+	D_M|D_X|D_IB|D_I, D_M|D_X|D_IW|D_W|D_I, D_M|D_X|D_IB|D_I,
+		D_M|D_X|D_SB|D_W|D_I,					/* 80 */
+	D_M, D_M|D_W, D_M, D_M|D_W,					/* 84 */
+	D_M, D_M|D_W, D_M|D_D, D_M|D_W|D_D,				/* 88 */
+	D_M|D_W|D_O, D_M|D_W, D_M|D_W|D_D|D_O, D_M|D_W,		/* 8C */
+	0, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,			/* 90 */
+	D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W, D_3|D_L|D_W,		/* 94 */
+	0, 0, D_FP, 0,							/* 98 */
+	0, 0, 0, 0,							/* 9C */
+	D_DA|D_D, D_DA|D_W|D_D, D_DA, D_DA|D_W,			/* A0 */
+	0, D_W, 0, D_W,						/* A4 */
+	D_3|D_IB|D_I, D_3|D_IW|D_W|D_I, 0, D_W,			/* A8 */
+	0, D_W, 0, D_W,						/* AC */
+	D_3|D_L|D_IB|D_I, D_3|D_L|D_IB|D_I, D_3|D_L|D_IB|D_I,
+		D_3|D_L|D_IB|D_I,					/* B0 */
+	D_3|D_L|D_IB|D_I, D_3|D_L|D_IB|D_I, D_3|D_L|D_IB|D_I,
+		D_3|D_L|D_IB|D_I,					/* B4 */
+	D_3|D_L|D_IW|D_W|D_I, D_3|D_L|D_IW|D_W|D_I,
+		D_3|D_L|D_IW|D_W|D_I, D_3|D_L|D_IW|D_W|D_I,		/* B8 */
+	D_3|D_L|D_IW|D_W|D_I, D_3|D_L|D_IW|D_W|D_I,
+		D_3|D_L|D_IW|D_W|D_I, D_3|D_L|D_IW|D_W|D_I,		/* BC */
+	D_IW|D_I, 0, D_IW|D_I, 0,					/* C0 */
+	D_M|D_W, D_M|D_W, D_M|D_IB|D_I, D_M|D_IW|D_W|D_I,		/* C4 */
+	D_IW|D_I, 0, D_IW|D_I, 0,					/* C8 */
+	D_O, D_IB, 0, 0,						/* CC */
+	D_M|D_X|D_O, D_M|D_X|D_O|D_W, D_M|D_X|D_O, D_M|D_X|D_O|D_W,	/* D0 */
+	D_IB, D_IB, 0, 0,						/* D4 */
+	D_M, D_M, D_M, D_M,						/* D8 */
+	D_M, D_M, D_M, D_M,						/* DC */
+	D_J8, D_J8, D_J8, D_J8,					/* E0 */
+	D_IB, D_IB|D_W, D_IB, D_IB|D_W,				/* E4 */
+	D_JW, D_JW, D_FP, D_J8,					/* E8 */
+	0, D_W, 0, D_W,						/* EC */
+	0, 0, 0, 0,							/* F0 */
+	0, D_O, D_M|D_O, D_M|D_W|D_O,					/* F4 */
+	D_O, D_O, D_O, D_O,						/* F8 */
+	D_O, D_O, D_M|D_O, D_M|D_W|D_O					/* FC */
 };
 
 /* The default segment for a mod r/m memory operand.  BP as a base means
@@ -131,12 +289,9 @@ char *cs;
 i16 ip;
 struct i86in *in;
 {
-	register int op, n;
+	register int op, n, f, k;
 
-	in->op = I_BAD;
 	in->fl = 0;
-	in->w = 0;
-	in->x = 0;
 	in->mod = 0;
 	in->reg = 0;
 	in->rm = 0;
@@ -164,7 +319,7 @@ struct i86in *in;
 	 * has a use for three, one segment override, one repeat and one
 	 * LOCK -- so no legal instruction decodes differently for this.
 	 * A sixteenth byte that is still a prefix falls out of the loop
-	 * and reaches the switch as an opcode, where it is I_BAD. */
+	 * and reaches the grid as an opcode, where it is I_BAD. */
 	op = cs[ip] & 0xff;
 	while (ispfx[op]) {
 		if (n >= I86MAXPFX) {
@@ -197,403 +352,118 @@ struct i86in *in;
 	}
 	n++;					/* the opcode byte itself */
 
-	/* 0x60-0x6F have no encoding of their own on an 8086: the top
-	 * bits are ignored and they execute as 0x70-0x7F.  Fold them
-	 * here so both the length and the mnemonic are right. */
-	if (op >= 0x60 && op <= 0x6f)
-		op += 0x10;
-
-	switch (op) {
-
-	/* ---- 00-3F: the ALU eight, in six forms each, with a segment
-	 * prefix or a BCD adjust in place of the two that would follow. */
-	case 0x00: case 0x01: case 0x02: case 0x03: case 0x04: case 0x05:
-	case 0x08: case 0x09: case 0x0a: case 0x0b: case 0x0c: case 0x0d:
-	case 0x10: case 0x11: case 0x12: case 0x13: case 0x14: case 0x15:
-	case 0x18: case 0x19: case 0x1a: case 0x1b: case 0x1c: case 0x1d:
-	case 0x20: case 0x21: case 0x22: case 0x23: case 0x24: case 0x25:
-	case 0x28: case 0x29: case 0x2a: case 0x2b: case 0x2c: case 0x2d:
-	case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: case 0x35:
-	case 0x38: case 0x39: case 0x3a: case 0x3b: case 0x3c: case 0x3d:
-		in->op = I_ALU;
-		in->x = (i8)((op >> 3) & 7);
-		in->w = (i8)(op & 1);
-		if ((op & 7) < 4) {		/* Eb,Gb / Ev,Gv / Gb,Eb / Gv,Ev */
-			if (op & 2)
-				in->fl |= IN_DIR;
-			n = modrm(cs, ip, n, in);
-		} else {			/* AL,Ib / AX,Iv	*/
-			in->fl |= IN_IMM;
-			in->mod = 3;
-			in->rm = R_AX;
-			in->reg = R_AX;
-			if (in->w) {
-				in->imm = iw(cs, ip, n);
-				n += 2;
-			} else {
-				in->imm = (i16)fb(cs, ip, n);
-				n++;
-			}
-		}
-		break;
-
-	case 0x06: case 0x0e: case 0x16: case 0x1e:
-		in->op = I_PUSHSR;
-		in->x = (i8)((op >> 3) & 3);
-		break;
-	case 0x07: case 0x0f: case 0x17: case 0x1f:
-		in->op = I_POPSR;	/* 0x0F really is POP CS here	*/
-		in->x = (i8)((op >> 3) & 3);
-		break;
-
-	case 0x27: in->op = I_DAA; break;
-	case 0x2f: in->op = I_DAS; break;
-	case 0x37: in->op = I_AAA; break;
-	case 0x3f: in->op = I_AAS; break;
-
-	/* ---- 40-5F: the register-direct one-byte forms. */
-	case 0x40: case 0x41: case 0x42: case 0x43:
-	case 0x44: case 0x45: case 0x46: case 0x47:
-		in->op = I_INC; in->w = 1; in->mod = 3; in->rm = (i8)(op & 7);
-		break;
-	case 0x48: case 0x49: case 0x4a: case 0x4b:
-	case 0x4c: case 0x4d: case 0x4e: case 0x4f:
-		in->op = I_DEC; in->w = 1; in->mod = 3; in->rm = (i8)(op & 7);
-		break;
-	case 0x50: case 0x51: case 0x52: case 0x53:
-	case 0x54: case 0x55: case 0x56: case 0x57:
-		in->op = I_PUSH; in->w = 1; in->mod = 3; in->rm = (i8)(op & 7);
-		break;
-	case 0x58: case 0x59: case 0x5a: case 0x5b:
-	case 0x5c: case 0x5d: case 0x5e: case 0x5f:
-		in->op = I_POP; in->w = 1; in->mod = 3; in->rm = (i8)(op & 7);
-		break;
-
-	/* ---- 70-7F: the sixteen short conditionals. */
-	case 0x70: case 0x71: case 0x72: case 0x73:
-	case 0x74: case 0x75: case 0x76: case 0x77:
-	case 0x78: case 0x79: case 0x7a: case 0x7b:
-	case 0x7c: case 0x7d: case 0x7e: case 0x7f:
-		in->op = I_JCC;
-		in->x = (i8)(op & 15);
-		in->disp = sx(fb(cs, ip, n));
-		n++;
-		in->disp = (i16)(in->disp + ip + n);
-		break;
-
-	/* ---- 80-83: the ALU eight against an immediate. */
-	case 0x80: case 0x81: case 0x82: case 0x83:
-		in->op = I_ALU;
-		in->w = (i8)(op & 1);
+	/* ---- what the opcode byte alone settles.  D_I and D_D sit two
+	 * bits above IN_IMM and IN_DIR so one shift places both. */
+	f = (int)bform[op];
+	in->op = bop[op];
+	in->x = bx[op];
+	in->fl |= (i8)((f >> 2) & (IN_IMM|IN_DIR));
+	in->w = (i8)((f >> 10) & 1);
+	if (f & D_M)
 		n = modrm(cs, ip, n, in);
+	if (f & D_3) {
+		in->mod = 3;		/* .reg and .rm are already AX	*/
+		if (f & D_L)
+			in->rm = (i8)(op & 7);
+	}
+	if (f & D_X)
 		in->x = in->reg;
-		in->fl |= IN_IMM;
-		if (op == 0x81) {
-			in->imm = iw(cs, ip, n);
-			n += 2;
-		} else if (op == 0x83) {
-			in->imm = sx(fb(cs, ip, n));	/* sign-extended */
-			n++;
-		} else {
+
+	/* ---- and the operand it carries, if any. */
+	k = f & D_IMM;
+	if (k) {
+		if (k == D_IB) {
 			in->imm = (i16)fb(cs, ip, n);
 			n++;
-		}
-		break;
-
-	case 0x84: case 0x85:
-		in->op = I_TEST; in->w = (i8)(op & 1);
-		n = modrm(cs, ip, n, in);
-		break;
-	case 0x86: case 0x87:
-		in->op = I_XCHG; in->w = (i8)(op & 1);
-		n = modrm(cs, ip, n, in);
-		break;
-	case 0x88: case 0x89: case 0x8a: case 0x8b:
-		in->op = I_MOV; in->w = (i8)(op & 1);
-		if (op & 2)
-			in->fl |= IN_DIR;
-		n = modrm(cs, ip, n, in);
-		break;
-	case 0x8c: case 0x8e:
-		in->op = I_MOVSR; in->w = 1;
-		if (op & 2)
-			in->fl |= IN_DIR;	/* 8E: Sreg <- Ew	*/
-		n = modrm(cs, ip, n, in);
-		in->x = (i8)(in->reg & 3);
-		break;
-	case 0x8d:
-		in->op = I_LEA; in->w = 1;
-		n = modrm(cs, ip, n, in);
-		break;
-	case 0x8f:
-		in->op = I_POP; in->w = 1;
-		n = modrm(cs, ip, n, in);
-		break;
-
-	case 0x90:
-		in->op = I_NOP;
-		break;
-	case 0x91: case 0x92: case 0x93:
-	case 0x94: case 0x95: case 0x96: case 0x97:
-		in->op = I_XCHG; in->w = 1;
-		in->mod = 3; in->reg = R_AX; in->rm = (i8)(op & 7);
-		break;
-
-	case 0x98: in->op = I_CBW; break;
-	case 0x99: in->op = I_CWD; break;
-	case 0x9a:
-		in->op = I_CALLF;
-		in->imm = iw(cs, ip, n);
-		in->imm2 = iw(cs, ip, n + 2);
-		n += 4;
-		break;
-	case 0x9b: in->op = I_WAIT; break;
-	case 0x9c: in->op = I_PUSHF; break;
-	case 0x9d: in->op = I_POPF; break;
-	case 0x9e: in->op = I_SAHF; break;
-	case 0x9f: in->op = I_LAHF; break;
-
-	/* ---- A0-A3: accumulator to and from a direct address.  These
-	 * carry no mod r/m, so the segment default is DS with no BP rule
-	 * to consider; a prefix still overrides it. */
-	case 0xa0: case 0xa1: case 0xa2: case 0xa3:
-		in->op = I_MOV;
-		in->w = (i8)(op & 1);
-		in->mod = 0; in->rm = 6; in->reg = R_AX;
-		in->fl |= IN_MODRM | IN_MEM;
-		if (!(op & 2))
-			in->fl |= IN_DIR;	/* A0/A1: AL/AX <- mem	*/
-		in->disp = iw(cs, ip, n);
-		n += 2;
-		break;
-
-	case 0xa4: case 0xa5: case 0xa6: case 0xa7:
-	case 0xaa: case 0xab: case 0xac: case 0xad:
-	case 0xae: case 0xaf:
-		in->op = I_STRING;
-		in->w = (i8)(op & 1);
-		if (op < 0xa8)
-			in->x = (i8)((op >> 1) & 1);	/* 0 MOVS, 1 CMPS */
-		else
-			in->x = (i8)(2 + ((op - 0xaa) >> 1)); /* STOS LODS SCAS */
-		break;
-	case 0xa8: case 0xa9:
-		in->op = I_TEST;
-		in->w = (i8)(op & 1);
-		in->mod = 3; in->rm = R_AX; in->reg = R_AX;
-		in->fl |= IN_IMM;
-		if (in->w) {
+		} else if (k == D_IW) {
 			in->imm = iw(cs, ip, n);
 			n += 2;
-		} else {
-			in->imm = (i16)fb(cs, ip, n);
+		} else if (k == D_J8) {
+			in->disp = sx(fb(cs, ip, n));
 			n++;
-		}
-		break;
-
-	/* ---- B0-BF: immediate into a register. */
-	case 0xb0: case 0xb1: case 0xb2: case 0xb3:
-	case 0xb4: case 0xb5: case 0xb6: case 0xb7:
-		in->op = I_MOV; in->w = 0;
-		in->mod = 3; in->rm = (i8)(op & 7);
-		in->fl |= IN_IMM;
-		in->imm = (i16)fb(cs, ip, n);
-		n++;
-		break;
-	case 0xb8: case 0xb9: case 0xba: case 0xbb:
-	case 0xbc: case 0xbd: case 0xbe: case 0xbf:
-		in->op = I_MOV; in->w = 1;
-		in->mod = 3; in->rm = (i8)(op & 7);
-		in->fl |= IN_IMM;
-		in->imm = iw(cs, ip, n);
-		n += 2;
-		break;
-
-	case 0xc0: case 0xc2:			/* C0 aliases C2	*/
-		in->op = I_RET;
-		in->imm = iw(cs, ip, n);
-		in->fl |= IN_IMM;
-		n += 2;
-		break;
-	case 0xc1: case 0xc3:
-		in->op = I_RET;
-		break;
-	case 0xc4: case 0xc5:
-		in->op = I_LXS; in->w = 1;
-		in->x = (i8)(op == 0xc4 ? S_ES : S_DS);
-		n = modrm(cs, ip, n, in);
-		break;
-	case 0xc6: case 0xc7:
-		in->op = I_MOV;
-		in->w = (i8)(op & 1);
-		n = modrm(cs, ip, n, in);
-		in->fl |= IN_IMM;
-		if (in->w) {
-			in->imm = iw(cs, ip, n);
+			in->disp = (i16)(in->disp + ip + n);
+		} else if (k == D_SB) {
+			in->imm = sx(fb(cs, ip, n));
+			n++;
+		} else if (k == D_JW) {
+			in->disp = iw(cs, ip, n);
+			n += 2;
+			in->disp = (i16)(in->disp + ip + n);
+		} else if (k == D_DA) {
+			/* A0-A3 carry no mod r/m, so the segment default is
+			 * DS with no BP rule to consider; a prefix still
+			 * overrides it. */
+			in->fl |= IN_MODRM | IN_MEM;
+			in->rm = 6;
+			in->disp = iw(cs, ip, n);
 			n += 2;
 		} else {
-			in->imm = (i16)fb(cs, ip, n);
-			n++;
+			in->imm = iw(cs, ip, n);
+			in->imm2 = iw(cs, ip, n + 2);
+			n += 4;
 		}
-		break;
-	case 0xc8: case 0xca:			/* C8 aliases CA	*/
-		in->op = I_RETF;
-		in->imm = iw(cs, ip, n);
-		in->fl |= IN_IMM;
-		n += 2;
-		break;
-	case 0xc9: case 0xcb:
-		in->op = I_RETF;
-		break;
-	case 0xcc:
-		in->op = I_INT; in->imm = 3;
-		break;
-	case 0xcd:
-		in->op = I_INT;
-		in->imm = (i16)fb(cs, ip, n);
-		n++;
-		break;
-	case 0xce: in->op = I_INTO; break;
-	case 0xcf: in->op = I_IRET; break;
+	}
 
-	/* ---- D0-D3: the shift and rotate eight. */
-	case 0xd0: case 0xd1: case 0xd2: case 0xd3:
-		in->op = I_SHIFT;
-		in->w = (i8)(op & 1);
-		n = modrm(cs, ip, n, in);
-		in->x = in->reg;
-		/* imm2 records where the count comes from: 0 = the
-		 * literal 1, 1 = CL.  The 8086 does NOT mask that count
-		 * -- masking to 5 bits arrived with the 186 -- so a CL
-		 * of 200 really is 200 iterations. */
-		in->imm2 = (i16)(op & 2 ? 1 : 0);
-		break;
-
-	case 0xd4:
-		in->op = I_AAM; in->imm = (i16)fb(cs, ip, n); n++;
-		break;
-	case 0xd5:
-		in->op = I_AAD; in->imm = (i16)fb(cs, ip, n); n++;
-		break;
-	case 0xd6:
-		in->op = I_BAD;		/* SALC: undocumented, refused	*/
-		break;
-	case 0xd7:
-		in->op = I_XLAT;
-		if (!(in->fl & IN_SEGOVR))
-			in->seg = S_DS;
-		break;
-
-	case 0xd8: case 0xd9: case 0xda: case 0xdb:
-	case 0xdc: case 0xdd: case 0xde: case 0xdf:
-		in->op = I_ESC;		/* 8087; there is not one here	*/
-		n = modrm(cs, ip, n, in);
-		break;
-
-	case 0xe0: case 0xe1: case 0xe2: case 0xe3:
-		in->op = I_LOOP;
-		in->x = (i8)(op & 3);
-		in->disp = sx(fb(cs, ip, n));
-		n++;
-		in->disp = (i16)(in->disp + ip + n);
-		break;
-
-	case 0xe4: case 0xe5: case 0xe6: case 0xe7:
-		in->op = I_IO; in->w = (i8)(op & 1);
-		in->x = (i8)((op >> 1) & 1);	/* 0 = IN, 1 = OUT	*/
-		in->imm = (i16)fb(cs, ip, n);
-		n++;
-		break;
-	case 0xec: case 0xed: case 0xee: case 0xef:
-		in->op = I_IO; in->w = (i8)(op & 1);
-		in->x = (i8)(((op >> 1) & 1) | 2);	/* | 2 = via DX	*/
-		break;
-
-	case 0xe8:
-		in->op = I_CALL;
-		in->disp = iw(cs, ip, n);
-		n += 2;
-		in->disp = (i16)(in->disp + ip + n);
-		break;
-	case 0xe9:
-		in->op = I_JMP;
-		in->disp = iw(cs, ip, n);
-		n += 2;
-		in->disp = (i16)(in->disp + ip + n);
-		break;
-	case 0xea:
-		in->op = I_JMPF;
-		in->imm = iw(cs, ip, n);
-		in->imm2 = iw(cs, ip, n + 2);
-		n += 4;
-		break;
-	case 0xeb:
-		in->op = I_JMP;
-		in->disp = sx(fb(cs, ip, n));
-		n++;
-		in->disp = (i16)(in->disp + ip + n);
-		break;
-
-	case 0xf4: in->op = I_HLT; break;
-	case 0xf5: in->op = I_FLAG; in->imm = F_CF; in->x = 2; break;
-
-	/* ---- F6/F7: TEST-immediate, the two unaries, and the four
-	 * widening multiply/divide forms, all under one mod r/m. */
-	case 0xf6: case 0xf7:
-		in->w = (i8)(op & 1);
-		n = modrm(cs, ip, n, in);
-		switch (in->reg) {
-		case 0: case 1:			/* /1 aliases /0	*/
-			in->op = I_TEST;
-			in->fl |= IN_IMM;
-			if (in->w) {
-				in->imm = iw(cs, ip, n);
-				n += 2;
-			} else {
-				in->imm = (i16)fb(cs, ip, n);
-				n++;
+	/* ---- the handful of opcodes a grid entry cannot finish.  Each
+	 * one that needs a mod r/m byte has had it consumed already. */
+	if (f & D_O) {
+		if (op == 0xfe || op == 0xff) {
+			switch (in->reg) {
+			case 0: in->op = I_INC; break;
+			case 1: in->op = I_DEC; break;
+			case 2: if (op == 0xff) { in->op = I_CALLI; in->x = 0; }
+				break;
+			case 3: if (op == 0xff) { in->op = I_CALLI; in->x = 1; }
+				break;
+			case 4: if (op == 0xff) { in->op = I_JMPI; in->x = 0; }
+				break;
+			case 5: if (op == 0xff) { in->op = I_JMPI; in->x = 1; }
+				break;
+			case 6: if (op == 0xff) in->op = I_PUSH;
+				break;
+			default:
+				break;			/* /7 -- and FE /2..7	*/
 			}
-			break;
-		case 2: in->op = I_NOT; break;
-		case 3: in->op = I_NEG; break;
-		default:
-			in->op = I_MULDIV;
-			in->x = in->reg;
-			break;
+		} else if (op >= 0xd0 && op <= 0xd3) {
+			/* imm2 records where the count comes from: 0 = the
+			 * literal 1, 1 = CL.  The 8086 does NOT mask that
+			 * count -- masking to 5 bits arrived with the 186 --
+			 * so a CL of 200 really is 200 iterations. */
+			in->imm2 = (i16)(op & 2 ? 1 : 0);
+		} else if (op == 0xf6 || op == 0xf7) {
+			/* TEST-immediate, the two unaries, and the four
+			 * widening multiply/divide forms, all under one
+			 * mod r/m. */
+			switch (in->reg) {
+			case 0: case 1:			/* /1 aliases /0	*/
+				in->op = I_TEST;
+				in->fl |= IN_IMM;
+				if (in->w) {
+					in->imm = iw(cs, ip, n);
+					n += 2;
+				} else {
+					in->imm = (i16)fb(cs, ip, n);
+					n++;
+				}
+				break;
+			case 2: in->op = I_NOT; break;
+			case 3: in->op = I_NEG; break;
+			default:
+				in->op = I_MULDIV;
+				in->x = in->reg;
+				break;
+			}
+		} else if (op == 0x8c || op == 0x8e) {
+			in->x = (i8)(in->reg & 3);
+		} else if (op == 0xcc) {
+			in->imm = 3;		/* the INT 3 breakpoint	*/
+		} else if (op >= 0xfc) {
+			in->imm = F_DF;
+		} else if (op >= 0xfa) {
+			in->imm = F_IF;
+		} else {
+			in->imm = F_CF;		/* F5, F8, F9		*/
 		}
-		break;
-
-	case 0xf8: in->op = I_FLAG; in->imm = F_CF; in->x = 0; break;
-	case 0xf9: in->op = I_FLAG; in->imm = F_CF; in->x = 1; break;
-	case 0xfa: in->op = I_FLAG; in->imm = F_IF; in->x = 0; break;
-	case 0xfb: in->op = I_FLAG; in->imm = F_IF; in->x = 1; break;
-	case 0xfc: in->op = I_FLAG; in->imm = F_DF; in->x = 0; break;
-	case 0xfd: in->op = I_FLAG; in->imm = F_DF; in->x = 1; break;
-
-	case 0xfe: case 0xff:
-		in->w = (i8)(op & 1);
-		n = modrm(cs, ip, n, in);
-		switch (in->reg) {
-		case 0: in->op = I_INC; break;
-		case 1: in->op = I_DEC; break;
-		case 2: if (op == 0xff) { in->op = I_CALLI; in->x = 0; }
-			break;
-		case 3: if (op == 0xff) { in->op = I_CALLI; in->x = 1; }
-			break;
-		case 4: if (op == 0xff) { in->op = I_JMPI; in->x = 0; }
-			break;
-		case 5: if (op == 0xff) { in->op = I_JMPI; in->x = 1; }
-			break;
-		case 6: if (op == 0xff) in->op = I_PUSH;
-			break;
-		default:
-			break;			/* /7 -- and FE /2..7	*/
-		}
-		break;
-
-	default:
-		in->op = I_BAD;			/* 0xF1 reached as an	*/
-		break;				/* opcode, and nothing else */
 	}
 
 	if (n < 1)
