@@ -404,7 +404,8 @@ $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 # z80mnem.c and not beside the decoder they came from.
 Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80mnem.o \
 	  $(UOBJDIR)/z80exec.o \
-	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o
+	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o \
+	  $(UOBJDIR)/segclra.o
 $(Z80OBJ): src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h
 
 $(UOBJDIR)/z80.lout: $(Z80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
@@ -439,7 +440,8 @@ $(UZDEC): $(UOBJDIR)/zdect.lout $(LOUT2CPM)
 # decoder and i86dec.c is the reference the host suite compiles; IDECT
 # compares them.
 I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86deca.o $(UOBJDIR)/i86exec.o \
-	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o
+	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o \
+	  $(UOBJDIR)/segclra.o
 $(I86OBJ): src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h
 
 $(UOBJDIR)/i86.lout: $(I86OBJ) $(UOBJDIR)/crt0.o $(ULIB)

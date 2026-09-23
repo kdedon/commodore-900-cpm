@@ -395,3 +395,4 @@ extern int i86place();		/* bind groups to segment slots		*/
 extern char *i86cerr();		/* the refusal text for a CE_* code	*/
 extern i32 i86have();		/* image bytes a group's file holds	*/
 extern int i86bpage();		/* build the 256-byte base page		*/
+extern int segclr();		/* zero the 64 KB segment at p		*/

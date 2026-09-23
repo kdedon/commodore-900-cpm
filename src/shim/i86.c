@@ -241,18 +241,6 @@ char *name, *stage;
 	return (n);
 }
 
-/* 64 KB of zeroes, a byte at a time through a far pointer.  The BSS the
- * guest is entitled to is the difference between G-Length and G-Min,
- * and a .CMD supplies no bytes for it. */
-static VOID segzero(p)
-char *p;
-{
-	register long i;
-
-	for (i = 0; i < 0x10000L; i++)
-		p[i] = 0;
-}
-
 static VOID segcopy(dst, src, n)
 char *dst, *src;
 long n;
@@ -465,7 +453,7 @@ char *argv[];
 		xa = SEGBASE(gseg[i]);
 		i86spar[i] = (i16) (0x1000 * (i + 1));
 		i86sbase[i] = (char *) xa;
-		segzero(i86sbase[i]);
+		segclr(i86sbase[i]);	/* the BSS a .CMD has no bytes for */
 	}
 	i86nseg = need;
 	cmem = i86sbase[0];
@@ -504,7 +492,7 @@ char *argv[];
 	 * table with no handlers in it, which is what leaves INT 0E0h
 	 * the seam's until a guest writes a vector of its own.
 	 */
-	segzero(stage);
+	segclr(stage);
 	i86spar[need] = 0;
 	i86sbase[need] = stage;
 	i86nseg = need + 1;

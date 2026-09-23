@@ -359,6 +359,7 @@ extern int z80ww();		/* (m, addr, v)				*/
 				/* furniture and above the .COM half	*/
 
 extern int z80load();		/* place an image and build page zero	*/
+extern int segclr();		/* zero the 64 KB segment at p		*/
 extern char *z80lerr();		/* the refusal text for a CL_* code	*/
 extern int z80tail();		/* build the tail and the two FCBs	*/
 extern int z80furn();		/* plant the fake BDOS/BIOS and page zero */

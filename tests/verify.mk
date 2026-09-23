@@ -409,7 +409,7 @@ splitcheck: build/splitchk
 # real DRI hex with real checksums around a hand-assembled 8086 program,
 # and I86T.A86, ASM86's.
 I86SRC = src/shim/i86dec.c src/shim/i86exec.c src/shim/i86load.c \
-	 src/shim/i86bdos.c src/shim/gdpb.c
+	 src/shim/i86bdos.c src/shim/gdpb.c src/shim/segclr.c
 I86CORPUS = src/shim/tests/i86corpus
 I86FIX = build/cmdfix
 .PHONY: i86test
@@ -476,7 +476,7 @@ i86test: build/i86test $(I86CORPUS)/SOURCES $(I86FIX)/MANIFEST
 # native one of.  See that directory's SOURCES for what each of the four
 # is here to answer.
 Z80SRC = src/shim/z80dec.c src/shim/z80mnem.c src/shim/z80exec.c \
-	 src/shim/z80load.c src/shim/z80bdos.c src/shim/gdpb.c
+	 src/shim/z80load.c src/shim/z80bdos.c src/shim/gdpb.c src/shim/segclr.c
 Z80CORPUS = src/shim/tests/z80corpus
 .PHONY: z80test
 build/z80test: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)

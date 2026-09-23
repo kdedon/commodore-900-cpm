@@ -500,8 +500,7 @@ long n;
 	m->halt = 0;
 	m->m = mem;
 
-	for (i = 0; i < 0x10000L; i++)
-		mem[i] = 0;
+	segclr(mem);
 
 	z80nrsx = 0;
 	z80rsxonly = 0;

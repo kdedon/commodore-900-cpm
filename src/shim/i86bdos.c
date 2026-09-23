@@ -472,8 +472,7 @@ char *f;
 	for (i = 0; i < ng; i++) {
 		i86spar[i] = par[i];
 		i86sbase[i] = base[i];
-		for (k = 0; k < 0x10000L; k++)
-			base[i][k] = 0;
+		segclr(base[i]);
 	}
 	i86nseg = ng;
 	for (i = 0; i < (int)sizeof pm; i++)
