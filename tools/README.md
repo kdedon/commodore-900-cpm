@@ -13,7 +13,7 @@ that reads them back — and it lives here because `make all` cannot run
 without it.
 
 Contents: `mkcpmfs.py`, `mkcpmdisk.py`, `cohfs.py`, `mkrsx.py`,
-`mkblob.py`, `mksig.py`, `stage-devpack.sh`, `gen-z80dectab.c`, and the four fixture
+`mkblob.py`, `mksig.py`, `stage-devpack.sh`, `gen-z80dectab.c`, `gen-i86dectab.c`, and the four fixture
 builders `ccpuser.py`, `setbfill.py`, `u0fill.py` and `mkcmdfix.py` (the
 CP/M-86 `.CMD` headers `make i86test` needs and no real file contains — a
 nonzero A-Base, an oversized group, a malformed file).
@@ -262,3 +262,22 @@ pasting the output back below the `btab:` label.
 Run by hand, deliberately: the build never invokes it, and `make verify-zdec`
 compares the two decoders field by field on the machine, which is what catches
 a table left stale.
+
+## gen-i86dectab.c — the CP/M-86 decoder's tables
+
+```
+cc -std=gnu89 -w -DHOSTCC -o build/gen-i86dectab tools/gen-i86dectab.c
+build/gen-i86dectab
+```
+
+`src/shim/i86deca.s` carries a record per opcode, a mod r/m table and three
+group tables, with the `I_*` numbers from `src/shim/i86.h` baked in.  This
+builds them from the reference decoder `src/shim/i86dec.c` — its grid, and
+decodes of the mod r/m and group bytes — so renumbering the classes means
+re-running it and pasting the output over the tables that end the file.
+
+Before printing, it runs a C model of the assembly over these tables against
+`i86dec()` — every opcode and second byte, under prefix runs up to past the
+cap, at offsets across 0xFFFF — and prints nothing if a field differs.  The
+model checks the tables, not the assembly; `make verify-idec` compares the
+two decoders on the machine.
