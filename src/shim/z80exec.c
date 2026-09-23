@@ -125,7 +125,15 @@ int r, v;
  *
  * Every argument below is evaluated more than once, so no call site in
  * this file may pass one with a side effect.
+ *
+ * The #undefs clear the renames a second build of this file is given.
  */
+#undef z80rb
+#undef z80wb
+#undef z80rw
+#undef z80ww
+#undef z80getr
+#undef z80setr
 #define z80rb(m, a)		(MB(m, a) & 0xff)
 #define z80wb(m, a, v)		(MB(m, a) = (char)(v))
 #define z80rw(m, a)		((z16)((MB(m, a) & 0xff) \
@@ -758,7 +766,7 @@ struct z80in *in;
  * the state and counts its 2r+1 remaining instructions would, then sleep
  * the time the whole loop takes on a real Z80.
  */
-static delay(m, x, pc0, r)
+int z80delay(m, x, pc0, r)
 struct z80 *m;
 int x, r;
 z16 pc0;
@@ -810,8 +818,7 @@ int z80step(m, in)
 struct z80 *m;
 struct z80in *in;
 {
-	register int v, r;
-	z16 pc0, a;
+	z16 pc0;
 
 	pc0 = m->pc;
 	z80dec(m->m, m->pc, in);
@@ -819,6 +826,17 @@ struct z80in *in;
 		return (X_BAD);
 	z80ninsn++;
 	m->pc = (z16)(m->pc + in->len);
+	return (z80exec(m, in, pc0));
+}
+
+/* Execute *in, decoded at pc0, with PC already past it. */
+int z80exec(m, in, pc0)
+struct z80 *m;
+struct z80in *in;
+z16 pc0;
+{
+	register int v, r;
+	z16 a;
 
 	switch (in->op) {
 
@@ -855,7 +873,7 @@ struct z80in *in;
 		lazy(m, LZ_DCR, v, 1, r, 0);
 		z80setr(m, in->x, r);
 		if (r != 0 && in->x != R_M && z80fast)
-			delay(m, in->x, pc0, r);
+			z80delay(m, in->x, pc0, r);
 		break;
 
 	case Z_LXI:

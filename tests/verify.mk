@@ -475,7 +475,7 @@ i86test: build/i86test $(I86CORPUS)/SOURCES $(I86FIX)/MANIFEST
 # software, never a way to acquire a utility we already have a faster
 # native one of.  See that directory's SOURCES for what each of the four
 # is here to answer.
-Z80SRC = src/shim/z80dec.c src/shim/z80mnem.c src/shim/z80exec.c \
+Z80SRC = src/shim/z80dec.c src/shim/z80mnem.c src/shim/z80exec.c src/shim/z80run.c \
 	 src/shim/z80load.c src/shim/z80bdos.c src/shim/gdpb.c src/shim/segclr.c
 Z80CORPUS = src/shim/tests/z80corpus
 .PHONY: z80test
@@ -879,6 +879,42 @@ verify-zdec: all $(UZDEC)
 		|| { echo "verify-zdec: FAIL -- ZDECT did not finish the sweep"; exit 1; }
 	@echo "verify-zdec: PASS -- both decoders answer the same thing for every"
 	@echo "             opcode, operand pattern and program counter swept"
+
+
+# ---- the two 8080/Z80 run loops must do the same thing ----
+# The machine runs src/shim/z80runa.s, which executes the frequent classes
+# in assembly; z80run.c over z80exec.c stays the reference.  ZRUNT links
+# both -- the C ones renamed -- and runs them in lockstep from random
+# states, every opcode, then through random memory, comparing the answer,
+# the counts, every register, the lazy record and the memory.
+ZRUNDISK = build/zrundisk
+ZRUNCPMA = build/zrun-cpma.img
+ZRUNIMG	 = build/zruntest.bin
+ZRUNLOG	 = build/verify-zrun.log
+.PHONY: verify-zrun
+verify-zrun: all $(UZRUN)
+	@rm -rf $(ZRUNDISK)
+	@mkdir -p $(ZRUNDISK)
+	@cp $(DISKA)/* $(ZRUNDISK)/
+	cp $(UZRUN) $(ZRUNDISK)/ZRUNT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(ZRUNCPMA) $(CPMA_BLOCKS) $(ZRUNDISK)
+	$(MKDISK) $(ZRUNIMG) $(CPMSYS) $(ZRUNCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(ZRUNIMG)) \
+		--input="$(OSSEL)ZRUNT\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(ZRUNLOG))
+	@$(EMUOK)
+	@grep -q 'ZRUNT: start' $(ZRUNLOG) \
+		|| { echo "verify-zrun: FAIL -- ZRUNT did not run at all"; exit 1; }
+	@grep -q 'ZRUNT: FAIL' $(ZRUNLOG) \
+		&& { echo "verify-zrun: FAIL -- the assembly run loop and the C one"; \
+		     echo "             disagree; the line above names the field,"; \
+		     echo "             the case and the opcode."; exit 1; } || true
+	@grep -q 'ZRUNT: ok' $(ZRUNLOG) \
+		|| { echo "verify-zrun: FAIL -- ZRUNT did not finish"; exit 1; }
+	@echo "verify-zrun: PASS -- both run loops leave the same machine from"
+	@echo "             every state and opcode tried"
 
 
 # ---- the two 8086 decoders must answer the same thing ----

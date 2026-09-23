@@ -120,10 +120,9 @@ struct z80 {
  * The values themselves are ORDERED BY MEASURED FREQUENCY over the
  * corpus programs, most executed first.  The executor's switch compiles
  * to a compare chain costing two instructions per case skipped, so an
- * id's number is a per-execution tax and the ordering is worth about
- * thirty Z8000 instructions a guest instruction.  Nothing else depends
- * on the numbering -- change it by re-running tools/gen-z80dectab.c,
- * which rebuilds the base map src/shim/z80deca.s carries.
+ * id's number is a per-execution tax where the switch runs.  Change the
+ * numbering by re-running tools/gen-z80dectab.c, which rebuilds the base
+ * map src/shim/z80btab.h, and renumbering z80runa.s's handler list.
  */
 #define Z_BAD		0	/* not decodable as an instruction	*/
 #define Z_ALU		1	/* .x = 0..7 add adc sub sbb ana xra ora cmp */
@@ -232,6 +231,12 @@ extern int z80cond();
 #define X_HALT		4	/* HLT					*/
 
 extern int z80step();		/* decode + execute one instruction	*/
+extern int z80exec();		/* (m, in, pc0): execute a decoded one	*/
+
+/* z80run(m, n, k) steps until an instruction answers other than X_OK
+ * or n have, adds the X_OK count to *k and returns the last answer.  The
+ * target runs an assembly copy of it. */
+extern int z80run();
 extern z8 z80flags();		/* materialise and return F		*/
 extern int z80lcond();		/* z80cond() on the pending record	*/
 extern int z80hookno;		/* hook left by X_HOOK			*/
@@ -248,6 +253,7 @@ extern int z80fast;
 extern z32 z80nskip;
 extern int (*z80wait)();
 extern int z80sleep();		/* z80wait on the target		*/
+extern int z80delay();		/* (m, x, pc0, n): DCR x at pc0 left n	*/
 
 /* Byte and pair access, exported because the loader, the seam and the
  * tests all need them and because r = 6 meaning memory is a rule that

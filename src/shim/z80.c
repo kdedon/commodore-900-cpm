@@ -166,7 +166,6 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
-	struct z80in in;
 	register int i;
 	long n, k, limit, xa;
 	int sseg, rc, brc;
@@ -268,16 +267,15 @@ char *argv[];
 	limit = 20000000L;
 	brc = B_RUN;
 	rc = X_OK;
-	for (k = 0; k < limit; k++) {
-		rc = z80step(&G, &in);
-		if (rc == X_OK)
-			continue;
+	k = 0;
+	while (k < limit) {
+		rc = z80run(&G, limit - k, &k);
 		if (rc != X_HOOK)
 			break;
 		brc = z80bdos(&G);
-		if (brc == B_RUN)
-			continue;
-		break;
+		if (brc != B_RUN)
+			break;
+		k++;
 	}
 	/* A loop that ended on a bad instruction, a HALT or the step
 	 * limit never re-entered the seam, so the last partial line of

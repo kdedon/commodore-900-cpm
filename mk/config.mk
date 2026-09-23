@@ -142,6 +142,8 @@ UZ80	= $(UOBJDIR)/Z80.Z8K
 UI86	= $(UOBJDIR)/CPM86.Z8K
 # The two 8080/Z80 decoders compared on the machine (verify-zdec).
 UZDEC	= $(UOBJDIR)/ZDECT.Z8K
+# The two 8080/Z80 run loops compared on the machine (verify-zrun).
+UZRUN	= $(UOBJDIR)/ZRUNT.Z8K
 # The two 8086 decoders compared on the machine (verify-idec).
 UIDEC	= $(UOBJDIR)/IDECT.Z8K
 # Concurrency exercisers, excluded from the release disk.

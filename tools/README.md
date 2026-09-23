@@ -252,16 +252,16 @@ cc -std=gnu89 -w -DHOSTCC -o build/gen-z80dectab \
 build/gen-z80dectab
 ```
 
-`src/shim/z80deca.s` carries a 256-entry table with the `Z_*` opcode-class
-numbers from `src/shim/z80.h` baked into it.  This emits that table, taking
-every field from the reference decoder `src/shim/z80dec.c`, so renumbering the
-classes — which is worth doing, because the executor's switch is a compare
-chain and a class's number is a per-execution cost — means re-running it and
-pasting the output back below the `btab:` label.
+`src/shim/z80btab.h` is a 256-entry table with the `Z_*` opcode-class numbers
+from `src/shim/z80.h` baked into it; `z80deca.s` expands it into decode records
+and `z80runa.s` into its dispatch table.  This emits that table, taking every
+field from the reference decoder `src/shim/z80dec.c`, so renumbering the
+classes means re-running it, pasting the output over the table's lines, and
+renumbering the `K` class-to-handler list in `z80runa.s`.
 
 Run by hand, deliberately: the build never invokes it, and `make verify-zdec`
-compares the two decoders field by field on the machine, which is what catches
-a table left stale.
+and `make verify-zrun` compare the decoders and the run loops on the machine,
+which is what catches a table left stale.
 
 ## gen-i86dectab.c — the CP/M-86 decoder's tables
 

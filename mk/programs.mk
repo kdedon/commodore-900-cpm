@@ -397,16 +397,18 @@ $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # CP/M-80 shim: host tests and target builds use the same engine sources,
-# except the decoder -- the machine runs the assembly one and z80dec.c is
-# the reference the host suite compiles.  ZDECT compares them, and is the
+# except the decoder and the run loop -- the machine runs the assembly ones
+# and z80dec.c and z80run.c are the references the host suite compiles.
+# ZRUNT compares the run loops.  ZDECT compares the decoders, and is the
 # only target program that links the C decoder: Z80.Z8K does not, which
 # is why the mnemonic and condition helpers the executor calls are in
 # z80mnem.c and not beside the decoder they came from.
 Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80mnem.o \
-	  $(UOBJDIR)/z80exec.o \
+	  $(UOBJDIR)/z80exec.o $(UOBJDIR)/z80runa.o \
 	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o \
 	  $(UOBJDIR)/segclra.o
 $(Z80OBJ): src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h
+$(UOBJDIR)/z80deca.o $(UOBJDIR)/z80runa.o: src/shim/z80btab.h
 
 $(UOBJDIR)/z80.lout: $(Z80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(Z80OBJ) $(ULIB)
@@ -434,6 +436,43 @@ $(UOBJDIR)/zdect.lout: $(ZDECOBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(ZDECOBJ) $(ULIB)
 
 $(UZDEC): $(UOBJDIR)/zdect.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# ZRUNT links both run loops: the C executor and run loop are compiled a
+# second time, renamed, over the C decoder.
+ZRUNREN	= -Dz80step=cz80step -Dz80exec=cz80exec -Dz80run=cz80run \
+	  -Dz80flags=cz80flags -Dz80lcond=cz80lcond -Dz80delay=cz80delay \
+	  -Dz80hookno=cz80hookno -Dz80ninsn=cz80ninsn -Dz80nflag=cz80nflag \
+	  -Dz80fast=cz80fast -Dz80nskip=cz80nskip -Dz80wait=cz80wait \
+	  -Dz80rb=cz80rb -Dz80wb=cz80wb -Dz80rw=cz80rw -Dz80ww=cz80ww \
+	  -Dz80getr=cz80getr -Dz80setr=cz80setr -Dz80dec=z80decc
+
+$(UOBJDIR)/z80execc.o: src/shim/z80exec.c src/shim/z80.h $(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/z80execc.z0 -Isrc/shim -Isrc/lib \
+		$(ZRUNREN) >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/z80execc.z0 $(UOBJDIR)/z80execc.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/z80execc.z1 $@ $(UOBJDIR)/z80execc.scr 0 >> $(LOG) 2>&1
+
+$(UOBJDIR)/z80runc.o: src/shim/z80run.c src/shim/z80.h $(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/z80runc.z0 -Isrc/shim -Isrc/lib \
+		$(ZRUNREN) >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/z80runc.z0 $(UOBJDIR)/z80runc.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/z80runc.z1 $@ $(UOBJDIR)/z80runc.scr 0 >> $(LOG) 2>&1
+
+$(UOBJDIR)/zrunt.o: src/tests/zrunt.c src/shim/z80.h src/lib/cpm.h \
+		$(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/zrunt.z0 -Isrc/shim -Isrc/lib >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/zrunt.z0 $(UOBJDIR)/zrunt.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/zrunt.z1 $@ $(UOBJDIR)/zrunt.scr 0 >> $(LOG) 2>&1
+
+ZRUNOBJ	= $(UOBJDIR)/zrunt.o $(UOBJDIR)/z80runa.o $(UOBJDIR)/z80exec.o \
+	  $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80mnem.o $(UOBJDIR)/z80runc.o \
+	  $(UOBJDIR)/z80execc.o $(UOBJDIR)/z80decc.o
+
+$(UOBJDIR)/zrunt.lout: $(ZRUNOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(ZRUNOBJ) $(ULIB)
+
+$(UZRUN): $(UOBJDIR)/zrunt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # CP/M-86 shim: as for the CP/M-80 one, the machine runs the assembly

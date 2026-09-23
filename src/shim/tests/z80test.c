@@ -3898,22 +3898,20 @@ static void t_rsx(const char *dir)
  */
 static int grun(long limit, long *steps, int *why)
 {
-	struct z80in in;
 	long k;
 	int rc, brc;
 
 	brc = B_RUN;
 	rc = X_OK;
-	for (k = 0; k < limit; k++) {
-		rc = z80step(&G, &in);
-		if (rc == X_OK)
-			continue;
+	k = 0;
+	while (k < limit) {
+		rc = z80run(&G, limit - k, &k);
 		if (rc != X_HOOK)
 			break;
 		brc = z80bdos(&G);
-		if (brc == B_RUN)
-			continue;
-		break;
+		if (brc != B_RUN)
+			break;
+		k++;
 	}
 	/* The same call z80.c makes when its loop ends: a run that
 	 * stopped anywhere but the seam still owes the console whatever

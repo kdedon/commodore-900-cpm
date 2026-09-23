@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: MIT
  */
 /*
- * gen-z80dectab.c -- emit the base-map table src/shim/z80deca.s reads.
+ * gen-z80dectab.c -- emit the base map, src/shim/z80btab.h, that
+ * z80deca.s and z80runa.s expand.
  *
  * The reference decoder is the oracle: every field of every record is
  * whatever z80dec.c answers for that opcode, so renumbering Z_* in
- * z80.h means re-running this and pasting the output back between the
- * `btab:' label and the end of the table.
+ * z80.h means re-running this and pasting the output over the table's
+ * lines.
  *
  *	cc -std=gnu89 -w -DHOSTCC -o /tmp/gen-z80dectab \
  *		tools/gen-z80dectab.c src/shim/z80dec.c
