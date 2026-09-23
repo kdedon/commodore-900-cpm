@@ -105,7 +105,8 @@ struct i86 {
  * alphabetically and not by the encoding: the executor's switch becomes
  * a compare chain in ASCENDING CASE VALUE, so a low id is a short walk.
  * The first six are three quarters of everything that executes.
- * Renumbering them means regenerating the assembly decoder's tables. */
+ * Renumbering them means regenerating the assembly decoder's tables and
+ * reordering the assembly run loop's jtab. */
 #define I_BAD		0	/* not decodable as an 8086 instruction	*/
 #define I_ALU		1	/* .x = 0..7 add or adc sbb and sub xor cmp */
 #define I_MOV		2
@@ -217,6 +218,7 @@ extern int i86dec();
 
 extern int i86step();		/* decode + execute one instruction	*/
 extern int i86run();		/* i86step() up to i86nrun times	*/
+extern int i86runa();		/* i86run() in assembly, on the target	*/
 extern i16 i86nrun;
 extern i16 i86flags();		/* materialise and return FLAGS		*/
 extern int i86cond();		/* (FLAGS, cc 0..15) -> 0 or 1		*/

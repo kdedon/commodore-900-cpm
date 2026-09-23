@@ -478,7 +478,8 @@ $(UZRUN): $(UOBJDIR)/zrunt.lout $(LOUT2CPM)
 # CP/M-86 shim: as for the CP/M-80 one, the machine runs the assembly
 # decoder and i86dec.c is the reference the host suite compiles; IDECT
 # compares them.
-I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86deca.o $(UOBJDIR)/i86exec.o \
+I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86deca.o $(UOBJDIR)/i86runa.o \
+	  $(UOBJDIR)/i86exec.o \
 	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o \
 	  $(UOBJDIR)/segclra.o
 $(I86OBJ): src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h
@@ -507,6 +508,22 @@ $(UOBJDIR)/idect.lout: $(IDECOBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(IDECOBJ) $(ULIB)
 
 $(UIDEC): $(UOBJDIR)/idect.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# IRUNT runs i86runa.s beside the C run loop and compares the machines.
+$(UOBJDIR)/irunt.o: src/tests/irunt.c src/shim/i86.h src/lib/cpm.h \
+		$(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/irunt.z0 -Isrc/shim -Isrc/lib >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/irunt.z0 $(UOBJDIR)/irunt.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/irunt.z1 $@ $(UOBJDIR)/irunt.scr 0 >> $(LOG) 2>&1
+
+IRUNOBJ	= $(UOBJDIR)/irunt.o $(UOBJDIR)/i86runa.o $(UOBJDIR)/i86exec.o \
+	  $(UOBJDIR)/i86deca.o
+
+$(UOBJDIR)/irunt.lout: $(IRUNOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(IRUNOBJ) $(ULIB)
+
+$(UIRUN): $(UOBJDIR)/irunt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # No crt0, no libc, no relocation, one section.  mkrsx.py fails the build

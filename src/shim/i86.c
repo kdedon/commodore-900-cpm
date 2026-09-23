@@ -576,7 +576,7 @@ char *argv[];
 	for (k = 0; k < limit; ) {
 		nb = limit - k > 16384L ? 16384 : (unsigned) (limit - k);
 		i86nrun = nb;
-		rc = i86run(&G, &in);
+		rc = i86runa(&G, &in);
 		k += (long) (nb - i86nrun);
 		if (rc == X_OK)
 			continue;

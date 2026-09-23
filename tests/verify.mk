@@ -955,6 +955,44 @@ verify-idec: all $(UIDEC)
 	@echo "             opcode and second byte, prefix run and position swept"
 
 
+# ---- the two 8086 run loops must leave the same machine ----
+# The machine runs src/shim/i86runa.s, which executes the common classes
+# itself; i86run() in src/shim/i86exec.c stays the portable reference.
+# IRUNT runs both from random machine states over copies of one random
+# memory image and compares the return, every field, the counters and
+# the memory.  Fix a class in i86exec.c without fixing i86runa.s and
+# this target says so.
+IRUNDISK = build/irundisk
+IRUNCPMA = build/irun-cpma.img
+IRUNIMG	 = build/iruntest.bin
+IRUNLOG	 = build/verify-irun.log
+IRUNMAX	?= 3000000000
+.PHONY: verify-irun
+verify-irun: all $(UIRUN)
+	@rm -rf $(IRUNDISK)
+	@mkdir -p $(IRUNDISK)
+	@cp $(DISKA)/* $(IRUNDISK)/
+	cp $(UIRUN) $(IRUNDISK)/IRUNT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(IRUNCPMA) $(CPMA_BLOCKS) $(IRUNDISK)
+	$(MKDISK) $(IRUNIMG) $(CPMSYS) $(IRUNCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(IRUNIMG)) \
+		--input="$(OSSEL)IRUNT\r$(ENDIN)" \
+		--max=$(IRUNMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(IRUNLOG))
+	@$(EMUOK)
+	@grep -q 'IRUNT: start' $(IRUNLOG) \
+		|| { echo "verify-irun: FAIL -- IRUNT did not run at all"; exit 1; }
+	@grep -q 'IRUNT: FAIL' $(IRUNLOG) \
+		&& { echo "verify-irun: FAIL -- the assembly run loop and the C one"; \
+		     echo "             disagree; the lines above name the field,"; \
+		     echo "             the test and its bytes."; exit 1; } || true
+	@grep -q 'IRUNT: ok' $(IRUNLOG) \
+		|| { echo "verify-irun: FAIL -- IRUNT did not finish"; exit 1; }
+	@echo "verify-irun: PASS -- both run loops leave the same machine from"
+	@echo "             every random state and instruction run"
+
+
 # ---- CP/M-86 shim, ON THE MACHINE: CPM86-STAGE-ONE.md's step 2 ----
 # The other half of what BIOS function 25 was built for, and the same
 # gate as verify-z80 above with one more segment in it: a small-model

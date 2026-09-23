@@ -274,7 +274,8 @@ build/gen-i86dectab
 group tables, with the `I_*` numbers from `src/shim/i86.h` baked in.  This
 builds them from the reference decoder `src/shim/i86dec.c` — its grid, and
 decodes of the mod r/m and group bytes — so renumbering the classes means
-re-running it and pasting the output over the tables that end the file.
+re-running it, pasting the output over the tables that end the file, and
+reordering `jtab` in `src/shim/i86runa.s`, which `make verify-irun` checks.
 
 Before printing, it runs a C model of the assembly over these tables against
 `i86dec()` — every opcode and second byte, under prefix runs up to past the
