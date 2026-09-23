@@ -53,31 +53,17 @@ i16 par;
  * halves first, then the high ones.  Done arithmetically rather than by
  * overlaying a char array on the word file, because the host and the
  * Z8000 disagree about which end of a word a byte lives at and this
- * file must not. */
-static int getb(m, n)
-struct i86 *m;
-int n;
-{
-	register i16 v;
-
-	v = m->r[n & 3];
-	return ((n & 4) ? ((v >> 8) & 0xff) : (v & 0xff));
-}
-
-static setb(m, n, v)
-struct i86 *m;
-int n, v;
-{
-	register i16 w;
-
-	w = m->r[n & 3];
-	if (n & 4)
-		w = (i16)((w & 0x00ff) | ((i16)(v & 0xff) << 8));
-	else
-		w = (i16)((w & 0xff00) | (v & 0xff));
-	m->r[n & 3] = w;
-	return (0);
-}
+ * file must not.
+ *
+ * These accessors and the ones below are macros: they run several times
+ * a guest instruction and a call frame costs more than the access.
+ * Every argument may be evaluated more than once, so none may have a
+ * side effect. */
+#define getb(m, n)	((int)((n) & 4 ? ((m)->r[(n) & 3] >> 8) & 0xff \
+				       : (m)->r[(n) & 3] & 0xff))
+#define setb(m, n, v)	((m)->r[(n) & 3] = (i16)((n) & 4 \
+			? ((m)->r[(n) & 3] & 0x00ff) | ((i16)((v) & 0xff) << 8) \
+			: ((m)->r[(n) & 3] & 0xff00) | ((v) & 0xff)))
 
 /* ------------------------------------------------------------------ */
 /* memory: bytewise, little-endian, offsets wrap inside the segment    */
@@ -168,6 +154,35 @@ i16 off, v;
 	mwb(m, s, (i16)(off + 1), (v >> 8) & 0xff);
 	return (0);
 }
+
+/*
+ * From here on the four are macros that do an access in the window
+ * inline and hand anything else to the function of the same name (a
+ * macro does not expand inside itself).  A word fits iff bias + off + 1
+ * lands above the bias; a hit on the last byte of a zero-bias segment
+ * goes the slow way too, and wraps there.  A cold site calls the
+ * function directly as (mrw)(...).
+ *
+ * `mt' holds the host offset between the check and the access, so no
+ * argument may contain another guest memory access.
+ */
+static i16	mt;
+
+#define MB(m, s, t)	((m)->sb[(s) & 3][(i16)(t)])
+#define MO(m, s)	((m)->so[(s) & 3])
+#define mrb(m, s, off)	((mt = (i16)(MO(m, s) + (off))) >= MO(m, s) \
+			? MB(m, s, mt) & 0xff : mrb(m, s, (i16)(off)))
+#define mwb(m, s, off, v) ((mt = (i16)(MO(m, s) + (off))) >= MO(m, s) \
+			? (MB(m, s, mt) = (char)(v)) \
+			: mwb(m, s, (i16)(off), v))
+#define mrw(m, s, off)	((mt = (i16)(MO(m, s) + (off) + 1)) > MO(m, s) \
+			? (i16)((MB(m, s, mt - 1) & 0xff) \
+				| ((MB(m, s, mt) & 0xff) << 8)) \
+			: mrw(m, s, (i16)(off)))
+#define mww(m, s, off, v) ((mt = (i16)(MO(m, s) + (off) + 1)) > MO(m, s) \
+			? (MB(m, s, mt - 1) = (char)(v), \
+			   MB(m, s, mt) = (char)((i16)(v) >> 8)) \
+			: mww(m, s, (i16)(off), (i16)(v)))
 
 /* ------------------------------------------------------------------ */
 /* flags								*/
@@ -334,30 +349,6 @@ long v;
 /* ------------------------------------------------------------------ */
 /* operands							       */
 
-/* The effective address of a mod r/m memory operand.  Computed at
- * execute time because it depends on live registers; the decode that
- * produced `in' does not. */
-static i16 ea(m, in)
-struct i86 *m;
-struct i86in *in;
-{
-	register i16 a;
-
-	if (in->mod == 0 && in->rm == 6)
-		return (in->disp);
-	switch (in->rm) {
-	case 0:  a = (i16)(m->r[R_BX] + m->r[R_SI]); break;
-	case 1:  a = (i16)(m->r[R_BX] + m->r[R_DI]); break;
-	case 2:  a = (i16)(m->r[R_BP] + m->r[R_SI]); break;
-	case 3:  a = (i16)(m->r[R_BP] + m->r[R_DI]); break;
-	case 4:  a = m->r[R_SI]; break;
-	case 5:  a = m->r[R_DI]; break;
-	case 6:  a = m->r[R_BP]; break;
-	default: a = m->r[R_BX]; break;
-	}
-	return ((i16)(a + in->disp));
-}
-
 /* Read and write the mod r/m operand.  `e' is the effective address,
  * already computed once by the caller so that a read-modify-write does
  * not form it twice (and so that a side effect in the address, were
@@ -389,25 +380,29 @@ i16 e, v;
 	return (0);
 }
 
-/* The reg-field operand, which is always a register. */
-static i16 rgrd(m, in)
-struct i86 *m;
-struct i86in *in;
-{
-	return (in->w ? m->r[in->reg] : (i16)getb(m, in->reg));
-}
+/* Inline forms.  One window check serves both widths: a byte whose
+ * successor is out of the window goes the slow way, and gets it right. */
+#define rmrd(m, in, e)	((in)->mod == 3 \
+			? ((in)->w ? (m)->r[(in)->rm] : (i16)getb(m, (in)->rm)) \
+			: (mt = (i16)(MO(m, (in)->seg) + (e) + 1)) \
+			  > MO(m, (in)->seg) \
+			? (i16)((in)->w ? (MB(m, (in)->seg, mt - 1) & 0xff) \
+				| ((MB(m, (in)->seg, mt) & 0xff) << 8) \
+				: MB(m, (in)->seg, mt - 1) & 0xff) \
+			: rmrd(m, in, e))
+#define rmwr(m, in, e, v) ((in)->mod == 3 \
+			? ((in)->w ? ((m)->r[(in)->rm] = (i16)(v)) \
+				   : setb(m, (in)->rm, v)) \
+			: (mt = (i16)(MO(m, (in)->seg) + (e) + 1)) \
+			  > MO(m, (in)->seg) \
+			? (MB(m, (in)->seg, mt - 1) = (char)(v), \
+			   (in)->w ? MB(m, (in)->seg, mt) = (char)((i16)(v) >> 8) : 0) \
+			: rmwr(m, in, e, v))
 
-static rgwr(m, in, v)
-struct i86 *m;
-struct i86in *in;
-i16 v;
-{
-	if (in->w)
-		m->r[in->reg] = v;
-	else
-		setb(m, in->reg, v & 0xff);
-	return (0);
-}
+/* The reg-field operand, which is always a register. */
+#define rgrd(m, in)	((in)->w ? (m)->r[(in)->reg] : (i16)getb(m, (in)->reg))
+#define rgwr(m, in, v)	((in)->w ? ((m)->r[(in)->reg] = (i16)(v)) \
+				 : setb(m, (in)->reg, v))
 
 /* ------------------------------------------------------------------ */
 /* the stack							       */
@@ -651,10 +646,13 @@ struct i86in *in;
 		d = m->r[R_DI];
 		switch (in->x) {
 		case 0:					/* MOVS		*/
-			if (w)
-				mww(m, S_ES, d, mrw(m, in->seg, s));
-			else
-				mwb(m, S_ES, d, mrb(m, in->seg, s));
+			if (w) {
+				a = mrw(m, in->seg, s);
+				mww(m, S_ES, d, a);
+			} else {
+				a = (i16)mrb(m, in->seg, s);
+				mwb(m, S_ES, d, a);
+			}
 			m->r[R_SI] = (i16)(s + step);
 			m->r[R_DI] = (i16)(d + step);
 			break;
@@ -676,8 +674,10 @@ struct i86in *in;
 		case 3:					/* LODS		*/
 			if (w)
 				m->r[R_AX] = mrw(m, in->seg, s);
-			else
-				setb(m, 0, mrb(m, in->seg, s));
+			else {
+				a = (i16)mrb(m, in->seg, s);
+				setb(m, 0, a);
+			}
 			m->r[R_SI] = (i16)(s + step);
 			break;
 		default:				/* SCAS		*/
@@ -853,7 +853,27 @@ struct i86in *in;
 	 * AFTER itself rather than trapping on the spot. */
 	tf0 = (i16)(m->fl & F_TF);
 	m->ip = (i16)(m->ip + in->len);
-	e = (i16)((in->fl & IN_MEM) ? ea(m, in) : 0);
+	/* The effective address of a mod r/m memory operand.  Computed here
+	 * because it depends on live registers; the decode does not. */
+	e = 0;
+	if (!(in->fl & IN_MEM))
+		goto exec;
+	if (in->mod == 0 && in->rm == 6) {
+		e = in->disp;
+		goto exec;
+	}
+	switch (in->rm) {
+	case 0:  a = (i16)(m->r[R_BX] + m->r[R_SI]); break;
+	case 1:  a = (i16)(m->r[R_BX] + m->r[R_DI]); break;
+	case 2:  a = (i16)(m->r[R_BP] + m->r[R_SI]); break;
+	case 3:  a = (i16)(m->r[R_BP] + m->r[R_DI]); break;
+	case 4:  a = m->r[R_SI]; break;
+	case 5:  a = m->r[R_DI]; break;
+	case 6:  a = m->r[R_BP]; break;
+	default: a = m->r[R_BX]; break;
+	}
+	e = (i16)(a + in->disp);
+exec:
 
 	switch (in->op) {
 
@@ -886,10 +906,13 @@ struct i86in *in;
 	case I_MOV:
 		if (in->fl & IN_IMM)
 			rmwr(m, in, e, in->imm);
-		else if (in->fl & IN_DIR)
-			rgwr(m, in, rmrd(m, in, e));
-		else
-			rmwr(m, in, e, rgrd(m, in));
+		else if (in->fl & IN_DIR) {
+			a = rmrd(m, in, e);
+			rgwr(m, in, a);
+		} else {
+			a = rgrd(m, in);
+			rmwr(m, in, e, a);
+		}
 		break;
 
 	case I_MOVSR:
@@ -899,13 +922,13 @@ struct i86in *in;
 							 * an instruction */
 				return (X_UNIMP);
 			}
-			rc = setsr(m, in->x, rmrd(m, in, e));
+			rc = setsr(m, in->x, (rmrd)(m, in, e));
 			if (rc != X_OK) {
 				m->ip = ip0;
 				return (rc);
 			}
 		} else				/* 8C: r/m <- Sreg	*/
-			rmwr(m, in, e, m->sr[in->x]);
+			(rmwr)(m, in, e, m->sr[in->x]);
 		break;
 
 	case I_LEA:
@@ -917,8 +940,8 @@ struct i86in *in;
 	case I_LXS:
 		if (!(in->fl & IN_MEM))
 			return (X_BAD);
-		a = mrw(m, in->seg, e);
-		b = mrw(m, in->seg, (i16)(e + 2));
+		a = (mrw)(m, in->seg, e);
+		b = (mrw)(m, in->seg, (i16)(e + 2));
 		rc = setsr(m, in->x, b);
 		if (rc != X_OK) {
 			m->ip = ip0;
@@ -947,7 +970,8 @@ struct i86in *in;
 		rmwr(m, in, e, r);
 		break;
 	case I_NOT:				/* NOT affects no flags	*/
-		rmwr(m, in, e, (i16)~rmrd(m, in, e));
+		a = rmrd(m, in, e);
+		rmwr(m, in, e, (i16)~a);
 		break;
 	case I_NEG:
 		b = rmrd(m, in, e);
@@ -958,7 +982,9 @@ struct i86in *in;
 
 	case I_SHIFT:
 		n = (int)(in->imm2 ? (m->r[R_CX] & 0xff) : 1);
-		rmwr(m, in, e, shift(m, in->x, in->w, rmrd(m, in, e), n));
+		a = rmrd(m, in, e);
+		r = shift(m, in->x, in->w, a, n);
+		rmwr(m, in, e, r);
 		break;
 
 	case I_PUSH:
@@ -983,7 +1009,7 @@ struct i86in *in;
 			m->ip = ip0;
 			return (X_UNIMP);
 		}
-		a = mrw(m, S_SS, m->r[R_SP]);
+		a = (mrw)(m, S_SS, m->r[R_SP]);
 		rc = setsr(m, in->x, a);
 		if (rc != X_OK) {
 			m->ip = ip0;
@@ -1035,8 +1061,8 @@ struct i86in *in;
 		if (in->x) {			/* far, through memory	*/
 			if (!(in->fl & IN_MEM))
 				return (X_BAD);	/* no far JMP of a reg	*/
-			a = mrw(m, in->seg, e);			/* offset */
-			b = mrw(m, in->seg, (i16)(e + 2));	/* segment */
+			a = (mrw)(m, in->seg, e);		/* offset */
+			b = (mrw)(m, in->seg, (i16)(e + 2));	/* segment */
 			if (wboot(m, b, a)) {
 				m->ip = ip0;
 				return (X_WBOOT);
@@ -1055,8 +1081,8 @@ struct i86in *in;
 		if (in->x) {			/* far, through memory	*/
 			if (!(in->fl & IN_MEM))
 				return (X_BAD);
-			a = mrw(m, in->seg, e);
-			b = mrw(m, in->seg, (i16)(e + 2));
+			a = (mrw)(m, in->seg, e);
+			b = (mrw)(m, in->seg, (i16)(e + 2));
 			if (wboot(m, b, a)) {
 				m->ip = ip0;
 				return (X_WBOOT);
@@ -1107,8 +1133,8 @@ struct i86in *in;
 		/* The frame is READ before it is popped, so that a warm
 		 * boot or an unresolvable segment leaves SP where the
 		 * instruction found it. */
-		a = mrw(m, S_SS, m->r[R_SP]);			/* offset */
-		b = mrw(m, S_SS, (i16)(m->r[R_SP] + 2));	/* segment */
+		a = (mrw)(m, S_SS, m->r[R_SP]);			/* offset */
+		b = (mrw)(m, S_SS, (i16)(m->r[R_SP] + 2));	/* segment */
 		if (wboot(m, b, a)) {
 			m->ip = ip0;
 			return (X_WBOOT);
@@ -1138,9 +1164,9 @@ struct i86in *in;
 	case I_IRET:
 		/* The frame is READ before SP moves, on I_RETF's pattern,
 		 * so an unresolvable CS leaves the stack as it was. */
-		a = mrw(m, S_SS, m->r[R_SP]);			/* ip	*/
-		b = mrw(m, S_SS, (i16)(m->r[R_SP] + 2));	/* cs	*/
-		r = mrw(m, S_SS, (i16)(m->r[R_SP] + 4));	/* flags */
+		a = (mrw)(m, S_SS, m->r[R_SP]);			/* ip	*/
+		b = (mrw)(m, S_SS, (i16)(m->r[R_SP] + 2));	/* cs	*/
+		r = (mrw)(m, S_SS, (i16)(m->r[R_SP] + 4));	/* flags */
 		if (m->fault)
 			break;
 		rc = setsr(m, S_CS, b);
@@ -1163,7 +1189,8 @@ struct i86in *in;
 		break;
 
 	case I_LAHF:
-		setb(m, 4, i86flags(m) & 0xff);		/* AH		*/
+		a = i86flags(m);
+		setb(m, 4, a & 0xff);			/* AH		*/
 		break;
 	case I_SAHF:
 		i86flags(m);
@@ -1181,8 +1208,9 @@ struct i86in *in;
 		break;
 
 	case I_XLAT:
-		setb(m, 0, mrb(m, in->seg,
-			(i16)(m->r[R_BX] + (getb(m, 0) & 0xff))));
+		a = (i16)(m->r[R_BX] + (getb(m, 0) & 0xff));
+		a = (i16)mrb(m, in->seg, a);
+		setb(m, 0, a);
 		break;
 
 	case I_MULDIV:
