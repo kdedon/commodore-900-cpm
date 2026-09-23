@@ -116,6 +116,10 @@ $(UOBJDIR)/%.o: src/lib/%.s $(TCSTAMP) | $(UOBJDIR)
 	cpp -traditional-cpp -P $< > $(UOBJDIR)/$*.i 2>> $(LOG)
 	$(AS) -g -o $@ $(UOBJDIR)/$*.i >> $(LOG) 2>&1
 
+$(UOBJDIR)/%.o: src/shim/%.s $(TCSTAMP) | $(UOBJDIR)
+	cpp -traditional-cpp -P $< > $(UOBJDIR)/$*.i 2>> $(LOG)
+	$(AS) -g -o $@ $(UOBJDIR)/$*.i >> $(LOG) 2>&1
+
 # The UCASE variants include the shipped module's source.
 $(UOBJDIR)/%.o: src/tests/%.s $(TCSTAMP) | $(UOBJDIR)
 	cpp -traditional-cpp -P -Isrc/cmd $< > $(UOBJDIR)/$*.i 2>> $(LOG)
@@ -392,8 +396,13 @@ $(UOBJDIR)/RSXT.Z8K: $(UOBJDIR)/rsxt.lout $(LOUT2CPM)
 $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
-# CP/M-80 shim: host tests and target builds use the same engine sources.
-Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80dec.o $(UOBJDIR)/z80exec.o \
+# CP/M-80 shim: host tests and target builds use the same engine sources,
+# except the decoder -- the machine runs the assembly one and z80dec.c is
+# the reference the host suite compiles.  ZDECT compares them.  z80dec.c
+# is still linked, under the renamed entry, for the mnemonic and condition
+# helpers that live beside the decoder and that the executor calls.
+Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80decc.o \
+	  $(UOBJDIR)/z80exec.o \
 	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o
 $(Z80OBJ): src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h
 
@@ -401,6 +410,28 @@ $(UOBJDIR)/z80.lout: $(Z80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(Z80OBJ) $(ULIB)
 
 $(UZ80): $(UOBJDIR)/z80.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# ZDECT links both decoders, so z80dec.c is compiled a second time under
+# the name the comparison calls it by.
+$(UOBJDIR)/z80decc.o: src/shim/z80dec.c src/shim/z80.h $(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/z80decc.z0 -Isrc/shim -Isrc/lib \
+		-Dz80dec=z80decc >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/z80decc.z0 $(UOBJDIR)/z80decc.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/z80decc.z1 $@ $(UOBJDIR)/z80decc.scr 0 >> $(LOG) 2>&1
+
+$(UOBJDIR)/zdect.o: src/tests/zdect.c src/shim/z80.h src/lib/cpm.h \
+		$(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/zdect.z0 -Isrc/shim -Isrc/lib >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/zdect.z0 $(UOBJDIR)/zdect.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/zdect.z1 $@ $(UOBJDIR)/zdect.scr 0 >> $(LOG) 2>&1
+
+ZDECOBJ	= $(UOBJDIR)/zdect.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80decc.o
+
+$(UOBJDIR)/zdect.lout: $(ZDECOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(ZDECOBJ) $(ULIB)
+
+$(UZDEC): $(UOBJDIR)/zdect.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # CP/M-86 shim: host tests and target builds use the same engine sources.

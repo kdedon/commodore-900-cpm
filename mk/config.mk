@@ -140,6 +140,8 @@ UKERMIT	= $(UOBJDIR)/KERMIT.Z8K
 # program the user supplies; nothing on either disk is one.
 UZ80	= $(UOBJDIR)/Z80.Z8K
 UI86	= $(UOBJDIR)/CPM86.Z8K
+# The two 8080/Z80 decoders compared on the machine (verify-zdec).
+UZDEC	= $(UOBJDIR)/ZDECT.Z8K
 # Concurrency exercisers, excluded from the release disk.
 UCONC	= $(UOBJDIR)/CONC.Z8K $(UOBJDIR)/CONCB.Z8K \
 	  $(UOBJDIR)/CONCP.Z8K $(UOBJDIR)/CONCQ.Z8K

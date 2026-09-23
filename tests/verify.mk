@@ -843,6 +843,44 @@ verify-z80keyq: all
 	@echo "            guest output all reached BIOS CONIN, in order"
 
 
+# ---- the two 8080/Z80 decoders must answer the same thing ----
+# The machine runs the assembly decoder (src/shim/z80deca.s); src/shim/
+# z80dec.c stays the portable reference and is what the host suite
+# compiles.  ZDECT links both -- the C one renamed -- and sweeps every
+# first byte against ten operand patterns at five program counters, two
+# of which put the instruction across 0xFFFF, comparing the length and
+# every decoded field.  THIS IS WHAT MAKES A BACKPORT MECHANICAL: fix
+# z80dec.c without fixing z80deca.s and this target says so.
+ZDECDISK = build/zdecdisk
+ZDECCPMA = build/zdec-cpma.img
+ZDECIMG	 = build/zdectest.bin
+ZDECLOG	 = build/verify-zdec.log
+.PHONY: verify-zdec
+verify-zdec: all $(UZDEC)
+	@rm -rf $(ZDECDISK)
+	@mkdir -p $(ZDECDISK)
+	@cp $(DISKA)/* $(ZDECDISK)/
+	cp $(UZDEC) $(ZDECDISK)/ZDECT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(ZDECCPMA) $(CPMA_BLOCKS) $(ZDECDISK)
+	$(MKDISK) $(ZDECIMG) $(CPMSYS) $(ZDECCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(ZDECIMG)) \
+		--input="$(OSSEL)ZDECT\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(ZDECLOG))
+	@$(EMUOK)
+	@grep -q 'ZDECT: start' $(ZDECLOG) \
+		|| { echo "verify-zdec: FAIL -- ZDECT did not run at all"; exit 1; }
+	@grep -q 'ZDECT: FAIL' $(ZDECLOG) \
+		&& { echo "verify-zdec: FAIL -- the assembly decoder and the C one"; \
+		     echo "             disagree; the line above names the opcode,"; \
+		     echo "             the program counter and the field."; exit 1; } || true
+	@grep -q 'ZDECT: ok' $(ZDECLOG) \
+		|| { echo "verify-zdec: FAIL -- ZDECT did not finish the sweep"; exit 1; }
+	@echo "verify-zdec: PASS -- both decoders answer the same thing for every"
+	@echo "             opcode, operand pattern and program counter swept"
+
+
 # ---- CP/M-86 shim, ON THE MACHINE: CPM86-STAGE-ONE.md's step 2 ----
 # The other half of what BIOS function 25 was built for, and the same
 # gate as verify-z80 above with one more segment in it: a small-model
