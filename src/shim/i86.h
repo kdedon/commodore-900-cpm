@@ -99,47 +99,52 @@ struct i86 {
  * eight, the shift eight and the two unary groups carry their variant
  * in .x, exactly as the 8086 encodes them, so the executor's switch is
  * over classes and its inner dispatch is over a field the hardware
- * already gave us. */
+ * already gave us.
+ *
+ * The values are ordered by how often the corpus runs each class, not
+ * alphabetically and not by the encoding: the executor's switch becomes
+ * a compare chain in ASCENDING CASE VALUE, so a low id is a short walk.
+ * The first six are three quarters of everything that executes. */
 #define I_BAD		0	/* not decodable as an 8086 instruction	*/
 #define I_ALU		1	/* .x = 0..7 add or adc sbb and sub xor cmp */
 #define I_MOV		2
-#define I_MOVSR		3	/* MOV to/from a segment register	*/
-#define I_LEA		4
-#define I_LXS		5	/* .x = S_ES (LES) or S_DS (LDS)	*/
-#define I_XCHG		6
-#define I_TEST		7
-#define I_INC		8
-#define I_DEC		9
-#define I_NOT		10
-#define I_NEG		11
-#define I_MULDIV	12	/* .x = 4 MUL 5 IMUL 6 DIV 7 IDIV	*/
-#define I_SHIFT		13	/* .x = 0..7 rol ror rcl rcr shl shr - sar */
-#define I_PUSH		14
-#define I_POP		15
-#define I_PUSHSR	16	/* .x = segment slot			*/
-#define I_POPSR		17
-#define I_PUSHF		18
-#define I_POPF		19
-#define I_JMP		20	/* near relative; .disp = target offset	*/
-#define I_JMPI		21	/* through mod r/m; .x 0 = near, 1 = far */
-#define I_JMPF		22	/* far direct; .imm = off, .imm2 = seg	*/
-#define I_JCC		23	/* .x = condition 0..15; .disp = target	*/
-#define I_LOOP		24	/* .x = 0 LOOPNE 1 LOOPE 2 LOOP 3 JCXZ	*/
-#define I_CALL		25	/* near relative; .disp = target offset	*/
-#define I_CALLI		26	/* through mod r/m; .x 0 = near, 1 = far */
-#define I_CALLF		27
-#define I_RET		28	/* near;  .imm = bytes to pop (0 if none) */
-#define I_RETF		29
-#define I_INT		30	/* .imm = vector (INT3 decodes to 3)	*/
-#define I_INTO		31
-#define I_IRET		32
-#define I_STRING	33	/* .x = 0 MOVS 1 CMPS 2 STOS 3 LODS 4 SCAS */
-#define I_XLAT		34
-#define I_CBW		35
-#define I_CWD		36
-#define I_LAHF		37
-#define I_SAHF		38
-#define I_FLAG		39	/* .imm = the flag bit; .x = 0 clr 1 set 2 cpl */
+#define I_JCC		3	/* .x = condition 0..15; .disp = target	*/
+#define I_JMP		4	/* near relative; .disp = target offset	*/
+#define I_SHIFT		5	/* .x = 0..7 rol ror rcl rcr shl shr - sar */
+#define I_NOT		6
+#define I_INC		7
+#define I_DEC		8
+#define I_PUSH		9
+#define I_POP		10
+#define I_CALL		11	/* near relative; .disp = target offset	*/
+#define I_RET		12	/* near;  .imm = bytes to pop (0 if none) */
+#define I_TEST		13
+#define I_NEG		14
+#define I_XCHG		15
+#define I_LEA		16
+#define I_MOVSR		17	/* MOV to/from a segment register	*/
+#define I_LXS		18	/* .x = S_ES (LES) or S_DS (LDS)	*/
+#define I_MULDIV	19	/* .x = 4 MUL 5 IMUL 6 DIV 7 IDIV	*/
+#define I_STRING	20	/* .x = 0 MOVS 1 CMPS 2 STOS 3 LODS 4 SCAS */
+#define I_LOOP		21	/* .x = 0 LOOPNE 1 LOOPE 2 LOOP 3 JCXZ	*/
+#define I_FLAG		22	/* .imm = the flag bit; .x = 0 clr 1 set 2 cpl */
+#define I_INT		23	/* .imm = vector (INT3 decodes to 3)	*/
+#define I_CALLI		24	/* through mod r/m; .x 0 = near, 1 = far */
+#define I_JMPI		25	/* through mod r/m; .x 0 = near, 1 = far */
+#define I_PUSHSR	26	/* .x = segment slot			*/
+#define I_POPSR		27
+#define I_PUSHF		28
+#define I_POPF		29
+#define I_CALLF		30
+#define I_JMPF		31	/* far direct; .imm = off, .imm2 = seg	*/
+#define I_RETF		32
+#define I_IRET		33
+#define I_INTO		34
+#define I_XLAT		35
+#define I_CBW		36
+#define I_CWD		37
+#define I_LAHF		38
+#define I_SAHF		39
 #define I_DAA		40
 #define I_DAS		41
 #define I_AAA		42
