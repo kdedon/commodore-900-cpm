@@ -104,7 +104,8 @@ struct i86 {
  * The values are ordered by how often the corpus runs each class, not
  * alphabetically and not by the encoding: the executor's switch becomes
  * a compare chain in ASCENDING CASE VALUE, so a low id is a short walk.
- * The first six are three quarters of everything that executes. */
+ * The first six are three quarters of everything that executes.
+ * Renumbering them means regenerating the assembly decoder's tables. */
 #define I_BAD		0	/* not decodable as an 8086 instruction	*/
 #define I_ALU		1	/* .x = 0..7 add or adc sbb and sub xor cmp */
 #define I_MOV		2

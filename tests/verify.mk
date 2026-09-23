@@ -881,6 +881,44 @@ verify-zdec: all $(UZDEC)
 	@echo "             opcode, operand pattern and program counter swept"
 
 
+# ---- the two 8086 decoders must answer the same thing ----
+# The machine runs the assembly decoder (src/shim/i86deca.s); src/shim/
+# i86dec.c stays the portable reference.  IDECT links both -- the C one
+# renamed -- and sweeps every first byte against every second byte under
+# each prefix run, at program counters across 0xFFFF, comparing the
+# length and every decoded field.  Fix i86dec.c without fixing
+# i86deca.s and this target says so.
+IDECDISK = build/idecdisk
+IDECCPMA = build/idec-cpma.img
+IDECIMG	 = build/idectest.bin
+IDECLOG	 = build/verify-idec.log
+IDECMAX	?= 1500000000
+.PHONY: verify-idec
+verify-idec: all $(UIDEC)
+	@rm -rf $(IDECDISK)
+	@mkdir -p $(IDECDISK)
+	@cp $(DISKA)/* $(IDECDISK)/
+	cp $(UIDEC) $(IDECDISK)/IDECT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(IDECCPMA) $(CPMA_BLOCKS) $(IDECDISK)
+	$(MKDISK) $(IDECIMG) $(CPMSYS) $(IDECCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(IDECIMG)) \
+		--input="$(OSSEL)IDECT\r$(ENDIN)" \
+		--max=$(IDECMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(IDECLOG))
+	@$(EMUOK)
+	@grep -q 'IDECT: start' $(IDECLOG) \
+		|| { echo "verify-idec: FAIL -- IDECT did not run at all"; exit 1; }
+	@grep -q 'IDECT: FAIL' $(IDECLOG) \
+		&& { echo "verify-idec: FAIL -- the assembly decoder and the C one"; \
+		     echo "             disagree; the lines above name the field,"; \
+		     echo "             the bytes and where they sat."; exit 1; } || true
+	@grep -q 'IDECT: ok' $(IDECLOG) \
+		|| { echo "verify-idec: FAIL -- IDECT did not finish the sweep"; exit 1; }
+	@echo "verify-idec: PASS -- both decoders answer the same thing for every"
+	@echo "             opcode and second byte, prefix run and position swept"
+
+
 # ---- CP/M-86 shim, ON THE MACHINE: CPM86-STAGE-ONE.md's step 2 ----
 # The other half of what BIOS function 25 was built for, and the same
 # gate as verify-z80 above with one more segment in it: a small-model
