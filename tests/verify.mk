@@ -475,8 +475,8 @@ i86test: build/i86test $(I86CORPUS)/SOURCES $(I86FIX)/MANIFEST
 # software, never a way to acquire a utility we already have a faster
 # native one of.  See that directory's SOURCES for what each of the four
 # is here to answer.
-Z80SRC = src/shim/z80dec.c src/shim/z80exec.c src/shim/z80load.c \
-	 src/shim/z80bdos.c src/shim/gdpb.c
+Z80SRC = src/shim/z80dec.c src/shim/z80mnem.c src/shim/z80exec.c \
+	 src/shim/z80load.c src/shim/z80bdos.c src/shim/gdpb.c
 Z80CORPUS = src/shim/tests/z80corpus
 .PHONY: z80test
 build/z80test: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)

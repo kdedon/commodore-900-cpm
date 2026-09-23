@@ -398,10 +398,11 @@ $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 
 # CP/M-80 shim: host tests and target builds use the same engine sources,
 # except the decoder -- the machine runs the assembly one and z80dec.c is
-# the reference the host suite compiles.  ZDECT compares them.  z80dec.c
-# is still linked, under the renamed entry, for the mnemonic and condition
-# helpers that live beside the decoder and that the executor calls.
-Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80decc.o \
+# the reference the host suite compiles.  ZDECT compares them, and is the
+# only target program that links the C decoder: Z80.Z8K does not, which
+# is why the mnemonic and condition helpers the executor calls are in
+# z80mnem.c and not beside the decoder they came from.
+Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80mnem.o \
 	  $(UOBJDIR)/z80exec.o \
 	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o
 $(Z80OBJ): src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h
