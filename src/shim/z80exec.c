@@ -21,11 +21,14 @@ z32	z80nflag;		/* times a lazy record was materialised	*/
 /* ------------------------------------------------------------------ */
 /* memory: bytewise, little-endian, addresses wrap at 64 KB	       */
 
+/* The guest byte at `a'.  The z16 is the wraparound: 0xFFFF + 1 is 0. */
+#define MB(m, a)	((m)->m[(z16)(a)])
+
 int z80rb(m, a)
 struct z80 *m;
 z16 a;
 {
-	return (m->m[a] & 0xff);
+	return (MB(m, a) & 0xff);
 }
 
 int z80wb(m, a, v)
@@ -33,7 +36,7 @@ struct z80 *m;
 z16 a;
 int v;
 {
-	m->m[a] = (char)v;
+	MB(m, a) = (char)v;
 	return (0);
 }
 
@@ -41,15 +44,15 @@ z16 z80rw(m, a)
 struct z80 *m;
 z16 a;
 {
-	return ((z16)(z80rb(m, a) | (z80rb(m, (z16)(a + 1)) << 8)));
+	return ((z16)((MB(m, a) & 0xff) | ((MB(m, a + 1) & 0xff) << 8)));
 }
 
 int z80ww(m, a, v)
 struct z80 *m;
 z16 a, v;
 {
-	z80wb(m, a, v & 0xff);
-	z80wb(m, (z16)(a + 1), (v >> 8) & 0xff);
+	MB(m, a) = (char)v;
+	MB(m, a + 1) = (char)(v >> 8);
 	return (0);
 }
 
@@ -74,7 +77,7 @@ int r;
 	if (r == R_A)
 		return (m->a & 0xff);
 	if (r == R_M)
-		return (z80rb(m, m->rp[P_HL]));
+		return (MB(m, m->rp[P_HL]) & 0xff);
 	return ((r & 1) ? (m->rp[r >> 1] & 0xff)
 			: ((m->rp[r >> 1] >> 8) & 0xff));
 }
@@ -90,7 +93,7 @@ int r, v;
 		return (0);
 	}
 	if (r == R_M) {
-		z80wb(m, m->rp[P_HL], v & 0xff);
+		MB(m, m->rp[P_HL]) = (char)v;
 		return (0);
 	}
 	w = m->rp[r >> 1];
@@ -101,6 +104,35 @@ int r, v;
 	m->rp[r >> 1] = w;
 	return (0);
 }
+
+/*
+ * Past this point the six accessors ARE their expressions.  The
+ * executor reaches them about twice a guest instruction and the call
+ * frame costs more than the access does; the functions above stay
+ * because the loader, the seam and the tests call them by name.
+ *
+ * Every argument below is evaluated more than once, so no call site in
+ * this file may pass one with a side effect.
+ */
+#define z80rb(m, a)		(MB(m, a) & 0xff)
+#define z80wb(m, a, v)		(MB(m, a) = (char)(v))
+#define z80rw(m, a)		((z16)((MB(m, a) & 0xff) \
+				       | ((MB(m, (a) + 1) & 0xff) << 8)))
+#define z80ww(m, a, v)		(MB(m, a) = (char)(v), \
+				 MB(m, (a) + 1) = (char)((v) >> 8))
+#define z80getr(m, r)		((r) == R_A ? (m)->a & 0xff \
+				 : (r) == R_M ? MB(m, (m)->rp[P_HL]) & 0xff \
+				 : (r) & 1 ? (m)->rp[(r) >> 1] & 0xff \
+				 : ((m)->rp[(r) >> 1] >> 8) & 0xff)
+#define z80setr(m, r, v)	((r) == R_A \
+			? ((m)->a = (z8)(v), 0) \
+			: (r) == R_M \
+			? (MB(m, (m)->rp[P_HL]) = (char)(v), 0) \
+			: (r) & 1 \
+			? ((m)->rp[(r) >> 1] = (z16)(((m)->rp[(r) >> 1] \
+				& 0xff00) | ((v) & 0xff)), 0) \
+			: ((m)->rp[(r) >> 1] = (z16)(((m)->rp[(r) >> 1] \
+				& 0x00ff) | ((z16)((v) & 0xff) << 8)), 0))
 
 /* ------------------------------------------------------------------ */
 /* flags								*/
@@ -696,7 +728,8 @@ struct z80in *in;
 	case Z_LDRR:
 		/* MOV M,M does not exist: 0x76 is HLT, and z80dec.c
 		 * takes it out of this range before we see it. */
-		z80setr(m, in->x, z80getr(m, in->y));
+		v = z80getr(m, in->y);
+		z80setr(m, in->x, v);
 		break;
 	case Z_LDRI:
 		z80setr(m, in->x, in->imm & 0xff);
