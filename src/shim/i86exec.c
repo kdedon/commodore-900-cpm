@@ -45,6 +45,7 @@ i32	i86nflag;		/* times a lazy record was materialised	*/
 int	i86fast = 1;		/* delay loops in one step		*/
 i32	i86nskip;		/* instructions they did not step	*/
 int	(*i86wait)();		/* sleep n ticks; null does not sleep	*/
+i16	i86nrun;		/* steps i86run() has left		*/
 static i32 owed;		/* clocks not yet slept			*/
 
 char *i86resolve(par)
@@ -955,12 +956,25 @@ int i86step(m, in)
 struct i86 *m;
 struct i86in *in;
 {
+	i86nrun = 1;
+	return (i86run(m, in));
+}
+
+/*
+ * i86run -- step until i86nrun reaches 0 or an instruction returns
+ * other than X_OK.  i86nrun counts the X_OK steps down.
+ */
+int i86run(m, in)
+register struct i86 *m;
+register struct i86in *in;
+{
 	register i16 a, b, r;
 	i16 e, ip0, tf0;
 	i32 la, lb;
 	long sa, sb;
 	int rc, n, ient;
 
+next:
 	ip0 = m->ip;
 	ient = 0;
 	m->fault = 0;
@@ -1568,5 +1582,7 @@ exec:
 			return (X_WINDOW);
 		}
 	}
+	if (--i86nrun)
+		goto next;
 	return (X_OK);
 }

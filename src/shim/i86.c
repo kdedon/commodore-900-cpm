@@ -288,6 +288,7 @@ char *argv[];
 	register int i;
 	long n, k, limit, xa, np;
 	int sseg, rc, brc, slot, need;
+	unsigned nb;
 	char *stage;
 	static char hdr[CMD_HDR];
 	static char tail[SECLEN];
@@ -572,16 +573,19 @@ char *argv[];
 	limit = 20000000L;
 	brc = B_RUN;
 	rc = X_OK;
-	for (k = 0; k < limit; k++) {
-		rc = i86step(&G, &in);
+	for (k = 0; k < limit; ) {
+		nb = limit - k > 16384L ? 16384 : (unsigned) (limit - k);
+		i86nrun = nb;
+		rc = i86run(&G, &in);
+		k += (long) (nb - i86nrun);
 		if (rc == X_OK)
 			continue;
 		if (rc != X_INT)
 			break;
 		brc = i86bdos(&G);
-		if (brc == B_RUN)
-			continue;
-		break;
+		if (brc != B_RUN)
+			break;
+		k++;
 	}
 	/* A loop that ended on a bad instruction, a HLT or the step
 	 * limit never re-entered the seam, so the last partial line of

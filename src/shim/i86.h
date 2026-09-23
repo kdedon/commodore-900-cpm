@@ -216,6 +216,8 @@ extern int i86dec();
 				/* but a warm boot can reach it.	*/
 
 extern int i86step();		/* decode + execute one instruction	*/
+extern int i86run();		/* i86step() up to i86nrun times	*/
+extern i16 i86nrun;
 extern i16 i86flags();		/* materialise and return FLAGS		*/
 extern int i86cond();		/* (FLAGS, cc 0..15) -> 0 or 1		*/
 extern int i86lcond();		/* i86cond() on the pending record	*/
