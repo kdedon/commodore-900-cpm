@@ -498,6 +498,148 @@ static void t_neg(void)
 	}
 }
 
+/*
+ * Delay loops.  A register DEC and a JNZ back, run with the fast path and
+ * without it, must end in the same machine, memory and counts.  A leading
+ * ADD AL leaves a pending record for the first DEC to fold.
+ */
+static int dwaits, dlast;
+
+static int dwait(int n)
+{
+	dwaits++;
+	dlast = n;
+	return (0);
+}
+
+/* Run to the HLT; answer the steps taken. */
+static long drun(void)
+{
+	struct i86in in;
+	long k;
+
+	for (k = 0; k < 200000L; k++)
+		if (i86step(&fm, &in) != X_OK)
+			break;
+	return (k);
+}
+
+/* form 0: FE /1 byte, 1: FF /1 word, 2: 48+r word */
+static void dload(int form, int x, int pre, unsigned v, int cin)
+{
+	int i, p;
+
+	memset(&fm, 0, sizeof fm);
+	for (i = 0; i < 4; i++)
+		fm.sb[i] = fseg;
+	for (i = 0; i < 0x10000; i += 7)
+		fseg[i] = (char)(i * 13);
+	fm.lz = LZ_NONE;
+	fm.fl = (i16)(F_ONES | (cin ? F_CF : 0));
+	for (i = 0; i < 8; i++)
+		fm.r[i] = (i16)(0x1111 * (i + 1));
+	p = 0x100;
+	if (pre) {
+		fseg[p++] = (char)0x04;		/* add al,80h		*/
+		fseg[p++] = (char)0x80;
+	}
+	if (form == 2)
+		fseg[p++] = (char)(0x48 + x);
+	else {
+		fseg[p++] = (char)(0xfe + form);
+		fseg[p++] = (char)(0xc8 + x);
+	}
+	fseg[p] = (char)0x75;			/* jnz back		*/
+	fseg[p + 1] = (char)(form == 2 ? 0xfd : 0xfc);
+	fseg[p + 2] = (char)0xf4;		/* hlt			*/
+	fm.ip = 0x100;
+	if (form == 0 && (x & 4))
+		fm.r[x & 3] = (i16)((fm.r[x & 3] & 0x00ff) | (v << 8));
+	else if (form == 0)
+		fm.r[x] = (i16)((fm.r[x] & 0xff00) | v);
+	else
+		fm.r[x] = (i16)v;
+}
+
+static void t_delay(void)
+{
+	static const unsigned v8[] = { 0, 1, 2, 3, 127, 128, 254, 255 };
+	static const unsigned v16[] = { 0, 1, 2, 255, 256, 0x8000, 0xffff };
+	static char ref[65536];
+	struct i86 want;
+	i32 wi, wf;
+	long ws, gs;
+	int form, x, pre, cin, vi, nv, bad, ncase;
+	unsigned v;
+
+	bad = ncase = 0;
+	for (form = 0; form < 3; form++)
+	for (x = 0; x < 8; x++)
+	for (pre = 0; pre < 2; pre++)
+	for (cin = 0; cin < 2; cin++) {
+		nv = form == 0 ? 8 : 7;
+		for (vi = 0; vi < nv; vi++) {
+			v = form == 0 ? v8[vi] : v16[vi];
+			ncase++;
+			dload(form, x, pre, v, cin);
+			i86fast = 0;
+			i86ninsn = i86nflag = i86nskip = 0;
+			ws = drun();
+			wi = i86ninsn;
+			wf = i86nflag;
+			want = fm;
+			memcpy(ref, fseg, sizeof ref);
+
+			dload(form, x, pre, v, cin);
+			i86fast = 1;
+			i86ninsn = i86nflag = i86nskip = 0;
+			gs = drun();
+			if (memcmp(&fm, &want, sizeof fm) != 0
+			 || memcmp(fseg, ref, sizeof ref) != 0
+			 || i86ninsn != wi || i86nflag != wf
+			 || gs + (long)i86nskip != ws) {
+				if (bad++ < 4)
+					printf("FAIL delay form%d r%d pre%d "
+						"cf%d v%u: insn %lu/%lu flag "
+						"%lu/%lu steps %ld+%lu/%ld "
+						"ip %04x/%04x fl %03x/%03x\n",
+						form, x, pre, cin, v,
+						(unsigned long)i86ninsn,
+						(unsigned long)wi,
+						(unsigned long)i86nflag,
+						(unsigned long)wf, gs,
+						(unsigned long)i86nskip, ws,
+						fm.ip, want.ip, fm.fl, want.fl);
+			}
+		}
+	}
+	ntest++;
+	if (bad) {
+		printf("FAIL delay loops: %d of %d cases differ\n", bad, ncase);
+		nfail++;
+	}
+	chk("delay loops compared", (long)ncase, 8L * 2 * 2 * (8 + 7 + 7));
+
+	/* The time.  256 turns of DEC AL are 4852 clocks and 65536 of
+	 * DEC AX 1179636; a tick is 47700.  Each sleep asks one tick more
+	 * than it owes. */
+	i86wait = dwait;
+	for (vi = 0; vi < 10; vi++) {
+		dload(0, 0, 0, 0, 0);
+		drun();
+		if (vi == 8)
+			chk("delay: no sleep below a tick", (long)dwaits, 0L);
+	}
+	chk("delay: 48520 clocks sleep once", (long)dwaits, 1L);
+	chk("delay: ... asking two ticks", (long)dlast, 2L);
+	dload(2, 0, 0, 0, 0);
+	drun();
+	chk("delay: 820 + 1179636 sleeps again", (long)dwaits, 2L);
+	chk("delay: ... asking 25 ticks", (long)dlast, 25L);
+	i86wait = 0;
+	i86nskip = 0;
+}
+
 /* ================================================================== */
 /* 3. execution							      */
 /* ================================================================== */
@@ -5892,6 +6034,7 @@ char **argv;
 	t_flags_word();
 	t_incdec();
 	t_neg();
+	t_delay();
 	t_exec();
 	t_string();
 	t_far();

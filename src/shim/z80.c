@@ -262,6 +262,7 @@ char *argv[];
 	pdump(COM_ORG, 16);
 
 	z80ninsn = z80nflag = 0;
+	z80wait = z80sleep;
 	z80bdosinit(&G);
 
 	limit = 20000000L;
@@ -283,6 +284,7 @@ char *argv[];
 	 * the guest's output is still sitting in the batch. */
 	z80oflush();
 	z80bdosfini();
+	k += z80nskip;
 
 	cputs("\r\nz80: ");
 	pdecl(k);

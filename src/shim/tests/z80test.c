@@ -1853,6 +1853,144 @@ static void t_lazyrate(void)
 	chk("a run of bit materialises once", (long)nbit, 1L);
 }
 
+/*
+ * 4e. Delay loops.  DCR r; JNZ back (or JR NZ back), run with the fast
+ * path and without it, must end in the same machine, memory and counts.
+ * A leading ADI leaves a pending record for the first DCR to fold.
+ */
+static int dwaits, dlast;
+
+static int dwait(int n)
+{
+	dwaits++;
+	dlast = n;
+	return (0);
+}
+
+/* Run to the HLT; answer the steps taken. */
+static long drun(void)
+{
+	struct z80in in;
+	long k;
+
+	for (k = 0; k < 2000; k++)
+		if (z80step(&G, &in) != X_OK)
+			break;
+	return (k);
+}
+
+static int dload(int x, int jr, int pre, int v, int cin)
+{
+	static const int regs[8] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0, 0x77 };
+	int i, p;
+
+	gclear();
+	for (i = 0; i < 0x10000; i += 7)
+		gmem[i] = (char)(i * 13);
+	p = 0x100;
+	if (pre) {
+		gmem[p++] = (char)0xc6;		/* adi 80h		*/
+		gmem[p++] = (char)0x80;
+	}
+	gmem[p] = (char)(0x05 | (x << 3));	/* dcr r		*/
+	if (jr) {
+		gmem[p + 1] = (char)0x20;	/* jr nz,$-1		*/
+		gmem[p + 2] = (char)0xfd;
+		gmem[p + 3] = (char)0x76;	/* hlt			*/
+	} else {
+		gmem[p + 1] = (char)0xc2;	/* jnz p		*/
+		gmem[p + 2] = (char)(p & 0xff);
+		gmem[p + 3] = (char)(p >> 8);
+		gmem[p + 4] = (char)0x76;
+	}
+	G.pc = 0x100;
+	for (i = 0; i < 8; i++)
+		if (i != R_M)
+			z80setr(&G, i, regs[i]);
+	G.rp[P_SP] = 0xfff0;
+	z80setr(&G, x, v);
+	if (cin)
+		G.f |= F_CY;
+	return (0);
+}
+
+static void t_delay(void)
+{
+	static const int vals[] = { 0, 1, 2, 3, 127, 128, 254, 255 };
+	static char ref[0x10000];
+	struct z80 want;
+	z32 wi, wf;
+	long ws, gs;
+	int x, jr, pre, cin, vi, bad, ncase;
+
+	bad = ncase = 0;
+	for (x = 0; x < 8; x++)
+	for (jr = 0; jr < 2; jr++)
+	for (pre = 0; pre < 2; pre++)
+	for (cin = 0; cin < 2; cin++)
+	for (vi = 0; vi < (int)(sizeof vals / sizeof vals[0]); vi++) {
+		if (x == R_M)
+			continue;
+		ncase++;
+		dload(x, jr, pre, vals[vi], cin);
+		z80fast = 0;
+		z80ninsn = z80nflag = z80nskip = 0;
+		ws = drun();
+		wi = z80ninsn;
+		wf = z80nflag;
+		want = G;
+		memcpy(ref, gmem, sizeof ref);
+
+		dload(x, jr, pre, vals[vi], cin);
+		z80fast = 1;
+		z80ninsn = z80nflag = z80nskip = 0;
+		gs = drun();
+		if (memcmp(&G, &want, sizeof G) != 0
+		 || memcmp(gmem, ref, sizeof ref) != 0
+		 || z80ninsn != wi || z80nflag != wf
+		 || gs + (long)z80nskip != ws) {
+			if (bad++ < 4)
+				printf("FAIL delay r%d jr%d pre%d cy%d v%d: "
+					"insn %lu/%lu flag %lu/%lu steps "
+					"%ld+%lu/%ld pc %04x/%04x f %02x/%02x\n",
+					x, jr, pre, cin, vals[vi],
+					(unsigned long)z80ninsn,
+					(unsigned long)wi,
+					(unsigned long)z80nflag,
+					(unsigned long)wf, gs,
+					(unsigned long)z80nskip, ws,
+					G.pc, want.pc, G.f, want.f);
+		}
+	}
+	ntest++;
+	if (bad) {
+		printf("FAIL delay loops: %d of %d cases differ\n", bad, ncase);
+		nfail++;
+	}
+	chk("delay loops compared", (long)ncase, 7L * 2 * 2 * 2 * 8);
+
+	/* The time.  256 turns of JNZ are 3584 T-states and of JR 4091;
+	 * a tick is 40000.  Each sleep asks one tick more than it owes. */
+	z80wait = dwait;
+	for (vi = 0; vi < 12; vi++) {
+		dload(R_A, 0, 0, 0, 0);
+		drun();
+		if (vi == 10)
+			chk("delay: no sleep below a tick", (long)dwaits, 0L);
+	}
+	chk("delay: 43008 T-states sleep once", (long)dwaits, 1L);
+	chk("delay: ... asking two ticks", (long)dlast, 2L);
+	for (vi = 0; vi < 10; vi++) {
+		dload(R_B, 1, 0, 0, 0);
+		drun();
+		if (vi == 8)
+			chk("delay: the 3008 left carries", (long)dwaits, 1L);
+	}
+	chk("delay: 3008 + 40910 sleeps again", (long)dwaits, 2L);
+	z80wait = 0;
+	z80nskip = 0;
+}
+
 /* ================================================================== */
 /* 5. refusals							      */
 /* ================================================================== */
@@ -5091,6 +5229,7 @@ char **argv;
 	t_ed_cpblk();
 	t_ed_arith();
 	t_lazyrate();
+	t_delay();
 	t_refuse();
 	t_loader();
 	t_corpus(argv[1]);

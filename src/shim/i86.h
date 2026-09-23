@@ -271,6 +271,14 @@ extern char *i86addr();
  * ratio is the flag-read rate. */
 extern i32 i86ninsn, i86nflag;
 
+/* Delay loops: a register DEC spinning on a JNZ to itself runs in one
+ * step and sleeps its real time through i86wait(ticks).  i86nskip counts
+ * the instructions that did not step; i86fast = 0 steps them all. */
+extern int i86fast;
+extern i32 i86nskip;
+extern int (*i86wait)();
+extern int i86sleep();		/* i86wait on the target		*/
+
 extern char *i86mnem();		/* mnemonic of a decoded instruction	*/
 
 /* ------------------------------------------------------------------ */

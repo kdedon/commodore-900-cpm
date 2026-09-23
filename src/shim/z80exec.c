@@ -18,6 +18,18 @@ int	z80hookno;		/* hook left behind by X_HOOK		*/
 z32	z80ninsn;		/* instructions executed		*/
 z32	z80nflag;		/* times a lazy record was materialised	*/
 
+/* A delay loop is charged at Z80 T-states on a 4 MHz part. */
+#define Z80TICK	40000L		/* T-states per 100 Hz tick		*/
+#define T_DEC	4		/* DEC r				*/
+#define T_JP	10		/* JP cc, taken or not			*/
+#define T_JRY	12		/* JR cc, taken				*/
+#define T_JRN	7		/* JR cc, not taken			*/
+
+int	z80fast = 1;		/* delay loops in one step		*/
+z32	z80nskip;		/* instructions they did not step	*/
+int	(*z80wait)();		/* sleep n ticks; null does not sleep	*/
+static z32 owed;		/* T-states not yet slept		*/
+
 /* ------------------------------------------------------------------ */
 /* memory: bytewise, little-endian, addresses wrap at 64 KB	       */
 
@@ -693,6 +705,49 @@ struct z80in *in;
 	return (X_UNIMP);
 }
 
+/*
+ * A DCR r at pc0 that JNZ pc0 or JR NZ,pc0 follows is a delay loop.  With
+ * r the count left after the DCR just run, finish it in one step, leaving
+ * the state and counts its 2r+1 remaining instructions would, then sleep
+ * the time the whole loop takes on a real Z80.
+ */
+static delay(m, x, pc0, r)
+struct z80 *m;
+int x, r;
+z16 pc0;
+{
+	register z32 n, t;
+	int len;
+
+	if ((MB(m, pc0 + 1) & 0xff) == 0xc2 && z80rw(m, pc0 + 2) == pc0) {
+		len = 3;
+		t = (z32)(r + 1) * (T_DEC + T_JP);
+	} else if ((MB(m, pc0 + 1) & 0xff) == 0x20
+		&& (MB(m, pc0 + 2) & 0xff) == 0xfd) {
+		len = 2;
+		t = (z32)(r + 1) * T_DEC + (z32)r * T_JRY + T_JRN;
+	} else
+		return (0);
+	z80flags(m);			/* the first jump's read	*/
+	z80setr(m, x, 0);
+	lazy(m, LZ_DCR, 1, 1, 0, 0);
+	z80flags(m);			/* the last jump's read		*/
+	z80nflag += r - 1;
+	z80ninsn += 2 * r + 1;
+	z80nskip += 2 * r + 1;
+	m->pc = (z16)(pc0 + 1 + len);
+	if (!z80wait)
+		return (0);
+	owed += t;
+	if (owed >= Z80TICK) {
+		n = owed / Z80TICK;
+		owed -= n * Z80TICK;
+		/* A wait of k ticks can end just after k - 1. */
+		(*z80wait)((int)n + 1);
+	}
+	return (0);
+}
+
 /* ------------------------------------------------------------------ */
 /* one instruction						       */
 
@@ -754,6 +809,8 @@ struct z80in *in;
 		r = (v - 1) & 0xff;
 		lazy(m, LZ_DCR, v, 1, r, 0);
 		z80setr(m, in->x, r);
+		if (r != 0 && in->x != R_M && z80fast)
+			delay(m, in->x, pc0, r);
 		break;
 
 	case Z_LXI:

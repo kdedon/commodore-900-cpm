@@ -240,6 +240,14 @@ extern int z80hookno;		/* hook left by X_HOOK			*/
  * 27 cycles on every arithmetic instruction -- is worth paying eagerly. */
 extern z32 z80ninsn, z80nflag;
 
+/* Delay loops: a DCR r spinning on a JNZ or JR NZ to itself runs in one
+ * step and sleeps its real time through z80wait(ticks).  z80nskip counts
+ * the instructions that did not step; z80fast = 0 steps them all. */
+extern int z80fast;
+extern z32 z80nskip;
+extern int (*z80wait)();
+extern int z80sleep();		/* z80wait on the target		*/
+
 /* Byte and pair access, exported because the loader, the seam and the
  * tests all need them and because r = 6 meaning memory is a rule that
  * must be stated once. */

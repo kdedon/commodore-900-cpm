@@ -566,6 +566,7 @@ char *argv[];
 	i86nsegslow = i86nsegbad = 0;
 	i86segget = xsegget;
 	i86segput = xsegput;
+	i86wait = i86sleep;
 	i86bdosinit(&G);
 
 	limit = 20000000L;
@@ -587,6 +588,7 @@ char *argv[];
 	 * the guest's output is still sitting in the batch. */
 	i86oflush();
 	i86bdosfini();
+	k += i86nskip;
 
 	cputs("\r\ni86: ");
 	pdecl(k);

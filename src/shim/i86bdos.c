@@ -73,6 +73,14 @@ int i86oflush()
 	return (n);
 }
 
+/* Sleep n ticks with BDOS function 141, the guest's output shown first. */
+int i86sleep(n)
+int n;
+{
+	i86oflush();
+	return (i86sys(141, (i16)n, (char *)0));
+}
+
 /* Report CP/M 2.2 compatibility to avoid CP/M 3-specific FCB attributes
  * in CP/M-86 guests.
  *

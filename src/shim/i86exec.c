@@ -35,6 +35,18 @@ char	*(*i86segnew)();
 i32	i86ninsn;		/* instructions executed		*/
 i32	i86nflag;		/* times a lazy record was materialised	*/
 
+/* A delay loop is charged at 8086 clocks on a 4.77 MHz part. */
+#define I86TICK	47700L		/* clocks per 100 Hz tick		*/
+#define C_DECRM	3		/* DEC r, the mod r/m form		*/
+#define C_DECR	2		/* DEC r16, the one-byte form		*/
+#define C_JCCY	16		/* Jcc, taken				*/
+#define C_JCCN	4		/* Jcc, not taken			*/
+
+int	i86fast = 1;		/* delay loops in one step		*/
+i32	i86nskip;		/* instructions they did not step	*/
+int	(*i86wait)();		/* sleep n ticks; null does not sleep	*/
+static i32 owed;		/* clocks not yet slept			*/
+
 char *i86resolve(par)
 i16 par;
 {
@@ -804,6 +816,60 @@ i16 seg, off;
 	return (m->wset && off == 0 && seg == m->wseg);
 }
 
+/*
+ * A register DEC at ip0 that JNZ ip0 follows is a delay loop.  With r the
+ * count left after the DEC just run, finish it in one step, leaving the
+ * state and counts its 2r+1 remaining instructions would, then sleep the
+ * time the whole loop takes on a real 8086.
+ */
+static delay(m, in, ip0, r)
+struct i86 *m;
+struct i86in *in;
+i16 ip0, r;
+{
+	register char *cs;
+	register i32 n, t;
+	int op, len;
+
+	cs = m->sb[S_CS];
+	op = cs[ip0] & 0xff;
+	if (op >= 0x48 && op <= 0x4f) {
+		len = 1;
+		t = C_DECR;
+	} else if ((op & 0xfe) == 0xfe
+		&& (cs[(i16)(ip0 + 1)] & 0xf8) == 0xc8) {
+		len = 2;
+		t = C_DECRM;
+	} else
+		return (0);
+	if ((cs[(i16)(ip0 + len)] & 0xff) != 0x75
+	 || (cs[(i16)(ip0 + len + 1)] & 0xff) != ((-(len + 2)) & 0xff))
+		return (0);
+	n = (i32)r;
+	t = (n + 1) * t + n * C_JCCY + C_JCCN;
+	i86flags(m);			/* the first jump's read	*/
+	if (in->w)
+		m->r[in->rm] = 0;
+	else
+		setb(m, in->rm, 0);
+	lazy(m, LZ_DEC, in->w, (i16)1, (i16)1, (i16)0, 0);
+	i86flags(m);			/* the last jump's read		*/
+	i86nflag += n - 1;
+	i86ninsn += 2 * n + 1;
+	i86nskip += 2 * n + 1;
+	m->ip = (i16)(ip0 + len + 2);
+	if (!i86wait)
+		return (0);
+	owed += t;
+	if (owed >= I86TICK) {
+		n = owed / I86TICK;
+		owed -= n * I86TICK;
+		/* A wait of k ticks can end just after k - 1. */
+		(*i86wait)((int)n + 1);
+	}
+	return (0);
+}
+
 /* ------------------------------------------------------------------ */
 /* one instruction						       */
 
@@ -968,6 +1034,9 @@ exec:
 		r = (i16)(a - 1);
 		lazy(m, LZ_DEC, in->w, a, 1, r, 0);
 		rmwr(m, in, e, r);
+		if (in->mod == 3 && !tf0 && i86fast
+		 && (in->w ? r : r & 0xff) != 0)
+			delay(m, in, ip0, in->w ? r : (i16)(r & 0xff));
 		break;
 	case I_NOT:				/* NOT affects no flags	*/
 		a = rmrd(m, in, e);

@@ -369,6 +369,14 @@ int z80oflush()
 	return (n);
 }
 
+/* Sleep n ticks with BDOS function 141, the guest's output shown first. */
+int z80sleep(n)
+int n;
+{
+	z80oflush();
+	return (z80sys(141, (z16)n, (char *)0));
+}
+
 /*
  * Re-issue the native set-DMA.  One place where a DMA address is formed
  * and one place where it is checked, called from load time and from
