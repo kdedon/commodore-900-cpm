@@ -62,22 +62,6 @@ long off, n;
 	return ((unsigned) k);
 }
 
-static VOID bmove(d, p, n)
-register unsigned char *d, *p;
-register unsigned n;
-{
-	while (n-- > 0)
-		*d++ = *p++;
-}
-
-static VOID bzero(d, n)
-register unsigned char *d;
-register unsigned n;
-{
-	while (n-- > 0)
-		*d++ = 0;
-}
-
 /* Surface bytes from to to, lowest first: safe when to is below from. */
 static VOID rcopy(to, from, n)
 long to, from, n;
@@ -86,7 +70,7 @@ long to, from, n;
 
 	while (n > 0) {
 		k = run(from, (long) run(to, n));
-		bmove(gfx_addr(hs, to), gfx_addr(hs, from), k);
+		gfx_bcopy(gfx_addr(hs, to), gfx_addr(hs, from), k);
 		to += k;
 		from += k;
 		n -= k;
@@ -100,7 +84,7 @@ long off, n;
 
 	while (n > 0) {
 		k = run(off, n);
-		bzero(gfx_addr(hs, off), k);
+		gfx_bfill(gfx_addr(hs, off), k, 0);
 		off += k;
 		n -= k;
 	}
@@ -115,7 +99,7 @@ unsigned n;
 
 	for (i = 0; i < n; i += k) {
 		k = run(off + i, (long) (n - i));
-		bmove(rbuf + i, gfx_addr(hs, off + i), k);
+		gfx_bcopy(rbuf + i, gfx_addr(hs, off + i), k);
 	}
 }
 

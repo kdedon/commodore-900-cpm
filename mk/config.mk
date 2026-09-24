@@ -283,7 +283,7 @@ split_SEG = 0x37
 split_SRC = splitscan splitsc zsplit
 split_EXP = spemu_ spscan_ sptop_ spusp_ spufp_
 gfx_SEG   = 0x38
-gfx_SRC   = crstek crshr tek gfx gfxm1 gfxc4 hrfont gsxfont
+gfx_SRC   = crstek crshr tek gfx gfxm1 gfxc4 gfxa hrfont gsxfont
 gfx_EXP   = tkinit_ tkput_ tkclear_ hcinit_ hcram_ hcpark_ hcput_ \
 	    hcblank_ hcscroll_ hcdelch_
 MODOBJ = $(foreach m,$(MODULES),$(patsubst %,$(OBJDIR)/%.o,$($(m)_SRC))) \

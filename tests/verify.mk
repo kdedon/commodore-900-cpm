@@ -5242,7 +5242,8 @@ build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 # ---- Tek 4010 graphics, on the host (verify-tek) ----
 # Byte streams through the parser onto 1 and 4 bpp surfaces split
 # across two buffers, compared with a model of the scaling and lines.
-TEKSRC	= src/lib/tek.c src/lib/gfx.c src/lib/gfxm1.c src/lib/gfxc4.c
+TEKSRC	= src/lib/tek.c src/lib/gfx.c src/lib/gfxm1.c src/lib/gfxc4.c \
+	  src/lib/gfxb.c
 .PHONY: verify-tek
 verify-tek: build/tektest
 	./build/tektest

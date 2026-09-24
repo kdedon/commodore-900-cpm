@@ -10,7 +10,7 @@
 #include "gfx.h"
 
 extern int	gfx_m1pix(), gfx_m1get(), gfx_m1span(), gfx_m1blit();
-extern int	gfx_c4pix(), gfx_c4get(), gfx_c4span();
+extern int	gfx_c4pix(), gfx_c4get(), gfx_c4span(), gfx_c4blit();
 
 VOID gfx_ram(s, w, h, bpp, stride, p0, p1, split)
 register struct gfxsurf *s;
@@ -252,6 +252,8 @@ int sx, x, y, w, h, c, mode;
 		return (GFX_OK);
 	if (s->bpp == 1)
 		return (gfx_m1blit(s, src, sstride, sx, x, y, w, h, c, mode));
+	if (s->bpp == 4)
+		return (gfx_c4blit(s, src, sstride, sx, x, y, w, h, c, mode));
 
 	for (j = 0; j < h; j++) {
 		row = src + (long) j * sstride;

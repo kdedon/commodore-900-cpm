@@ -42,7 +42,8 @@ int x, y;
 
 /*
  * A raster's bytes x0/8 .. x1/8, stepping to seg1 when the offset
- * reaches the split.  left counts the bytes still in seg0.
+ * reaches the split.  left counts the bytes still in seg0.  The whole
+ * bytes between the ends go in runs that stop at the split.
  */
 int gfx_m1span(s, x0, x1, y, c, mode)
 register struct gfxsurf *s;
@@ -51,41 +52,49 @@ int x0, x1, y, c, mode;
 	register unsigned char	*p;
 	register int		n;
 	long			off, left;
-	int			m;
+	int			m, k;
 
 	off = (long) y * s->stride + (x0 >> 3);
 	p = gfx_addr(s, off);
 	left = off < s->split ? s->split - off : -1L;
 	n = (x1 >> 3) - (x0 >> 3);
 	m = 0xff >> (x0 & 7);
-	for (;;) {
-		if (n == 0)
-			m &= 0xff << (7 - (x1 & 7));
-		op(p++, m, c, mode);
-		if (n-- == 0)
-			break;
-		if (--left == 0)
-			p = s->seg1;
-		m = 0xff;
+	if (n == 0) {
+		op(p, m & (0xff << (7 - (x1 & 7))), c, mode);
+		return (GFX_OK);
 	}
+	op(p++, m, c, mode);
+	if (--left == 0)
+		p = s->seg1;
+	for (n--; n > 0; n -= k) {
+		k = left > 0 && left < n ? (int) left : n;
+		if (mode == GFX_ERASE || (mode == GFX_REPLACE && (c & 1) == 0))
+			gfx_bfill(p, k, 0);
+		else if (mode == GFX_REPLACE)
+			gfx_bfill(p, k, 0xff);
+		else if (c & 1)
+			gfx_bxor(p, k, 0xff);
+		p += k;
+		if ((left -= k) == 0)
+			p = s->seg1;
+	}
+	op(p, 0xff << (7 - (x1 & 7)), c, mode);
 	return (GFX_OK);
 }
 
-/* Eight source bits starting at bit sb of row, which may be up to 7
-   before it; last is the final byte the window may read. */
-static int bits8(row, sb, last)
-unsigned char *row;
-int sb, last;
+/*
+ * Source bits sb.. of src, sb up to 7 before it and bytes past last read
+ * as 0, into n bytes from p; the run stops before the split.
+ */
+static VOID m1run(p, src, sb, n, last, m0, m1, op)
+unsigned char *p, *src;
+int sb, n, last, m0, m1, op;
 {
-	register int	i, v;
+	int	i;
 
-	if (sb < 0)
-		return (row[0] >> -sb);
-	i = sb >> 3;
-	v = row[i] << (sb & 7);
-	if ((sb & 7) != 0 && i < last)
-		v |= row[i + 1] >> (8 - (sb & 7));
-	return (v & 0xff);
+	i = sb < 0 ? -1 : sb >> 3;
+	gfx_m1row(p, src + i + 1, n, sb & 7, i >= 0 ? src[i] : 0, last - i,
+	    m0, m1, op);
 }
 
 int gfx_m1blit(s, src, sstride, sx, x, y, w, h, c, mode)
@@ -94,41 +103,29 @@ unsigned char *src;
 unsigned sstride;
 int sx, x, y, w, h, c, mode;
 {
-	register unsigned char	*p;
-	register int		n;
-	unsigned char		*row;
+	register int		n, k;
 	long			off, left;
-	int			x1, last, sb, m, v;
+	int			x1, last, sb, m0, m1, op;
 
+	if (mode == GFX_XOR && (c & 1) == 0)
+		return (GFX_OK);
+	op = mode == GFX_XOR ? GFX_RXOR : mode == GFX_ERASE ? GFX_RERASE
+	    : (c & 1) ? GFX_RSET : GFX_RCLR;
 	x1 = x + w - 1;
 	last = (sx + w - 1) >> 3;
+	n = (x1 >> 3) - (x >> 3) + 1;
+	m0 = 0xff >> (x & 7);
+	m1 = (0xff << (7 - (x1 & 7))) & 0xff;
+	sb = sx - (x & 7);
 	for (; h > 0; h--, y++, src += sstride) {
-		row = src;
 		off = (long) y * s->stride + (x >> 3);
-		p = gfx_addr(s, off);
 		left = off < s->split ? s->split - off : -1L;
-		n = (x1 >> 3) - (x >> 3);
-		m = 0xff >> (x & 7);
-		sb = sx - (x & 7);
-		for (;;) {
-			if (n == 0)
-				m &= 0xff << (7 - (x1 & 7));
-			v = bits8(row, sb, last) & m;
-			if (mode == GFX_REPLACE)
-				*p = (*p & ~m) | ((c & 1) ? v : 0);
-			else if (mode == GFX_XOR) {
-				if (c & 1)
-					*p ^= v;
-			} else
-				*p &= ~v;
-			p++;
-			if (n-- == 0)
-				break;
-			if (--left == 0)
-				p = s->seg1;
-			m = 0xff;
-			sb += 8;
-		}
+		k = left > 0 && left < n ? (int) left : n;
+		m1run(gfx_addr(s, off), src, sb, k, last, m0,
+		    k == n ? m1 : 0xff, op);
+		if (k < n)
+			m1run(s->seg1, src, sb + 8 * k, n - k, last, 0xff, m1,
+			    op);
 	}
 	return (GFX_OK);
 }

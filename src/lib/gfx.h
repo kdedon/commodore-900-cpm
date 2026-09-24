@@ -56,3 +56,16 @@ extern int	gfx_pline();	/* (s, pts, n, c, bg, mode, pat) styled	*/
 
 /* shared by the back-ends */
 extern unsigned char *gfx_addr();	/* (s, off) -> byte at offset	*/
+
+/* byte loops inside one segment */
+extern VOID	gfx_bcopy();	/* (d, s, n) lowest first		*/
+extern VOID	gfx_bfill();	/* (d, n, v)				*/
+extern VOID	gfx_bxor();	/* (d, n, v)				*/
+extern VOID	gfx_m1row();	/* (p, q, n, s, hi, avail, m0, m1, op)	*/
+extern VOID	gfx_c4row();	/* (p, q, n, s, hi, avail, t, op)	*/
+
+/* the row loops' op: a source bit's effect */
+#define	GFX_RSET	0	/* set, clear bits clear		*/
+#define	GFX_RCLR	1	/* clear every masked bit		*/
+#define	GFX_RXOR	2	/* invert				*/
+#define	GFX_RERASE	3	/* clear				*/

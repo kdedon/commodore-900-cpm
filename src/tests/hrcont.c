@@ -10,6 +10,10 @@
  * cursor cell it leaves, or for Tek alpha the glyphs at the beam.  The
  * answer is painted pixel by pixel from the font tables and compared with
  * the surface's bytes, guards included.
+ *
+ * Then the console's cells, linked here twice, once over the library's
+ * assembly loops and once over its C ones, take the same calls on the
+ * same split surfaces and must leave the same bytes.
  */
 
 #include "cpm.h"
@@ -78,8 +82,9 @@ static int	msplit[] = { 0, 7, 601, 803, 1759, -1 };
 static int	csplit[] = { 0, 341, 861, 1847, -1 };
 
 static unsigned char	b0[MAXB + GUARD], b1[MAXB + GUARD];
+static unsigned char	c0[MAXB + GUARD], c1[MAXB + GUARD];
 static unsigned char	model[128 * 110];
-static struct gfxsurf	s;
+static struct gfxsurf	s, cs;
 static int		fw, fh, ink, bad, runs;
 
 static char hexd[] = "0123456789ABCDEF";
@@ -241,6 +246,89 @@ int bpp, split;
 	runs++;
 }
 
+extern int	hcram(), hcpark(), hcput(), hcblank(), hcscroll(), hcdelch();
+extern int	chcram(), chcpark(), chcput(), chcblank(), chcscroll();
+extern int	chcdelch();
+extern VOID	cgfx_ram();
+
+/* p: put t at (a, b) with attribute c; k: park at (a, b); s: scroll
+   rows a..b by c; x: blank c cells from (a, b); d: delete (a, b) */
+struct step {
+	int	op, a, b, c;
+	char	*t;
+};
+
+static struct step steps[] = {
+	{ 'p', 0, 0, 0, "ABCDEFGHIJ" },
+	{ 'p', 1, 2, 0x70, "klmno" },
+	{ 'p', 2, 0, 0x01, "Under" },
+	{ 'p', 3, 1, 0x08, "xyz" },
+	{ 'k', 1, 3 },
+	{ 's', 0, 3, 1 },
+	{ 's', 1, 3, -1 },
+	{ 's', 0, 3, 2 },
+	{ 'p', 3, 4, 0x70, "QRS" },
+	{ 'd', 0, 2 },
+	{ 'd', 3, 5 },
+	{ 'x', 0, 5, 12 },
+	{ 's', 0, 2, -2 },
+	{ 'x', 1, 0, 20 },
+	{ 0 }
+};
+
+static VOID twin(bpp, split)
+int bpp, split;
+{
+	register struct step *t;
+	register int	i;
+
+	if (bpp == 1) {
+		gfx_ram(&s, 128, 110, 1, 16, b0, b1, (long) split);
+		cgfx_ram(&cs, 128, 110, 1, 16, c0, c1, (long) split);
+	} else {
+		gfx_ram(&s, 84, 44, 4, 42, b0, b1, (long) split);
+		cgfx_ram(&cs, 84, 44, 4, 42, c0, c1, (long) split);
+	}
+	for (i = 0; i < MAXB + GUARD; i++)
+		b0[i] = b1[i] = c0[i] = c1[i] = SENT;
+	hcram(&s);
+	chcram(&cs);
+	for (t = steps; ; t++) {
+		for (i = 0; i < MAXB + GUARD; i++)
+			if (b0[i] != c0[i] || b1[i] != c1[i]) {
+				fail("asm vs C", t - steps, split, i, 0);
+				return;
+			}
+		switch (t->op) {
+		case 0:
+			runs++;
+			return;
+		case 'p':
+			for (i = 0; t->t[i]; i++)
+				;
+			hcput(t->a, t->b, t->t, i, t->c);
+			chcput(t->a, t->b, t->t, i, t->c);
+			break;
+		case 'k':
+			hcpark(t->a, t->b);
+			chcpark(t->a, t->b);
+			break;
+		case 's':
+			hcscroll(t->a, t->b, t->c);
+			chcscroll(t->a, t->b, t->c);
+			break;
+		case 'x':
+			hcblank(t->a, t->b, t->c);
+			chcblank(t->a, t->b, t->c);
+			break;
+		case 'd':
+			hcdelch(t->a, t->b);
+			chcdelch(t->a, t->b);
+			break;
+		}
+	}
+}
+
 int main(argc, argv)
 int argc;
 char *argv[];
@@ -259,6 +347,10 @@ char *argv[];
 		run(n, (struct want *) 0, tekin, 1, msplit[i]);
 	for (i = 0; csplit[i] >= 0 && !bad; i++)
 		run(n, (struct want *) 0, tekin, 4, csplit[i]);
+	for (i = 0; msplit[i] >= 0 && !bad; i++)
+		twin(1, msplit[i]);
+	for (i = 0; csplit[i] >= 0 && !bad; i++)
+		twin(4, csplit[i]);
 	if (bad) {
 		cputs("HRCONT: failed\r\n");
 		return (1);

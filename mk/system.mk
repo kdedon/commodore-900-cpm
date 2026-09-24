@@ -81,6 +81,10 @@ $(OBJDIR)/%.o: src/bios/%.s $(SRCHDRS) $(TCSTAMP) | $(OBJDIR)
 	cpp -traditional-cpp -P $(DEFS) $(SRCINC) $< > $(OBJDIR)/$*.i 2>> $(LOG)
 	$(AS) -g -o $@ $(OBJDIR)/$*.i >> $(LOG) 2>&1
 
+$(OBJDIR)/%.o: src/lib/%.s $(TCSTAMP) | $(OBJDIR)
+	cpp -traditional-cpp -P $< > $(OBJDIR)/$*.i 2>> $(LOG)
+	$(AS) -g -o $@ $(OBJDIR)/$*.i >> $(LOG) 2>&1
+
 $(OBJDIR)/%.o: src/bdos/%.s $(SYSHDRS) $(TCSTAMP) | $(OBJDIR)
 	cpp -traditional-cpp -P $(DEFS) $(SYSINC) $< > $(OBJDIR)/$*.i 2>> $(LOG)
 	$(AS) -g -o $@ $(OBJDIR)/$*.i >> $(LOG) 2>&1

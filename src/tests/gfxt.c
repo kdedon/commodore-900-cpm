@@ -12,6 +12,10 @@
  * the padding pixels beyond the surface's width.  Each surface runs at
  * several split points, most of them inside a raster.
  *
+ * The same operations also go through the library built with its C
+ * loops in place of the assembly ones, and the two surfaces must agree
+ * byte for byte.
+ *
  * Then, given two free 64 KB segments, the HR geometries: mono raster
  * 511 | 512 and colour raster 204 across the real segment boundary.
  */
@@ -104,6 +108,8 @@ static int	csplit[] = { 0, 55, 60, 61, 131, 240, -1 };
 
 static unsigned char	b0[MAXB + GUARD];
 static unsigned char	b1[MAXB + GUARD];
+static unsigned char	c0[MAXB + GUARD];	/* the C loops' surface	*/
+static unsigned char	c1[MAXB + GUARD];
 static unsigned char	model[MAXB * 8];
 static unsigned char	expb[MAXB];
 
@@ -112,7 +118,23 @@ static long	checks;
 
 /* the surface under test */
 static int	sw, sh, sbpp, sstr, total, mw, split;
-static struct gfxsurf	surf;
+static struct gfxsurf	surf, csurf;
+
+/* the library with the C loops, renamed */
+extern VOID	cgfx_ram();
+extern int	cgfx_pixel(), cgfx_span(), cgfx_line(), cgfx_fill();
+extern int	cgfx_box(), cgfx_blit(), cgfx_pline();
+
+struct lib {
+	struct gfxsurf	*s;
+	int		(*pixel)(), (*span)(), (*line)(), (*fill)();
+	int		(*box)(), (*blit)(), (*pline)();
+};
+
+static struct lib	alib = { &surf, gfx_pixel, gfx_span, gfx_line,
+			    gfx_fill, gfx_box, gfx_blit, gfx_pline };
+static struct lib	clib = { &csurf, cgfx_pixel, cgfx_span, cgfx_line,
+			    cgfx_fill, cgfx_box, cgfx_blit, cgfx_pline };
 
 static char hexd[] = "0123456789ABCDEF";
 
@@ -283,25 +305,29 @@ register struct op *o;
 	}
 }
 
-static int ldo(o)
+static int ldo(o, l)
 register struct op *o;
+register struct lib *l;
 {
 	switch (o->kind) {
 	case OPIX:
-		return (gfx_pixel(&surf, o->a, o->b, o->col, o->mode));
+		return ((*l->pixel)(l->s, o->a, o->b, o->col, o->mode));
 	case OSPAN:
-		return (gfx_span(&surf, o->a, o->c, o->b, o->col, o->mode));
+		return ((*l->span)(l->s, o->a, o->c, o->b, o->col, o->mode));
 	case OLINE:
-		return (gfx_line(&surf, o->a, o->b, o->c, o->d, o->col, o->mode));
+		return ((*l->line)(l->s, o->a, o->b, o->c, o->d, o->col,
+		    o->mode));
 	case OFILL:
-		return (gfx_fill(&surf, o->a, o->b, o->c, o->d, o->col, o->mode));
+		return ((*l->fill)(l->s, o->a, o->b, o->c, o->d, o->col,
+		    o->mode));
 	case OBOX:
-		return (gfx_box(&surf, o->a, o->b, o->c, o->d, o->col, o->mode));
+		return ((*l->box)(l->s, o->a, o->b, o->c, o->d, o->col,
+		    o->mode));
 	case OBLIT:
-		return (gfx_blit(&surf, simg, SSTR, o->e, o->a, o->b, o->c, o->d,
-		    o->col, o->mode));
+		return ((*l->blit)(l->s, simg, SSTR, o->e, o->a, o->b, o->c,
+		    o->d, o->col, o->mode));
 	case OPLINE:
-		return (gfx_pline(&surf, &ptab[2 * o->b], o->a, o->col, o->c,
+		return ((*l->pline)(l->s, &ptab[2 * o->b], o->a, o->col, o->c,
 		    o->mode, (unsigned) o->e));
 	}
 	return (GFX_NOTSUP);
@@ -348,6 +374,12 @@ int n;
 			fail("guard", n, b0[split + k], b1[total - split + k]);
 			return;
 		}
+	for (k = 0; k < MAXB + GUARD; k++)
+		if (b0[k] != c0[k] || b1[k] != c1[k]) {
+			fail("asm vs C", n * 1000 + k, b0[k] ^ c0[k],
+			    b1[k] ^ c1[k]);
+			return;
+		}
 }
 
 static VOID run(bpp, w, h, str, sp)
@@ -378,10 +410,16 @@ int bpp, w, h, str, sp;
 			b0[k] = expb[k];
 		else
 			b1[k - split] = expb[k];
+	for (k = 0; k < MAXB + GUARD; k++) {
+		c0[k] = b0[k];
+		c1[k] = b1[k];
+	}
 
 	gfx_ram(&surf, w, h, bpp, (unsigned) str, b0, b1, (long) sp);
+	cgfx_ram(&csurf, w, h, bpp, (unsigned) str, c0, c1, (long) sp);
 	for (n = 0, o = ops; o->kind != 0; o++, n++) {
-		if ((r = ldo(o)) != GFX_OK) {
+		if ((r = ldo(o, &alib)) != GFX_OK
+		    || (r = ldo(o, &clib)) != GFX_OK) {
 			fail("status", n, r, GFX_OK);
 			return;
 		}

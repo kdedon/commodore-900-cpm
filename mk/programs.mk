@@ -439,12 +439,34 @@ $(UZDEC): $(UOBJDIR)/zdect.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # The drawing library, linked by programs that draw rather than by ULIB.
-GFXOBJ	= $(UOBJDIR)/gfx.o $(UOBJDIR)/gfxm1.o $(UOBJDIR)/gfxc4.o
+GFXOBJ	= $(UOBJDIR)/gfx.o $(UOBJDIR)/gfxm1.o $(UOBJDIR)/gfxc4.o \
+	  $(UOBJDIR)/gfxa.o
 $(GFXOBJ) $(UOBJDIR)/gfxt.o: src/lib/gfx.h
 
-$(UOBJDIR)/gfxt.lout: $(UOBJDIR)/gfxt.o $(GFXOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+# The library again with gfxb.c's C loops for gfxa.s's, renamed, so GFXT
+# and HRCONT can compare the two byte for byte.
+GFXREN	= -Dgfx_ram=cgfx_ram -Dgfx_hrmono=cgfx_hrmono -Dgfx_hrclr=cgfx_hrclr \
+	  -Dgfx_addr=cgfx_addr -Dgfx_pixel=cgfx_pixel -Dgfx_get=cgfx_get \
+	  -Dgfx_span=cgfx_span -Dgfx_line=cgfx_line -Dgfx_fill=cgfx_fill \
+	  -Dgfx_box=cgfx_box -Dgfx_blit=cgfx_blit -Dgfx_pline=cgfx_pline \
+	  -Dgfx_m1pix=cgfx_m1pix -Dgfx_m1get=cgfx_m1get \
+	  -Dgfx_m1span=cgfx_m1span -Dgfx_m1blit=cgfx_m1blit \
+	  -Dgfx_c4pix=cgfx_c4pix -Dgfx_c4get=cgfx_c4get \
+	  -Dgfx_c4span=cgfx_c4span -Dgfx_c4blit=cgfx_c4blit \
+	  -Dgfx_bcopy=cgfx_bcopy -Dgfx_bfill=cgfx_bfill -Dgfx_bxor=cgfx_bxor \
+	  -Dgfx_m1row=cgfx_m1row -Dgfx_c4row=cgfx_c4row
+GFXCOBJ	= $(UOBJDIR)/cgfx.o $(UOBJDIR)/cgfxm1.o $(UOBJDIR)/cgfxc4.o \
+	  $(UOBJDIR)/cgfxb.o
+
+$(GFXCOBJ): $(UOBJDIR)/c%.o: src/lib/%.c src/lib/gfx.h $(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/c$*.z0 -Isrc/lib $(GFXREN) >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/c$*.z0 $(UOBJDIR)/c$*.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/c$*.z1 $@ $(UOBJDIR)/c$*.scr 0 >> $(LOG) 2>&1
+
+$(UOBJDIR)/gfxt.lout: $(UOBJDIR)/gfxt.o $(GFXOBJ) $(GFXCOBJ) $(UOBJDIR)/crt0.o \
+		$(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/gfxt.o \
-		$(GFXOBJ) $(ULIB)
+		$(GFXOBJ) $(GFXCOBJ) $(ULIB)
 
 $(UGFX): $(UOBJDIR)/gfxt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
@@ -473,10 +495,31 @@ $(UTEKT): $(UOBJDIR)/tekt.lout $(LOUT2CPM)
 
 $(UOBJDIR)/hrcont.o: src/lib/gfx.h
 
+# HRCONT also links the console's cells twice: over the library, and
+# renamed over its C reference.
+HCREN	= -Dhcat=chcat -Dhcram=chcram -Dhcinit=chcinit -Dhcpark=chcpark \
+	  -Dhcoff=chcoff -Dhcput=chcput -Dhcblank=chcblank \
+	  -Dhcscroll=chcscroll -Dhcdelch=chcdelch -Dhrsurf=chrsurf -Dhs=chs
+HCOBJ	= $(UOBJDIR)/crshr.o $(UOBJDIR)/ccrshr.o
+
+$(UOBJDIR)/crshr.o: src/bios/crshr.c src/lib/gfx.h $(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/crshr.z0 -Isrc/lib >> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/crshr.z0 $(UOBJDIR)/crshr.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/crshr.z1 $@ $(UOBJDIR)/crshr.scr 0 >> $(LOG) 2>&1
+
+$(UOBJDIR)/ccrshr.o: src/bios/crshr.c src/lib/gfx.h $(TCSTAMP) | $(UOBJDIR)
+	$(CC0) $(VAR) $< $(UOBJDIR)/ccrshr.z0 -Isrc/lib $(GFXREN) $(HCREN) \
+		>> $(LOG) 2>&1
+	$(CC1) $(VAR) $(UOBJDIR)/ccrshr.z0 $(UOBJDIR)/ccrshr.z1 >> $(LOG) 2>&1
+	$(CC2) $(UVAR) $(UOBJDIR)/ccrshr.z1 $@ $(UOBJDIR)/ccrshr.scr 0 \
+		>> $(LOG) 2>&1
+
 $(UOBJDIR)/hrcont.lout: $(UOBJDIR)/hrcont.o $(UOBJDIR)/hrfont.o \
-		$(UOBJDIR)/gsxfont.o $(GFXOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+		$(UOBJDIR)/gsxfont.o $(HCOBJ) $(GFXOBJ) $(GFXCOBJ) \
+		$(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/hrcont.o \
-		$(UOBJDIR)/hrfont.o $(UOBJDIR)/gsxfont.o $(GFXOBJ) $(ULIB)
+		$(UOBJDIR)/hrfont.o $(UOBJDIR)/gsxfont.o $(HCOBJ) $(GFXOBJ) \
+		$(GFXCOBJ) $(ULIB)
 
 $(UHRCON): $(UOBJDIR)/hrcont.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
