@@ -406,14 +406,25 @@ $(UOBJDIR)/RSXT2.Z8K: $(UOBJDIR)/rsxt2.lout $(LOUT2CPM)
 Z80OBJ	= $(UOBJDIR)/z80.o $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80mnem.o \
 	  $(UOBJDIR)/z80exec.o $(UOBJDIR)/z80runa.o \
 	  $(UOBJDIR)/z80load.o $(UOBJDIR)/z80bdos.o $(UOBJDIR)/gdpb.o \
-	  $(UOBJDIR)/segclra.o
+	  $(UOBJDIR)/segclra.o $(UOBJDIR)/z80gsx.o $(UOBJDIR)/z80gsxb.o
 $(Z80OBJ): src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h
+$(UOBJDIR)/z80gsx.o: src/lib/gsx.h src/lib/gfx.h
 $(UOBJDIR)/z80deca.o $(UOBJDIR)/z80runa.o: src/shim/z80btab.h
 
 $(UOBJDIR)/z80.lout: $(Z80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(Z80OBJ) $(ULIB)
 
 $(UZ80): $(UOBJDIR)/z80.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# The shim with a GSX-80 device that draws in the guest's own memory.
+GX80OBJ	= $(filter-out $(UOBJDIR)/z80gsxb.o,$(Z80OBJ)) $(UOBJDIR)/gx80dev.o
+$(UOBJDIR)/gx80dev.o: src/shim/z80.h src/lib/gfx.h
+
+$(UOBJDIR)/gx80.lout: $(GX80OBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(GX80OBJ) $(ULIB)
+
+$(UGX80): $(UOBJDIR)/gx80.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 # ZDECT links both decoders, so z80dec.c is compiled a second time under

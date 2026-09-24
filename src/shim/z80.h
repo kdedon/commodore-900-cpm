@@ -498,6 +498,8 @@ extern z32 z80nbdos;		/* calls serviced			*/
 extern z16 z80dma;		/* the guest's DMA address (fn 26)	*/
 extern z16 z80srch;		/* guest FCB of the last search first	*/
 extern z16 z80ver;		/* what function 12 tells the guest	*/
+extern int z80gsx();		/* (m, de): GSX-80, BDOS function 115	*/
+extern int z80gsxd();		/* (m, pb): its device; nonzero refuses	*/
 
 /* Host address of `len' guest bytes at `off', or 0 when they do not all
  * lie below 0x10000.  The seam hands FCBs and DMA buffers to the native

@@ -102,6 +102,12 @@ class Asm:
         self.pos += 3
         return self
 
+    def abs16(self, op, target):
+        """An 8080 jump or call: op, then the target's address."""
+        self.items.append((None, (0, op, target, 0)))
+        self.pos += 3
+        return self
+
     def code(self):
         out = bytearray()
         for data, fix in self.items:
@@ -110,6 +116,9 @@ class Asm:
                 continue
             n, op, target, after = fix
             d = self.labels[target] - after
+            if n == 0:
+                out += bytes([op]) + w16(d)
+                continue
             if n == 1:
                 if not -128 <= d <= 127:
                     raise ValueError("rel8 out of range to %s" % target)
@@ -471,9 +480,14 @@ def p_gsx86():
     a.b(0xcd, 0xe0)                     # int 0xe0
     a.b(0xb1, 0x00, 0xb2, 0x00)         # mov cl,0 / mov dl,0
     a.b(0xcd, 0xe0)                     # int 0xe0
-    code = a.code()
+    return gximage(a.code(), 'GX86')
+
+
+def gximage(code, name):
+    """The image from 0: code at 0x100, then the calls, their answers and
+    the surface, the same for both guests."""
     if len(code) > GXPB - 0x100:
-        raise ValueError("GX86.CMD: code overlaps its data")
+        raise ValueError("%s: code overlaps its data" % name)
 
     # Open Workstation on 64 x 32 x 1: the device's extents, pixel size
     # for a 256 x 192 mm picture, two colours; the rest is its table.
@@ -501,11 +515,14 @@ def p_gsx86():
     ]
     img = bytearray(GXSURF + GXW // 8 * GXH + 16)
     img[0x100:0x100 + len(code)] = code
-    img[GXMSG:GXMSG + 16] = b'\r\nGX86 OK$'.ljust(16, b'\0')
-    img[GXMSG + 0x10:GXMSG + 0x20] = b'\r\nGX86 FAIL 1$'.ljust(16, b'\0')
+    img[GXMSG:GXMSG + 16] = ('\r\n%s OK$' % name).encode().ljust(16, b'\0')
+    img[GXMSG + 0x10:GXMSG + 0x20] = (
+        '\r\n%s FAIL 1$' % name).encode().ljust(16, b'\0')
+    img[GXMSG + 0x20:GXMSG + 0x30] = (
+        '\r\n%s REFUSED$' % name).encode().ljust(16, b'\0')
     r = b''.join(recs)
     if GXREC + len(r) > GXEXP:
-        raise ValueError("GX86.CMD: records overlap the surface answer")
+        raise ValueError("%s: records overlap the surface answer" % name)
     img[GXREC:GXREC + len(r)] = r
     # Open Workstation clears the 0x55 the surface starts as; the guard
     # after it must survive.
@@ -513,6 +530,64 @@ def p_gsx86():
     img[GXEXP + GXW // 8 * GXH:GXEXP + GXW // 8 * GXH + 16] = b'\x55' * 16
     img[GXSURF:] = b'\x55' * (GXW // 8 * GXH + 16)
     return bytes(img)
+
+
+def p_gsx80():
+    """GX80.COM -- GX86's calls from an 8080, through BDOS 115 with DE
+    at five 16-bit addresses.  An Open that returns no intout prints
+    GX80 REFUSED."""
+    recp, cnt = GXPB + 12, GXPB + 14
+    a = Asm(0x100)
+    a.b(0x21, *w16(GXREC))              # lxi h,records
+    a.b(0x22, *w16(recp))               # shld recp
+    a.b(0x3e, 5, 0x32, *w16(cnt))       # mvi a,5 / sta cnt
+    a.label('call')
+    a.b(0x2a, *w16(recp))               # lhld recp
+    a.b(0x22, *w16(GXPB))               # shld pb
+    for k in range(1, 5):
+        a.b(0x11, *w16(GXOFF[k] - GXOFF[k - 1]))    # lxi d,next
+        a.b(0x19)                                   # dad d
+        a.b(0x22, *w16(GXPB + 2 * k))               # shld pb+2k
+    a.b(0x0e, 0x73, 0x11, *w16(GXPB))   # mvi c,73h / lxi d,pb
+    a.b(0xcd, 0x05, 0x00)               # call 5
+    a.b(0x3a, *w16(cnt), 0xfe, 5)       # lda cnt / cpi 5
+    a.abs16(0xc2, 'live')               # jnz live
+    a.b(0x2a, *w16(recp))               # lhld recp
+    a.b(0x11, 8, 0, 0x19)               # lxi d,8 / dad d
+    a.b(0x7e, 0x23, 0xb6)               # mov a,m / inx h / ora m
+    a.abs16(0xca, 'refused')            # jz refused
+    a.label('live')
+    a.b(0x2a, *w16(recp), 0xeb)         # lhld recp / xchg
+    a.b(0x21, *w16(GXLIVE), 0x19)       # lxi h,live / dad d
+    a.b(0x01, *w16(GXLIVE))             # lxi b,live
+    a.abs16(0xcd, 'cmpn')               # call cmpn
+    a.b(0x22, *w16(recp))               # shld recp
+    a.b(0x21, *w16(GXMSG + 0x1c), 0x34) # lxi h,digit / inr m
+    a.b(0x21, *w16(cnt), 0x35)          # lxi h,cnt / dcr m
+    a.abs16(0xc2, 'call')               # jnz call
+    a.b(0x11, *w16(GXSURF))             # lxi d,surface
+    a.b(0x21, *w16(GXEXP))              # lxi h,expected
+    a.b(0x01, *w16(GXW // 8 * GXH + 16))    # lxi b,surface+guard
+    a.abs16(0xcd, 'cmpn')               # call cmpn
+    a.b(0x11, *w16(GXMSG))              # lxi d,ok
+    a.abs16(0xc3, 'out')                # jmp out
+    a.label('refused')
+    a.b(0x11, *w16(GXMSG + 0x20))       # lxi d,refused
+    a.abs16(0xc3, 'out')                # jmp out
+    a.label('fail')
+    a.b(0x11, *w16(GXMSG + 0x10))       # lxi d,fail
+    a.label('out')
+    a.b(0x0e, 0x09, 0xcd, 0x05, 0x00)   # mvi c,9 / call 5
+    a.b(0xc3, 0x00, 0x00)               # jmp 0
+    # BC bytes at DE and HL must match
+    a.label('cmpn')
+    a.b(0x1a, 0xbe)                     # ldax d / cmp m
+    a.abs16(0xc2, 'fail')               # jnz fail
+    a.b(0x13, 0x23, 0x0b)               # inx d / inx h / dcx b
+    a.b(0x78, 0xb1)                     # mov a,b / ora c
+    a.abs16(0xc2, 'cmpn')               # jnz cmpn
+    a.b(0xc9)                           # ret
+    return gximage(a.code(), 'GX80')[0x100:]
 
 
 def p_multi():
@@ -955,6 +1030,7 @@ def main(argv):
     hexf, msg = p_hex()
     open(os.path.join(d, 'I86HEX.H86'), 'wb').write(hexf)
     open(os.path.join(d, 'I86T.A86'), 'wb').write(p_asm())
+    open(os.path.join(d, 'GX80.COM'), 'wb').write(p_gsx80())
 
     n = len(man)
     fp = open(os.path.join(d, 'MANIFEST'), 'w')

@@ -150,6 +150,8 @@ UGSX	= $(UOBJDIR)/GSXT.Z8K
 UTEKT	= $(UOBJDIR)/TEKT.Z8K
 # CPM86 drawing GSX-86 in the guest's memory through the module (verify-gsx86).
 UGX86	= $(UOBJDIR)/CPM86G.Z8K
+# Z80 drawing GSX-80 in the guest's memory (verify-gsx80).
+UGX80	= $(UOBJDIR)/Z80G.Z8K
 # GSX through BDOS 115 on a surface of its own (verify-gdos).
 UGDOS	= $(UOBJDIR)/GDOST.Z8K
 # The HR console on split surfaces against worked answers (verify-hrcon).

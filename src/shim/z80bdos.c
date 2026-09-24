@@ -899,6 +899,11 @@ struct z80 *m;
 		return (B_RUN);
 	}
 
+	if (fn == 115) {
+		if ((r = z80gsx(m, de)) == B_ADDR)
+			breason = BR_ADDR;
+		return (r);
+	}
 	if (fn > Z80MAXFN) {
 		/* 152 parse filename would be worth having -- it is how
 		 * a CP/M 3 program turns a command tail into an FCB --

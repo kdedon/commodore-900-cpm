@@ -478,7 +478,8 @@ i86test: build/i86test $(I86CORPUS)/SOURCES $(I86FIX)/MANIFEST
 # native one of.  See that directory's SOURCES for what each of the four
 # is here to answer.
 Z80SRC = src/shim/z80dec.c src/shim/z80mnem.c src/shim/z80exec.c src/shim/z80run.c \
-	 src/shim/z80load.c src/shim/z80bdos.c src/shim/gdpb.c src/shim/segclr.c
+	 src/shim/z80load.c src/shim/z80bdos.c src/shim/gdpb.c src/shim/segclr.c \
+	 src/shim/z80gsx.c
 Z80CORPUS = src/shim/tests/z80corpus
 .PHONY: z80test
 build/z80test: src/shim/tests/z80test.c $(Z80SRC) src/shim/z80.h src/shim/gdpb.h src/shim/conmode.h | $(OBJDIR)
@@ -1696,6 +1697,39 @@ verify-gsx86: all build/i86test $(I86FIX)/MANIFEST $(UGX86)
 		|| { echo "verify-gsx86: FAIL -- a guest did not terminate cleanly"; exit 1; }
 	@echo "verify-gsx86: PASS -- the host and the graphics module draw the"
 	@echo "            worked answers; with no screen, CPM86 refuses as GDOS does"
+
+# ---- GSX-80 calls from a Z80 guest, BDOS 115 ----
+# GX80.COM (tools/mkcmdfix.py p_gsx80) makes GX86's calls and checks the
+# same answers.  Z80G opens a surface in the guest's memory through BIOS
+# function 34 and draws the rest through BDOS 115; Z80, with no HR screen,
+# must return no workstation.
+GX80DISK = build/gx80disk
+GX80CPMA = build/gx80-cpma.img
+GX80IMG	 = build/gx80test.bin
+GX80LOG	 = build/verify-gsx80.log
+.PHONY: verify-gsx80
+verify-gsx80: all $(I86FIX)/MANIFEST $(UGX80)
+	@rm -rf $(GX80DISK)
+	@mkdir -p $(GX80DISK)
+	@cp $(DISKA)/* $(GX80DISK)/
+	cp $(I86FIX)/GX80.COM $(GX80DISK)/
+	cp $(UGX80) $(GX80DISK)/Z80G.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(GX80CPMA) $(CPMA_BLOCKS) $(GX80DISK)
+	$(MKDISK) $(GX80IMG) $(CPMSYS) $(GX80CPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GX80IMG)) \
+		--input="$(OSSEL)Z80 GX80.COM\rZ80G GX80.COM\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GX80LOG))
+	@$(EMUOK)
+	@grep -q 'GX80 REFUSED' $(GX80LOG) \
+		|| { echo "verify-gsx80: FAIL -- Open was not refused with no screen"; exit 1; }
+	@grep -q 'GX80 OK' $(GX80LOG) \
+		|| { echo "verify-gsx80: FAIL -- the module did not draw the worked answers"; exit 1; }
+	@test `grep -c 'z80: the guest terminated' $(GX80LOG)` -eq 2 \
+		|| { echo "verify-gsx80: FAIL -- a guest did not terminate cleanly"; exit 1; }
+	@echo "verify-gsx80: PASS -- BDOS 115 draws the worked answers from a"
+	@echo "            Z80 guest; with no screen, Open returns no workstation"
 
 # ---- GSX from native programs, BDOS 115 ----
 # GDOST's Open through BDOS 115 must be refused with no HR screen.  BIOS

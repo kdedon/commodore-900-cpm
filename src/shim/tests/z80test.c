@@ -3244,6 +3244,14 @@ static int stub1(int fn, z16 val, char *addr)
 	}
 }
 
+/* No GSX device here: every call is refused. */
+int z80gsxd(m, g)
+struct z80 *m;
+char *g;
+{
+	return (-1);
+}
+
 /*
  * z80sys -- the one function the seam does not contain.  On the target
  * this is one line around __bdos(); here it is either the recorder
