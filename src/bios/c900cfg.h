@@ -27,9 +27,9 @@
 #define	SPLITTBASE	0x36000000L
 #define	SPLITTPAGE	0x0e00		/* phys 0x0E0000, above the C stack */
 /* Modules (mk/config.mk MODULES): each is linked alone at the base of its
- * own logical segment.  cmain.c copies their images from resident data
- * into this physical page at cold boot, packed on 256-byte boundaries,
- * and maps each segment onto its slice.  The page stops at MODLIM, short
+ * own logical segment.  Their images load over cpm.sys's bss; cmain.c
+ * copies them into this physical page at cold boot, packed on 256-byte
+ * boundaries, and maps each segment onto its slice.  The page stops at MODLIM, short
  * of the ROM's state at physical 0x0FE400 on a 512 KB machine. */
 #define	MODPHYSPAGE	0x0f		/* phys 0x0F0000 */
 #define	MODLIM		0xE3		/* last usable 256-byte block */

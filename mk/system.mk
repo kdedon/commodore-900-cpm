@@ -3,8 +3,9 @@
 
 # Text must fit segment 0x30; data and BSS must end below physical 0x0A0000 (TPA).
 LDSYS = -i -L
-# Each module links alone at the base of its segment; modimg.o embeds the
-# images and turns each module's _EXP symbols into absolute addresses.
+# Each module links alone at the base of its segment; modimg.o turns each
+# module's _EXP symbols into absolute addresses, and modimg.bin holds the
+# images.
 define MODLINK
 $(OBJDIR)/$(1).mod: $(OBJDIR)/modss.o $($(1)_SRC:%=$(OBJDIR)/%.o)
 	$$(LD) -L -R $($(1)_SEG)000000 -o $$@ $$^ > $(OBJDIR)/$(1)link.txt 2>&1 \
@@ -21,19 +22,29 @@ $(OBJDIR)/modimg.s: $(MODULES:%=$(OBJDIR)/%.mod) tools/mkblob.py src/bios/c900cf
 	python3 tools/mkblob.py $@ $(foreach m,$(MODULES),\
 	    $(m) $($(m)_SEG) $(OBJDIR)/$(m).mod '$($(m)_EXP)')
 
+$(OBJDIR)/modimg.bin: $(OBJDIR)/modimg.s ;
+
 $(OBJDIR)/modimg.o: $(OBJDIR)/modimg.s
 	$(AS) -g -o $@ $< >> $(LOG) 2>&1
 
-$(CPMSYS): $(OBJ) tools/gencpm.py $(GENCPMDAT)
-	$(LD) $(LDSYS) -e start -R 0x30000000 -o $@ $(OBJ) > $(OBJDIR)/link.txt 2>&1
+# The module images load over bss (mkblob.py --place): what stays resident
+# is the link's size, what kboot loads is cpm.sys's.
+$(CPMSYS): $(OBJ) $(OBJDIR)/modimg.bin tools/gencpm.py $(GENCPMDAT)
+	$(LD) $(LDSYS) -e start -R 0x30000000 -o $(OBJDIR)/cpm.lnk $(OBJ) > $(OBJDIR)/link.txt 2>&1
+	python3 tools/mkblob.py --place $(OBJDIR)/cpm.lnk $(OBJDIR)/modimg.bin $@
 	@python3 -c 'import struct,sys; \
-b = open("$(CPMSYS)","rb").read(48); \
+hd = lambda f: open(f,"rb").read(48); \
 gl = lambda o: (struct.unpack_from("<H",b,o)[0]<<16)|struct.unpack_from("<H",b,o+2)[0]; \
+b = hd("$(OBJDIR)/cpm.lnk"); \
 text = gl(8)+gl(12); data = gl(20)+gl(24); bss = gl(28); \
 print("cpm.sys: text=0x%x data=0x%x bss=0x%x" % (text,data,bss)); \
 rnd = (text + 1023) // 1024 * 1024; \
 free = 0x20000 - (rnd + data + bss); \
-print("cpm.sys: %d bytes free below phys 0x0A0000" % free); \
+b = hd("$(CPMSYS)"); \
+data = gl(20)+gl(24); bss = gl(28); \
+load = 0x20000 - (rnd + data + bss); \
+print("cpm.sys: %d bytes free below phys 0x0A0000 (%d while loading modules)" % (free,load)); \
+free = load; \
 sys.exit("TEXT > 64K: data seg moves to 0x32 and collides with the TPA" if text > 0x10000 else \
 ("data+bss > 64K" if data+bss > 0x10000 else \
 ("IMAGE OVERRUNS phys 0x0A0000 (the TPA) by %d bytes: crt.s puts data at 0x080000+roundup(text,1K), so roundup(text,1K)+data+bss must stay under 128K.  Past it the image runs into the transient program area." % -free) if free < 0 else None))'

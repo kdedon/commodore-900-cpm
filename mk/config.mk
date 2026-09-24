@@ -274,7 +274,7 @@ SRCOBJ = $(OBJDIR)/crt.o \
        $(patsubst src/bios/%.c,$(OBJDIR)/%.o,$(wildcard src/bios/*.c)) \
        $(filter-out $(OBJDIR)/crt.o,$(patsubst src/bios/%.s,$(OBJDIR)/%.o,$(wildcard src/bios/*.s)))
 # Modules: each is linked alone at the base of its own segment, embedded
-# in cpm.sys data (modimg.o) and copied into place at cold boot.  A module
+# in cpm.sys over its bss and copied into place at cold boot.  A module
 # is a name, a segment, its objects and the symbols cpm.sys may call or
 # name in it.  It resolves only among its own objects; to reach cpm.sys it
 # must be handed a pointer at run time.

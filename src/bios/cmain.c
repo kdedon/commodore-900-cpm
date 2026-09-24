@@ -19,6 +19,7 @@ extern int maplim();
  * modimg.o, generated from the linked modules: per module its segment,
  * the 256-byte block and limit it is mapped at, and its loaded image
  * (text + initialized data, contiguous) with the bss that follows.
+ * The images load at modblob, over the start of our bss.
  */
 struct modent {
 	short		seg;
@@ -26,11 +27,14 @@ struct modent {
 	short		lim;
 	unsigned	imglen;
 	unsigned	bsslen;
-	char		*img;
+	long		off;		/* image's offset from modblob */
 };
 extern struct modent	modtab[];
 extern short		modn;
+extern long		modblob;
+extern unsigned		modlen;
 
+/* Runs before anything uses bss, which the images still occupy. */
 static modinit()
 {
 	register struct modent *m;
@@ -39,9 +43,10 @@ static modinit()
 	for (m = modtab; m < modtab + modn; m++) {
 		maplim(m->seg, m->page, 0x02, m->lim);
 		base = (long)m->seg << 24;
-		mem_cpy((long)m->img, base, (long)m->imglen);
+		mem_cpy(modblob + m->off, base, (long)m->imglen);
 		mem_clr(base + (long)m->imglen, (long)m->bsslen);
 	}
+	mem_clr(modblob, (long)modlen);
 }
 
 #ifndef M12_HARNESS
@@ -201,6 +206,7 @@ cmain()
 	char line[8];
 	long dph;
 
+	modinit();
 	binit();
 	puts("\nCP/M-8000(tm) for the Commodore 900 -- C900 BIOS M1/M2\n");
 	dph = bseldsk(0, 0);
