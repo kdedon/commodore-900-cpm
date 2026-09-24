@@ -48,10 +48,10 @@ static modinit()
 
 cmain()
 {
+	modinit();		/* before binit: the console calls modules */
+	BTRACE("<0>");		/* modinit returned */
 	binit();
 	BTRACE("<2>");		/* binit returned */
-	modinit();
-	BTRACE("<3>");		/* modinit returned */
 	puts("\nCP/M-8000(tm) for the Commodore 900\n");
 	ccpentry();		/* no return */
 }

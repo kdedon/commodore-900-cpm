@@ -1393,6 +1393,12 @@ long d1, d2;
 	case 101:				/* VSETCHAR: direct video store */
 		vsettest((int)d1);
 		break;
+
+	/* TEKT's way into the graphics module, which no emulated
+	 * console selects */
+	case 102:				/* TEKRAM(surface, string) */
+		tkram((char *)d1, (char *)d2);
+		break;
 	}
 	return (0L);
 }

@@ -146,6 +146,8 @@ UZDEC	= $(UOBJDIR)/ZDECT.Z8K
 UGFX	= $(UOBJDIR)/GFXT.Z8K
 # GSX over the drawing library against worked answers (verify-gsx).
 UGSX	= $(UOBJDIR)/GSXT.Z8K
+# The graphics module's Tek parser against a linked copy (verify-tekgate).
+UTEKT	= $(UOBJDIR)/TEKT.Z8K
 # The two 8080/Z80 run loops compared on the machine (verify-zrun).
 UZRUN	= $(UOBJDIR)/ZRUNT.Z8K
 # The two 8086 decoders compared on the machine (verify-idec).
@@ -274,10 +276,13 @@ SRCOBJ = $(OBJDIR)/crt.o \
 # is a name, a segment, its objects and the symbols cpm.sys may call or
 # name in it.  It resolves only among its own objects; to reach cpm.sys it
 # must be handed a pointer at run time.
-MODULES   = split
+MODULES   = split gfx
 split_SEG = 0x37
 split_SRC = splitscan splitsc zsplit
 split_EXP = spemu_ spscan_ sptop_ spusp_ spufp_
+gfx_SEG   = 0x38
+gfx_SRC   = crstek tek gfx gfxm1 gfxc4
+gfx_EXP   = tkinit_ tkput_ tkclear_ tkram_
 MODOBJ = $(foreach m,$(MODULES),$(patsubst %,$(OBJDIR)/%.o,$($(m)_SRC))) \
 	 $(OBJDIR)/modss.o
 

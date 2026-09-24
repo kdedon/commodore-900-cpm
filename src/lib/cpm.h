@@ -133,6 +133,9 @@ struct biospb {
 #define	BIOS_CONOUT	4	/* console output(char) -- SC #3 only	*/
 #define	BIOS_ROMCHAR	100	/* ROM putchar direct (romabi.h putchar) */
 #define	BIOS_VSETCHAR	101	/* vsetcell direct video store		*/
+#define	BIOS_TEKRAM	102	/* (surface, string): the graphics
+				 * module's Tek parser on a caller's
+				 * surface -- test only		*/
 
 /* error modes for function 45 */
 #define	ERRMODE_DEFAULT	0x00	/* display the error and terminate	*/

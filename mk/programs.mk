@@ -461,6 +461,16 @@ $(UOBJDIR)/gsxt.lout: $(UOBJDIR)/gsxt.o $(GSXOBJ) $(GFXOBJ) $(UOBJDIR)/crt0.o \
 $(UGSX): $(UOBJDIR)/gsxt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/tek.o $(UOBJDIR)/tekt.o: src/lib/gfx.h src/lib/tek.h
+
+$(UOBJDIR)/tekt.lout: $(UOBJDIR)/tekt.o $(UOBJDIR)/tek.o $(GFXOBJ) \
+		$(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/tekt.o \
+		$(UOBJDIR)/tek.o $(GFXOBJ) $(ULIB)
+
+$(UTEKT): $(UOBJDIR)/tekt.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 # ZRUNT links both run loops: the C executor and run loop are compiled a
 # second time, renamed, over the C decoder.
 ZRUNREN	= -Dz80step=cz80step -Dz80exec=cz80exec -Dz80run=cz80run \

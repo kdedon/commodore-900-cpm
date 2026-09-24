@@ -62,6 +62,11 @@ sndbeep()
 	beeps++;
 }
 
+/* The graphics module: every byte is text. */
+tkinit() {}
+tkclear() {}
+tkput(c, gnd) { return (1); }
+
 /* ------------------------------------------------------------------ checks */
 
 static int fails;

@@ -947,6 +947,38 @@ verify-gsx: all $(UGSX)
 	@echo "verify-gsx: PASS -- every byte and table matches the worked answers"
 
 
+# ---- a call into the graphics module and back ----
+# No emulated console is HR, so TEKT reaches the module's Tek parser
+# through BIOS function 102 on its own split surfaces, and compares what
+# it drew with the same streams run through a linked copy.
+TEKTDISK = build/tektdisk
+TEKTCPMA = build/tekt-cpma.img
+TEKTIMG	 = build/tekttest.bin
+TEKTLOG	 = build/verify-tekgate.log
+.PHONY: verify-tekgate
+verify-tekgate: all $(UTEKT)
+	@rm -rf $(TEKTDISK)
+	@mkdir -p $(TEKTDISK)
+	@cp $(DISKA)/* $(TEKTDISK)/
+	cp $(UTEKT) $(TEKTDISK)/TEKT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(TEKTCPMA) $(CPMA_BLOCKS) $(TEKTDISK)
+	$(MKDISK) $(TEKTIMG) $(CPMSYS) $(TEKTCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(TEKTIMG)) \
+		--input="$(OSSEL)TEKT\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(TEKTLOG))
+	@$(EMUOK)
+	@grep -q 'TEKT: start' $(TEKTLOG) \
+		|| { echo "verify-tekgate: FAIL -- TEKT did not run at all"; exit 1; }
+	@grep -q 'TEKT: FAIL' $(TEKTLOG) \
+		&& { echo "verify-tekgate: FAIL -- the line above names the stream"; \
+		     echo "                and the surface."; exit 1; } || true
+	@grep -q 'TEKT: ok' $(TEKTLOG) \
+		|| { echo "verify-tekgate: FAIL -- TEKT did not finish"; exit 1; }
+	@echo "verify-tekgate: PASS -- the module drew what the linked parser drew"
+
+
 # ---- the two 8080/Z80 run loops must do the same thing ----
 # The machine runs src/shim/z80runa.s, which executes the frequent classes
 # in assembly; z80run.c over z80exec.c stays the reference.  ZRUNT links

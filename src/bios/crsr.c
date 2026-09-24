@@ -104,6 +104,13 @@ extern outb();
 
 static int ckind;
 
+/*
+ * Tek 4010 graphics on the HR bitmap: GS or FS in ground state hands the
+ * stream to the parser until it returns to alpha.  The parser runs in the
+ * graphics module (crstek.c).
+ */
+extern tkinit(), tkput(), tkclear();
+
 #ifndef CRSHOST
 /*
  * One character to the console CP/M chose.  Video keeps the ROM's
@@ -782,6 +789,12 @@ int c;
 	case 'f':
 		crflag(0, A_INTENSE);
 		return;
+	case '\f':			/* Tek erase		*/
+		if (ckind != CK_HR)
+			break;
+		tkclear();
+		crclear();
+		return;
 	case 'z':			/* power-up state	*/
 		cattr = A_NORM;
 		if (ckind == CK_SER)
@@ -824,6 +837,8 @@ crsout(c)
 int c;
 {
 	c &= 0xff;
+	if (ckind == CK_HR && !tkput(c, state == ST_GND))
+		return;
 	switch (state) {
 	case ST_ESC:
 		state = ST_GND;
@@ -868,6 +883,8 @@ int k;
 	cattr = A_NORM;
 	srow = 0;
 	scol = 0;
+	if (k == CK_HR)
+		tkinit();
 	return (k);
 }
 
