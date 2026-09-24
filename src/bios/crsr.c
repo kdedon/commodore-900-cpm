@@ -4,8 +4,8 @@
  */
 /* H19/Z19 console escape parser, with ESC '=' as ADM-3A addressing.
  * Serial output translates recognized sequences to ANSI; LR output writes
- * character cells and manages scrolling; HR uses the ROM bitmap driver
- * and supports only home/clear among the cursor operations. */
+ * character cells and manages scrolling; HR does the same through the
+ * graphics module's cell renderer. */
 #include "romabi.h"
 
 /*
@@ -36,6 +36,7 @@
 #define CRS_RR0		0x0101		/* SCC channel B: Rx/Tx status	*/
 #define CRS_RR8		0x0111		/* SCC channel B: data		*/
 #define CRS_TXEMPTY	0x04		/* RR0 D2: Tx buffer empty	*/
+#define CRS_HRMODE	0x0404		/* HR mode: 2 mono, 1 colour	*/
 
 extern int inb();
 extern outb();
@@ -44,8 +45,10 @@ extern outb();
 #define ESC	033
 #define CAN	030
 
-#define NROW	25			/* BvidCHR: 25 rows, 0..24	*/
-#define NCOL	80			/* BvidCHR: 80 columns		*/
+/* BvidCHR's 25 x 80; HR takes the renderer's */
+static int nrow = 25, ncol = 80;
+#define NROW	nrow
+#define NCOL	ncol
 
 /*
  * Screen access, as two macros so that the state machine below can be
@@ -110,6 +113,10 @@ static int ckind;
  * graphics module (crstek.c).
  */
 extern tkinit(), tkput(), tkclear();
+
+/* HR character cells, drawn by the graphics module */
+extern hcinit(), hcram(), hcpark(), hcput(), hcblank(), hcscroll(), hcdelch();
+static int hrow, hcol;			/* HR cursor			*/
 
 #ifndef CRSHOST
 /*
@@ -283,11 +290,15 @@ int ch;
  */
 static vrow()
 {
+	if (ckind == CK_HR)
+		return (hrow);
 	return (vpend ? 0 : (int)((SCRST >> 16) & 0xffffL));
 }
 
 static vcol()
 {
+	if (ckind == CK_HR)
+		return (hcol);
 	return (vpend ? 0 : (int)(SCRST & 0xffffL));
 }
 
@@ -295,6 +306,10 @@ static vcol()
 static vblank(r, c, n)
 int r, c, n;
 {
+	if (ckind == CK_HR) {
+		hcblank(r, c, n);
+		return;
+	}
 	while (n-- > 0) {
 		VSETW(CELLOFF(r, c), (A_NORM << 8) | ' ');
 		if (++c >= NCOL) {
@@ -316,6 +331,12 @@ static cellpark(r, c)
 int r, c;
 {
 	vheld = 0;
+	if (ckind == CK_HR) {
+		hrow = r;
+		hcol = c;
+		hcpark(r, c);
+		return;
+	}
 	if (r == 0 && c == 0) {
 		SCRST = 0L;
 		vpend = 1;
@@ -339,6 +360,10 @@ register int n;
 {
 	register int off, a;
 
+	if (ckind == CK_HR) {
+		hcput(r, c, s, n, cattr);
+		return;
+	}
 	off = CELLOFF(r, c);
 	a = (cattr & 0xff) << 8;
 	while (n-- > 0) {
@@ -356,6 +381,10 @@ int r;
 {
 	register int i;
 
+	if (ckind == CK_HR) {
+		hcscroll(r, NROW - 1, -1);
+		return;
+	}
 	for (i = NROW - 1; i > r; i--)
 		VMOVE(CELLOFF(i, 0), CELLOFF(i - 1, 0), 0xa0);
 	vblank(r, 0, NCOL);
@@ -371,6 +400,10 @@ int top, bot, n;
 {
 	register int rows;
 
+	if (ckind == CK_HR) {
+		hcscroll(top, bot, n);
+		return;
+	}
 	rows = bot - top + 1 - n;
 	if (rows > 0)
 		VMOVE(CELLOFF(top, 0), CELLOFF(top + n, 0), rows * 0xa0);
@@ -461,6 +494,7 @@ int r, c;
 		putchar('H');
 		return;
 	case CK_LR:
+	case CK_HR:
 		cellpark(r, c);
 		return;
 	}
@@ -477,8 +511,6 @@ int d;
 		putchar(d);
 		return;
 	}
-	if (ckind != CK_LR)
-		return;
 	r = vrow();
 	c = vcol();
 	switch (d) {
@@ -493,11 +525,7 @@ int d;
 /*
  * Clear the screen and home.  On LR the blanking is done here rather than
  * left to the ROM, because the ROM's own clear is driven by the same
- * scr_state == 0 sentinel vpend exists to keep out of the way of.  On HR
- * it is the ROM's: any scr_state whose segment is not 0x3a makes AvidCHR
- * clear both bitmap planes on entry, and the FF that follows is handled
- * after the clear and homes the framebuffer pointer
- * (display_re.c:242-256,360-369).
+ * scr_state == 0 sentinel vpend exists to keep out of the way of.
  */
 static crclear()
 {
@@ -509,13 +537,9 @@ static crclear()
 		putchar('2');
 		putchar('J');
 		return;
-	case CK_LR:
+	default:
 		vblank(0, 0, NROW * NCOL);
 		cellpark(0, 0);
-		return;
-	case CK_HR:
-		SCRST = 0x3b000000L;
-		putchar('\f');
 		return;
 	}
 }
@@ -528,11 +552,8 @@ static crhome()
 		csi();
 		putchar('H');
 		return;
-	case CK_LR:
+	default:
 		cellpark(0, 0);
-		return;
-	case CK_HR:
-		putchar('\f');		/* AvidCHR FF homes, does not clear */
 		return;
 	}
 }
@@ -560,8 +581,6 @@ int span;
 		putchar('K');
 		return;
 	}
-	if (ckind != CK_LR)
-		return;
 	r = vrow();
 	c = vcol();
 	switch (span) {
@@ -584,8 +603,6 @@ int ins;
 		putchar(ins ? 'L' : 'M');
 		return;
 	}
-	if (ckind != CK_LR)
-		return;
 	r = vrow();
 	if (ins)
 		cellins(r);
@@ -603,10 +620,12 @@ static crdelch()
 		putchar('P');
 		return;
 	}
-	if (ckind != CK_LR)
-		return;
 	r = vrow();
 	c = vcol();
+	if (ckind == CK_HR) {
+		hcdelch(r, c);
+		return;
+	}
 	if (c < NCOL - 1)
 		VMOVE(CELLOFF(r, c), CELLOFF(r, c + 1), (NCOL - 1 - c) << 1);
 	vblank(r, NCOL - 1, 1);
@@ -621,8 +640,6 @@ int rest;
 		putchar(rest ? '8' : '7');
 		return;
 	}
-	if (ckind != CK_LR)
-		return;
 	if (rest)
 		cellpark(srow, scol);
 	else {
@@ -654,7 +671,8 @@ int on, bit;
 /* ------------------------------------------------------------ ground state */
 
 /* BEL drives the speaker and reaches the terminal only on serial output.
- * LR handles CR/LF/BS/FF locally and writes other bytes as character cells. */
+ * Video handles CR/LF/BS/FF locally and writes other bytes as character
+ * cells. */
 static crput(c)
 int c;
 {
@@ -665,7 +683,7 @@ int c;
 		if (ckind != CK_SER)
 			return;
 	}
-	if (ckind == CK_LR) {
+	if (ckind != CK_SER) {
 		switch (c) {
 		case '\r':
 			lrcr();
@@ -953,6 +971,56 @@ int base;
 	return (hit);
 }
 
+/* The renderer's rows << 8 | columns, cursor home. */
+static hrdim(n)
+int n;
+{
+	nrow = n >> 8;
+	ncol = n & 0xff;
+	hrow = 0;
+	hcol = 0;
+}
+
+static char hrbad[] = "HR mode 0? mono\r\n";
+
+/* HR as the mode register has it: 2 mono, 1 colour, else mono and say so. */
+static hrinit()
+{
+	register int m;
+	register char *p;
+
+	m = inb(CRS_HRMODE) & 3;
+	hrdim(hcinit(m));
+	crsmode(CK_HR);
+	if (m != 1 && m != 2) {
+		hrbad[8] = '0' + m;
+		for (p = hrbad; *p; )
+			crsout(*p++);
+	}
+	return (CK_HR);
+}
+
+/* Run a NUL-terminated stream through the HR console on surface s. */
+hrram(s, p)
+char *s;
+register char *p;
+{
+	register int k;
+
+	k = ckind;
+	hrdim(hcram(s));
+	crsmode(CK_HR);
+	while (*p)
+		crsout(*p++);
+	if (k == CK_HR)
+		hrinit();
+	else {
+		nrow = 25;
+		ncol = 80;
+		crsmode(k);
+	}
+}
+
 /*
  * crsinit(bicon) -- choose console 0, never from the ROM's
  * con_alt/con_hires flags.
@@ -975,11 +1043,11 @@ int bicon;
 	if (bicon == BI_CON_SER)
 		return (crsmode(CK_SER));
 	if (bicon == BI_CON_HR)
-		return (crsmode(CK_HR));
+		return (hrinit());
 	if (bicon == BI_CON_LR)
 		return (crsmode(CK_LR));
 	if (vprobe(VPHRBASE))
-		return (crsmode(CK_HR));
+		return (hrinit());
 	if (vprobe(VPLRBASE))
 		return (crsmode(CK_LR));
 	return (crsmode(CK_SER));

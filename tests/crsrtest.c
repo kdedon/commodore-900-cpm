@@ -62,10 +62,31 @@ sndbeep()
 	beeps++;
 }
 
-/* The graphics module: every byte is text. */
+/* The graphics module: every byte is text, and each cell call is logged. */
+static char hlog[1024];
+
+static hl(s)
+char *s;
+{
+	if (strlen(hlog) + strlen(s) < sizeof(hlog))
+		strcat(hlog, s);
+}
+
 tkinit() {}
 tkclear() {}
 tkput(c, gnd) { return (1); }
+hcpark(r, c) { char b[32]; sprintf(b, "P%d,%d ", r, c); hl(b); }
+hcblank(r, c, n) { char b[32]; sprintf(b, "B%d,%d,%d ", r, c, n); hl(b); }
+hcscroll(t, b, n) { char s[32]; sprintf(s, "S%d,%d,%d ", t, b, n); hl(s); }
+hcdelch(r, c) { char b[32]; sprintf(b, "D%d,%d ", r, c); hl(b); }
+hcput(r, c, s, n, a)
+char *s;
+{
+	char b[128];
+
+	sprintf(b, "W%d,%d,%x,%.*s ", r, c, a, n, s);
+	hl(b);
+}
 
 /* ------------------------------------------------------------------ checks */
 
@@ -583,30 +604,40 @@ static sertests()
 
 /* --------------------------------------------------------------------- HR */
 
+static eqhl(want, what)
+char *want, *what;
+{
+	if (strcmp(hlog, want) != 0) {
+		printf("crsrtest: calls = \"%s\"\n", hlog);
+		fail(what);
+	} else
+		ok(what);
+	hlog[0] = '\0';
+	hrow = 0;
+	hcol = 0;
+}
+
 static hrtests()
 {
-	/* clear: any scr_state whose segment is not 0x3a makes AvidCHR clear
-	   both planes on entry, and the FF is handled after that clear */
 	reset(CK_HR);
+	hlog[0] = '\0';
 	feed("\033E");
-	eqscr(0x3b000000L, "HR: ESC E arms the ROM's own two-plane clear");
-	eqout("\014", "HR: ... and drives it with FF");
+	eqhl("B0,0,2000 P0,0 ", "HR: ESC E blanks every cell and homes");
 
-	/* home is the ROM's FF, which on the bitmap driver homes only */
-	reset(CK_HR);
-	feed("\033H");
-	eqout("\014", "HR: ESC H is FF, which AvidCHR treats as home");
-
-	/* addressing is not implemented on HR, but it must be CONSUMED --
-	   the row/column bytes may not fall through and be blitted */
-	reset(CK_HR);
 	feed("\033Y%*Z");
-	eqout("Z", "HR: an unsupported address is swallowed, not printed");
+	eqhl("P5,10 W5,10,7,Z P5,11 ", "HR: ESC Y addresses a cell");
 
-	/* nor may the attribute and editing sequences reach the blitter */
-	reset(CK_HR);
-	feed("\033p\033L\033x5\033(Z");
-	eqout("Z", "HR: attribute and editing sequences are swallowed too");
+	feed("\033p\033L\033x5Z");
+	eqhl("S0,24,-1 W0,0,70,Z P0,1 ",
+	    "HR: insert line, a skipped mode, a reverse cell");
+
+	feed("\033q\033Y8oAB");
+	eqhl("P24,79 W24,79,7,A P24,79 S0,24,1 W24,0,7,B P24,1 ",
+	    "HR: the held margin wraps and scrolls");
+
+	feed("\033Y\"#\033N\033K");
+	eqhl("P2,3 D2,3 B2,3,77 ", "HR: delete a character, erase the line");
+	eqout("", "HR: nothing reaches the ROM");
 }
 
 int main(argc, argv)

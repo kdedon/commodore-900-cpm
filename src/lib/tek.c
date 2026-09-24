@@ -34,15 +34,23 @@ int y;
 	return (s->height - 1 - (int) (((long) y * (s->height - 1) + 389) / 779));
 }
 
-static VOID home(t)
+/* Move the beam to Tek address (x, y). */
+VOID tekat(t, x, y)
 register struct tek *t;
+int x, y;
 {
-	t->hy = HOMEY >> 5;
-	t->ly = HOMEY & 31;
-	t->hx = 0;
-	t->lx = 0;
-	t->x = tekx(t->s, 0);
-	t->y = teky(t->s, HOMEY);
+	t->hy = y >> 5;
+	t->ly = y & 31;
+	t->hx = x >> 5;
+	t->lx = x & 31;
+	t->x = tekx(t->s, x);
+	t->y = teky(t->s, y);
+}
+
+static VOID home(t)
+struct tek *t;
+{
+	tekat(t, 0, HOMEY);
 }
 
 VOID tekinit(t, s)

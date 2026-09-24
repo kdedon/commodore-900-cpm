@@ -1394,10 +1394,10 @@ long d1, d2;
 		vsettest((int)d1);
 		break;
 
-	/* TEKT's way into the graphics module, which no emulated
+	/* the HR console on a caller's surface, which no emulated
 	 * console selects */
-	case 102:				/* TEKRAM(surface, string) */
-		tkram((char *)d1, (char *)d2);
+	case 102:				/* HRRAM(surface, string) */
+		hrram((char *)d1, (char *)d2);
 		break;
 	}
 	return (0L);

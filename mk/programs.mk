@@ -471,6 +471,16 @@ $(UOBJDIR)/tekt.lout: $(UOBJDIR)/tekt.o $(UOBJDIR)/tek.o $(GFXOBJ) \
 $(UTEKT): $(UOBJDIR)/tekt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/hrcont.o: src/lib/gfx.h
+
+$(UOBJDIR)/hrcont.lout: $(UOBJDIR)/hrcont.o $(UOBJDIR)/hrfont.o \
+		$(UOBJDIR)/gsxfont.o $(GFXOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/hrcont.o \
+		$(UOBJDIR)/hrfont.o $(UOBJDIR)/gsxfont.o $(GFXOBJ) $(ULIB)
+
+$(UHRCON): $(UOBJDIR)/hrcont.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 # ZRUNT links both run loops: the C executor and run loop are compiled a
 # second time, renamed, over the C decoder.
 ZRUNREN	= -Dz80step=cz80step -Dz80exec=cz80exec -Dz80run=cz80run \

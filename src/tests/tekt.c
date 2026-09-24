@@ -6,8 +6,9 @@
  * tekt.c - the graphics module's Tek parser, called through the BIOS.
  *
  * Each stream is drawn twice on the same split surface: by the parser
- * linked here, and by the one in the system's graphics module (BIOS
- * function 102).  The buffers, guard bytes included, must come out equal.
+ * linked here, and by the HR console's in the system's graphics module
+ * (BIOS function 102).  The buffers, guard bytes included, must come out
+ * equal.
  */
 
 #include "cpm.h"
@@ -32,7 +33,7 @@
 static char s0[] = { GS, P(100, 100), P(900, 100), P(900, 700),
 		     P(100, 100), US, 0 };
 static char s1[] = { FS, P(10, 10), P(512, 390), P(1000, 770), US,
-		     'A', GS, P(0, 0), P(1023, 779), 0 };
+		     GS, P(0, 0), P(1023, 779), 0 };
 static char s2[] = { GS, P(50, 60), P(300, 60), GS, P(50, 500),
 		     P(300, 520), US, 0 };
 static char s3[] = { GS, P(10, 10), P(1000, 770), ESC, '\f',
@@ -102,7 +103,7 @@ int n, bpp, w, h, stride, split;
 	tekinit(&t, &sa);
 	for (p = streams[n]; *p; p++)
 		tekput(&t, *p & 0xff);
-	__bios(BIOS_TEKRAM, (long) &sb, (long) streams[n]);
+	__bios(BIOS_HRRAM, (long) &sb, (long) streams[n]);
 
 	drawn = 0;
 	for (i = 0; i < MAXB + GUARD; i++) {

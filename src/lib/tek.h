@@ -34,3 +34,4 @@ struct tek {
 extern VOID	tekinit();	/* (t, s)				*/
 extern int	tekput();	/* (t, c) -> 1 when c is alpha text	*/
 extern VOID	tekclear();	/* (t) clear, home, alpha		*/
+extern VOID	tekat();	/* (t, x, y) move the beam, Tek units	*/

@@ -979,6 +979,39 @@ verify-tekgate: all $(UTEKT)
 	@echo "verify-tekgate: PASS -- the module drew what the linked parser drew"
 
 
+# ---- the HR text console, on RAM ----
+# No emulated console is HR, so HRCONT runs H19 streams through the
+# console and the module's cell renderer onto its own split surfaces of
+# both depths, via BIOS function 102, and checks every pixel against an
+# answer painted from the font tables.
+HRCONDISK = build/hrcondisk
+HRCONCPMA = build/hrcon-cpma.img
+HRCONIMG  = build/hrcontest.bin
+HRCONLOG  = build/verify-hrcon.log
+.PHONY: verify-hrcon
+verify-hrcon: all $(UHRCON)
+	@rm -rf $(HRCONDISK)
+	@mkdir -p $(HRCONDISK)
+	@cp $(DISKA)/* $(HRCONDISK)/
+	cp $(UHRCON) $(HRCONDISK)/HRCONT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(HRCONCPMA) $(CPMA_BLOCKS) $(HRCONDISK)
+	$(MKDISK) $(HRCONIMG) $(CPMSYS) $(HRCONCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(HRCONIMG)) \
+		--input="$(OSSEL)HRCONT\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(HRCONLOG))
+	@$(EMUOK)
+	@grep -q 'HRCONT: start' $(HRCONLOG) \
+		|| { echo "verify-hrcon: FAIL -- HRCONT did not run at all"; exit 1; }
+	@grep -q 'HRCONT: FAIL' $(HRCONLOG) \
+		&& { echo "verify-hrcon: FAIL -- the line above names the case,"; \
+		     echo "              the surface and the first wrong pixel."; exit 1; } || true
+	@grep -q 'HRCONT: ok' $(HRCONLOG) \
+		|| { echo "verify-hrcon: FAIL -- HRCONT did not finish"; exit 1; }
+	@echo "verify-hrcon: PASS -- every pixel matches the painted answers"
+
+
 # ---- the two 8080/Z80 run loops must do the same thing ----
 # The machine runs src/shim/z80runa.s, which executes the frequent classes
 # in assembly; z80run.c over z80exec.c stays the reference.  ZRUNT links
