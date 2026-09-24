@@ -22,16 +22,14 @@
  * same line, and the same two registers, conpoll() in bios900.c already
  * READS for serial input.  Video consoles keep the ROM dispatcher, which
  * is correct for them.  Every byte crsr.c emits goes through crtty(), so
- * redefining the two macros here covers the whole file at one point.
+ * redefining putchar here covers the whole file at one point.
  *
  * CRSHOST is the host state-machine harness, which has no I/O ports and
- * supplies its own putchar; it keeps both.
+ * supplies its own putchar; it keeps it.
  */
 #ifndef CRSHOST
 #undef	putchar
-#undef	puts
 #define putchar(c)	crtty(c)
-#define puts(s)		crputs(s)
 
 #define CRS_RR0		0x0101		/* SCC channel B: Rx/Tx status	*/
 #define CRS_RR8		0x0111		/* SCC channel B: data		*/
@@ -161,17 +159,6 @@ int c;
 		if (inb(CRS_RR0) & CRS_TXEMPTY)
 			break;
 	outb(CRS_RR8, c & 0xff);
-}
-
-static crputs(s)
-register char *s;
-{
-	if (ckind != CK_SER) {
-		((int (*)())ROM_PUTS)((char *)(s));
-		return;
-	}
-	while (*s != '\0')
-		crtty(*s++);
 }
 #endif
 
@@ -922,7 +909,12 @@ crsreset()
 
 #ifndef CRSHOST
 #include "c900cfg.h"
-#include <bootinfo.h>
+
+/* bootinfo.h's console codes.  Including the header would compile its
+ * static helpers here, where nothing calls them. */
+#define	BI_CON_SER	1
+#define	BI_CON_LR	3
+#define	BI_CON_HR	4
 
 extern int mapseg();
 
