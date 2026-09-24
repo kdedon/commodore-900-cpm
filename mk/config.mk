@@ -144,6 +144,8 @@ UI86	= $(UOBJDIR)/CPM86.Z8K
 UZDEC	= $(UOBJDIR)/ZDECT.Z8K
 # The drawing library against its model (verify-gfx).
 UGFX	= $(UOBJDIR)/GFXT.Z8K
+# GSX over the drawing library against worked answers (verify-gsx).
+UGSX	= $(UOBJDIR)/GSXT.Z8K
 # The two 8080/Z80 run loops compared on the machine (verify-zrun).
 UZRUN	= $(UOBJDIR)/ZRUNT.Z8K
 # The two 8086 decoders compared on the machine (verify-idec).

@@ -449,6 +449,18 @@ $(UOBJDIR)/gfxt.lout: $(UOBJDIR)/gfxt.o $(GFXOBJ) $(UOBJDIR)/crt0.o $(ULIB)
 $(UGFX): $(UOBJDIR)/gfxt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# GSX, a front end over the drawing library.
+GSXOBJ	= $(UOBJDIR)/gsx.o $(UOBJDIR)/gsxfont.o
+$(GSXOBJ) $(UOBJDIR)/gsxt.o: src/lib/gsx.h src/lib/gfx.h
+
+$(UOBJDIR)/gsxt.lout: $(UOBJDIR)/gsxt.o $(GSXOBJ) $(GFXOBJ) $(UOBJDIR)/crt0.o \
+		$(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/gsxt.o \
+		$(GSXOBJ) $(GFXOBJ) $(ULIB)
+
+$(UGSX): $(UOBJDIR)/gsxt.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 # ZRUNT links both run loops: the C executor and run loop are compiled a
 # second time, renamed, over the C decoder.
 ZRUNREN	= -Dz80step=cz80step -Dz80exec=cz80exec -Dz80run=cz80run \

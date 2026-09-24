@@ -914,6 +914,39 @@ verify-gfx: all $(UGFX)
 	@echo "verify-gfx: PASS -- every byte drawn at every split matches the model"
 
 
+# ---- GSX draws what was worked out by hand ----
+# GSXT drives GSX parameter blocks into 1 and 4 bpp surfaces split
+# mid-raster across two buffers, and checks every byte, the Open
+# Workstation table and the scaled coordinates against literal answers.
+GSXDISK	 = build/gsxdisk
+GSXCPMA	 = build/gsx-cpma.img
+GSXIMG	 = build/gsxtest.bin
+GSXLOG	 = build/verify-gsx.log
+.PHONY: verify-gsx
+verify-gsx: all $(UGSX)
+	@rm -rf $(GSXDISK)
+	@mkdir -p $(GSXDISK)
+	@cp $(DISKA)/* $(GSXDISK)/
+	cp $(UGSX) $(GSXDISK)/GSXT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(GSXCPMA) $(CPMA_BLOCKS) $(GSXDISK)
+	$(MKDISK) $(GSXIMG) $(CPMSYS) $(GSXCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GSXIMG)) \
+		--input="$(OSSEL)GSXT\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GSXLOG))
+	@$(EMUOK)
+	@grep -q 'GSXT: start' $(GSXLOG) \
+		|| { echo "verify-gsx: FAIL -- GSXT did not run at all"; exit 1; }
+	@grep -q 'GSXT: FAIL' $(GSXLOG) \
+		&& { echo "verify-gsx: FAIL -- the line above names the check,"; \
+		     echo "            the split, the value and the answer."; \
+		     exit 1; } || true
+	@grep -q 'GSXT: ok' $(GSXLOG) \
+		|| { echo "verify-gsx: FAIL -- GSXT did not finish"; exit 1; }
+	@echo "verify-gsx: PASS -- every byte and table matches the worked answers"
+
+
 # ---- the two 8080/Z80 run loops must do the same thing ----
 # The machine runs src/shim/z80runa.s, which executes the frequent classes
 # in assembly; z80run.c over z80exec.c stays the reference.  ZRUNT links
