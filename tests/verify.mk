@@ -5141,6 +5141,18 @@ verify-crsr: all build/crsrtest
 build/crsrtest: tests/crsrtest.c src/bios/crsr.c | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -o $@ tests/crsrtest.c
 
+# ---- Tek 4010 graphics, on the host (verify-tek) ----
+# Byte streams through the parser onto 1 and 4 bpp surfaces split
+# across two buffers, compared with a model of the scaling and lines.
+TEKSRC	= src/lib/tek.c src/lib/gfx.c src/lib/gfxm1.c src/lib/gfxc4.c
+.PHONY: verify-tek
+verify-tek: build/tektest
+	./build/tektest
+
+build/tektest: tests/tektest.c $(TEKSRC) src/lib/tek.h src/lib/gfx.h \
+		| $(OBJDIR)
+	$(HOSTCC) -std=gnu89 -w -Isrc/lib -o $@ tests/tektest.c $(TEKSRC)
+
 # ---- the owned video-console keyboard, on the host (verify-kbd) ----
 # src/bios/kbd900.h, the video console's keyboard, against COHERENT's own
 # C900 keyboard driver, compiled unmodified as the oracle: the init writes, every scan
