@@ -3,21 +3,25 @@
 
 # Text must fit segment 0x30; data and BSS must end below physical 0x0A0000 (TPA).
 LDSYS = -i -L
-# splitent.o must link first for its interface at offset zero.
-# The module resolves independently; splitimg.o embeds its contiguous text/data image.
-$(SPLITMOD): $(MODOBJ)
-	$(LD) -L -e spemu_ -R 0x37000000 -o $@ $(MODOBJ) > $(OBJDIR)/modlink.txt 2>&1 \
-	    || { echo "*** split.mod: the module is linked BEFORE cpm.sys and knows"; \
+# Each module links alone at the base of its segment; modimg.o embeds the
+# images and turns each module's _EXP symbols into absolute addresses.
+define MODLINK
+$(OBJDIR)/$(1).mod: $(OBJDIR)/modss.o $($(1)_SRC:%=$(OBJDIR)/%.o)
+	$$(LD) -L -R $($(1)_SEG)000000 -o $$@ $$^ > $(OBJDIR)/$(1)link.txt 2>&1 \
+	    || { echo "*** $(1).mod: the module is linked BEFORE cpm.sys and knows"; \
 	         echo "*** no cpm.sys address, so it has to resolve entirely among"; \
-	         echo "*** its own objects.  Either add the callee to MODSRC or"; \
-	         echo "*** reach it through the interface header (src/bdos/splitent.s)."; \
-	         cat $(OBJDIR)/modlink.txt; exit 1; }
-	@test ! -s $(OBJDIR)/modlink.txt || { cat $(OBJDIR)/modlink.txt; exit 1; }
+	         echo "*** its own objects.  Either add the callee to $(1)_SRC or"; \
+	         echo "*** pass the module a pointer to it at run time."; \
+	         cat $(OBJDIR)/$(1)link.txt; exit 1; }
+	@test ! -s $(OBJDIR)/$(1)link.txt || { cat $(OBJDIR)/$(1)link.txt; exit 1; }
+endef
+$(foreach m,$(MODULES),$(eval $(call MODLINK,$(m))))
 
-$(OBJDIR)/splitimg.s: $(SPLITMOD) tools/mkblob.py src/bios/c900cfg.h
-	python3 tools/mkblob.py $(SPLITMOD) $@
+$(OBJDIR)/modimg.s: $(MODULES:%=$(OBJDIR)/%.mod) tools/mkblob.py src/bios/c900cfg.h
+	python3 tools/mkblob.py $@ $(foreach m,$(MODULES),\
+	    $(m) $($(m)_SEG) $(OBJDIR)/$(m).mod '$($(m)_EXP)')
 
-$(OBJDIR)/splitimg.o: $(OBJDIR)/splitimg.s
+$(OBJDIR)/modimg.o: $(OBJDIR)/modimg.s
 	$(AS) -g -o $@ $< >> $(LOG) 2>&1
 
 $(CPMSYS): $(OBJ) tools/gencpm.py $(GENCPMDAT)

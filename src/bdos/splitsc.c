@@ -75,21 +75,11 @@ zw	*sptab;		/* side table: original first word per text word */
 /*
  * The next three are the module's shared state: sptop is read by the
  * resident assembly fast path on every trap and spusp/spufp are the
- * user r15/r14 mirrors the SC gate fills before entering here.  On the
- * target they live at fixed offsets in the module's interface header
- * (splitent.s) so that resident code can name them without being bound
- * to a linked module address; on the host there is no module, so this
- * file defines them itself.
+ * user r15/r14 mirrors the SC gate fills before entering here.
  */
-#ifdef HOSTCC
 zw	sptop;		/* first text word offset NOT covered (bytes)	*/
 zw	spusp;		/* user r15 (SP) at trap entry			*/
 zw	spufp;		/* user r14					*/
-#else
-extern zw sptop;
-extern zw spusp;
-extern zw spufp;
-#endif
 
 static struct spfr *cf;	/* current frame				*/
 static zw nfl, nfm;	/* flag accumulator: new flags, merge mask	*/

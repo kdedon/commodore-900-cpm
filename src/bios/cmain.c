@@ -2,7 +2,7 @@
  * Copyright (c) 2026 Kevin Dedon.
  * SPDX-License-Identifier: MIT
  */
-/* C-side cold entry from crt.s: initialize BIOS and the split module,
+/* C-side cold entry from crt.s: initialize BIOS and the modules,
  * then reset the stack and enter the transient CCP through ccpentry().
  * M12_HARNESS selects the standalone disk read/write diagnostic instead. */
 #include "romabi.h"
@@ -13,22 +13,35 @@
 extern ccpentry();		/* glue.s: reset the stack, enter the CCP */
 extern int mem_cpy(), mem_clr();
 
-/*
- * splitimg.o, generated from build/split.mod: the linked split-I/D
- * module's loaded image (text + initialized data, contiguous), the
- * offset of its bss within the segment, and that bss's length.
- */
-extern char	splitimg[];
-extern short	spimglen, spbssoff, spbsslen;
+extern int maplim();
 
-/* Initialize the split module's image and BSS in the mapping from crt.s.
- * Check its magic after BIOS initialization so a bad image can be reported. */
-static spminit()
+/*
+ * modimg.o, generated from the linked modules: per module its segment,
+ * the 256-byte block and limit it is mapped at, and its loaded image
+ * (text + initialized data, contiguous) with the bss that follows.
+ */
+struct modent {
+	short		seg;
+	unsigned	page;		/* mapseg base page */
+	short		lim;
+	unsigned	imglen;
+	unsigned	bsslen;
+	char		*img;
+};
+extern struct modent	modtab[];
+extern short		modn;
+
+static modinit()
 {
-	mem_cpy((long)splitimg, SPLITMBASE, (long)spimglen);
-	mem_clr(SPLITMBASE + (long)spbssoff, (long)spbsslen);
-	if (*(short *)SPLITMBASE != SPM_MAGIC)
-		puts("split-I/D module image bad -- 0xEE0B tools disabled\n");
+	register struct modent *m;
+	long base;
+
+	for (m = modtab; m < modtab + modn; m++) {
+		maplim(m->seg, m->page, 0x02, m->lim);
+		base = (long)m->seg << 24;
+		mem_cpy((long)m->img, base, (long)m->imglen);
+		mem_clr(base + (long)m->imglen, (long)m->bsslen);
+	}
 }
 
 #ifndef M12_HARNESS
@@ -37,8 +50,8 @@ cmain()
 {
 	binit();
 	BTRACE("<2>");		/* binit returned */
-	spminit();
-	BTRACE("<3>");		/* spminit returned */
+	modinit();
+	BTRACE("<3>");		/* modinit returned */
 	puts("\nCP/M-8000(tm) for the Commodore 900\n");
 	ccpentry();		/* no return */
 }

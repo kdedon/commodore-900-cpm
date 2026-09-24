@@ -2,35 +2,26 @@
 # Copyright (c) 2026 Kevin Dedon.
 # SPDX-License-Identifier: MIT
 
-"""mkblob.py -- turn the linked split-I/D module into an assembler source
-file that CPM.SYS carries in its data segment.
+"""mkblob.py -- turn the linked modules into an assembler source file
+that CPM.SYS carries in its data segment.
 
-    mkblob.py split.mod splitimg.s
+    mkblob.py modimg.s NAME SEG FILE 'EXPORTS' [NAME SEG FILE 'EXPORTS' ...]
 
-build/split.mod is an l.out linked at SPLITMBASE and self-contained: it
-resolves every symbol it uses among its own objects, so it is bound to no
-CPM.SYS address and cannot go stale against one.  Its loaded image goes
-into .prvd here -- the DATA segment, which is the whole point, since the
-text segment is the resource that ran out -- and cmain.c copies it into
-the module segment at cold boot.
+Each FILE is an l.out linked alone at SEG<<24.  Its loaded image goes
+into .prvd -- the DATA segment, since text is the resource that ran out
+-- and cmain.c copies it into physical page MODPHYSPAGE at cold boot.
+Images are packed there on 256-byte boundaries, and each segment is
+mapped onto its own slice with a limit that ends it.
 
-Everything the resident system knows about the module is the fixed
-interface header splitent.s puts at offset 0.  This script is where that
-contract is enforced: the offsets are checked against the module's own
-symbol table after every link, so a change that moves them fails the
-build instead of producing a system that jumps into the middle of an
-instruction the first time a 0xEE0B tool runs.
+The module's EXPORTS become absolute symbols, taken from the same link
+as the image, so CPM.SYS calls or names them like any other global.  A
+Z8001 segmented CALL carries the full address and RET pops it, so
+crossing into a module needs nothing more.
 """
 
+import re
 import struct
 import sys
-
-# Must match src/bios/c900cfg.h.
-SPM_MAGIC = 0x5350
-SPM_VERS = 1
-SPLITMBASE = 0x37000000
-SPLITMLIM = 0xE3
-HDR = [("spment_", 0), ("sptop_", 16), ("spusp_", 18), ("spufp_", 20)]
 
 L_SHRI, L_PRVI, L_BSSI, L_SHRD, L_PRVD, L_BSSD, L_DEBUG, L_SYM, L_REL = range(9)
 SYMSZ = 22			# ldsym: 16 name + 2 type + 4 addr
@@ -46,10 +37,15 @@ def gl(b, o):
         struct.unpack_from("<H", b, o + 2)[0]
 
 
-def main():
-    if len(sys.argv) != 3:
-        die("usage: mkblob.py split.mod splitimg.s")
-    modf, outf = sys.argv[1], sys.argv[2]
+def cfg(name):
+    txt = open("src/bios/c900cfg.h").read()
+    m = re.search(r"#define\s+%s\s+(0x[0-9a-fA-F]+|\d+)" % name, txt)
+    if not m:
+        die("c900cfg.h defines no %s" % name)
+    return int(m.group(1), 0)
+
+
+def load(name, seg, modf):
     b = open(modf, "rb").read()
     if len(b) < 48:
         die("%s: too short for an l.out header" % modf)
@@ -62,64 +58,84 @@ def main():
     # SHRI then PRVD with nothing between them.  ld's baseall() puts
     # PRVI, BSSI and SHRD there when they are non-empty, and BSSI in
     # particular would land in the middle of what we copy.
-    for seg, name in ((L_PRVI, "PRVI"), (L_BSSI, "BSSI"), (L_SHRD, "SHRD")):
-        if ssize[seg]:
+    for s, sn in ((L_PRVI, "PRVI"), (L_BSSI, "BSSI"), (L_SHRD, "SHRD")):
+        if ssize[s]:
             die("%s: %s is %d bytes; the module image must be SHRI+PRVD "
                 "only (see the layout note in this script)"
-                % (modf, name, ssize[seg]))
+                % (modf, sn, ssize[s]))
 
     imglen = ssize[L_SHRI] + ssize[L_PRVD]
-    bssoff = imglen
-    bsslen = ssize[L_BSSD]
     img = b[tbase:tbase + imglen]
     if len(img) != imglen:
         die("%s: file holds %d image bytes, header says %d"
             % (modf, len(img), imglen))
 
-    # The MMU descriptor crt.s programs stops the segment at SPLITMLIM.
-    top = (SPLITMLIM + 1) * 256
-    if bssoff + bsslen > top:
-        die("module is %d bytes; segment SPLITMSEG stops at %d "
-            "(raise SPLITMLIM only if the ROM's segment-1 cells allow it)"
-            % (bssoff + bsslen, top))
-
-    # The interface header, checked against the module's own symbols.
-    nsym = ssize[L_SYM] // SYMSZ
-    symoff = tbase + imglen + ssize[L_DEBUG]
     syms = {}
-    for i in range(nsym):
+    symoff = tbase + imglen + ssize[L_DEBUG]
+    for i in range(ssize[L_SYM] // SYMSZ):
         o = symoff + i * SYMSZ
         nm = b[o:o + 16].split(b"\0")[0].decode("ascii", "replace")
         syms[nm] = gl(b, o + 18)
-    for nm, off in HDR:
-        want = SPLITMBASE + off
-        if nm not in syms:
-            die("%s: interface symbol %s is missing (splitent.s)" % (modf, nm))
-        if syms[nm] != want:
-            die("%s: %s is at 0x%08x, the resident side calls it 0x%08x -- "
-                "splitent.s and c900cfg.h SPM_* disagree"
-                % (modf, nm, syms[nm], want))
-    got = struct.unpack_from(">HH", img, 0)
-    if got != (SPM_MAGIC, SPM_VERS):
-        die("%s: header words are 0x%04x/0x%04x, expected 0x%04x/0x%04x"
-            % (modf, got[0], got[1], SPM_MAGIC, SPM_VERS))
+    return dict(name=name, seg=seg, img=img, text=ssize[L_SHRI],
+                bss=ssize[L_BSSD], syms=syms)
 
+
+def main():
+    a = sys.argv[2:]
+    if len(sys.argv) < 6 or len(a) % 4:
+        die("usage: mkblob.py modimg.s NAME SEG FILE 'EXPORTS' ...")
+    outf = sys.argv[1]
+    top = (cfg("MODLIM") + 1) * 256
+    mods, off = [], 0
+    for i in range(0, len(a), 4):
+        name, seg, modf, exps = a[i], int(a[i + 1], 0), a[i + 2], a[i + 3]
+        m = load(name, seg, modf)
+        m["off"] = off
+        m["size"] = len(m["img"]) + m["bss"]
+        m["blocks"] = (m["size"] + 255) // 256
+        m["exps"] = exps.split()
+        for nm in m["exps"]:
+            if nm not in m["syms"]:
+                die("%s: exported symbol %s is not defined" % (modf, nm))
+        off += m["blocks"] * 256
+        mods.append(m)
+    if off > top:
+        die("modules need %d bytes; page 0x%02X holds %d"
+            % (off, cfg("MODPHYSPAGE"), top))
+
+    page = cfg("MODPHYSPAGE") << 8
     with open(outf, "w") as f:
-        f.write("/ Generated by tools/mkblob.py from %s -- do not edit.\n"
-                "/ The linked split-I/D module image, carried in CPM.SYS's\n"
-                "/ data segment and copied to SPLITMBASE by cmain.c.\n"
-                "/ text %d + data %d = %d bytes, bss %d at +0x%x.\n\n"
-                % (modf, ssize[L_SHRI], ssize[L_PRVD], imglen, bsslen, bssoff))
-        f.write("\t.prvd\n\t.even\n\n")
-        for nm, v in (("spimglen_", imglen), ("spbssoff_", bssoff),
-                      ("spbsslen_", bsslen)):
-            f.write("\t.globl\t%s\n%s:\n\t.word\t%d\n" % (nm, nm, v))
-        f.write("\n\t.globl\tsplitimg_\nsplitimg_:\n")
-        for i in range(0, imglen, 16):
-            row = img[i:i + 16]
-            f.write("\t.byte\t" + ",".join("0x%02x" % c for c in row) + "\n")
-    print("mkblob: %s -> %s (%d bytes image + %d bss, %d free in segment)"
-          % (modf, outf, imglen, bsslen, top - bssoff - bsslen))
+        f.write("/ Generated by tools/mkblob.py -- do not edit.\n"
+                "/ The linked modules' images and exports; cmain.c copies\n"
+                "/ each image into place at cold boot.\n\n")
+        for m in mods:
+            for nm in m["exps"]:
+                f.write("\t.globl\t%s\n%s = 0x%08x\n"
+                        % (nm, nm, m["syms"][nm]))
+        f.write("\n\t.prvd\n\t.even\n\n"
+                "/ seg, base page, limit, image length, bss length, image\n"
+                "\t.globl\tmodn_\nmodn_:\n\t.word\t%d\n"
+                "\t.globl\tmodtab_\nmodtab_:\n" % len(mods))
+        for m in mods:
+            f.write("\t.word\t0x%02x, 0x%04x, 0x%02x, %d, %d\n"
+                    "\t.long\tmi%s\n"
+                    % (m["seg"], page + m["off"] // 256, m["blocks"] - 1,
+                       len(m["img"]), m["bss"], m["name"]))
+        for m in mods:
+            f.write("\nmi%s:\n" % m["name"])
+            img = m["img"]
+            for i in range(0, len(img), 16):
+                f.write("\t.byte\t" +
+                        ",".join("0x%02x" % c for c in img[i:i + 16]) + "\n")
+            f.write("\t.even\n")
+    for m in mods:
+        print("%s.mod: seg 0x%02x at phys 0x%06x, text %d + data %d + bss %d"
+              " = %d bytes, %d free in its segment"
+              % (m["name"], m["seg"], (page << 8) + m["off"], m["text"],
+                 len(m["img"]) - m["text"], m["bss"], m["size"],
+                 0x10000 - m["size"]))
+    print("modules: %d of %d bytes in page 0x%02X"
+          % (off, top, cfg("MODPHYSPAGE")))
 
 
 main()

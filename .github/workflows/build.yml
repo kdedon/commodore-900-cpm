@@ -4,7 +4,7 @@
 # build -- the two freestanding links, against the toolchain this repository
 # floats on.
 #
-# CPM.SYS and split.mod each carry their own startup and their own runtime:
+# CPM.SYS and its modules each carry their own startup and their own runtime:
 # no crts0.s, no kernel symbol table behind them.  So every external symbol
 # the compiler names is one this tree has to define itself (SS, the stack
 # segment a frame reference relocates against, in src/bios/crt.s and
@@ -90,13 +90,13 @@ jobs:
       # Set, never searched: a job that depended on directory adjacency breaks
       # the first time a runner image moves its checkouts.  The search has its
       # own test in resolver-isolation.yml.
-      - name: Link the resident system and the split-I/D module
+      - name: Link the resident system and its modules
         working-directory: cpm
         env:
           C900_TOOLCHAIN: ${{ github.workspace }}/cpm/deps/commodore-900-toolchain
           KBOOT: ${{ github.workspace }}/cpm/deps/commodore-900-kboot/kboot
           KBOOTSRC: ${{ github.workspace }}/cpm/deps/commodore-900-kboot
-        run: make build/cpm.sys build/split.mod
+        run: make build/cpm.sys
 
       # Everything else a release is made of: the transient programs, the
       # staged devpack, the three images, the RELEASE staging and its

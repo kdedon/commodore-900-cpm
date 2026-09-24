@@ -269,10 +269,17 @@ SYSHDRS = $(wildcard src/bdos/*.h) $(wildcard src/ccp/*.h) src/bios/c900cfg.h
 SRCOBJ = $(OBJDIR)/crt.o \
        $(patsubst src/bios/%.c,$(OBJDIR)/%.o,$(wildcard src/bios/*.c)) \
        $(filter-out $(OBJDIR)/crt.o,$(patsubst src/bios/%.s,$(OBJDIR)/%.o,$(wildcard src/bios/*.s)))
-# The split-I/D slow path is linked separately and embedded as splitimg.o.
-MODSRC = splitent splitscan splitsc zsplit
-MODOBJ = $(patsubst %,$(OBJDIR)/%.o,$(MODSRC))
-SPLITMOD = build/split.mod
+# Modules: each is linked alone at the base of its own segment, embedded
+# in cpm.sys data (modimg.o) and copied into place at cold boot.  A module
+# is a name, a segment, its objects and the symbols cpm.sys may call or
+# name in it.  It resolves only among its own objects; to reach cpm.sys it
+# must be handed a pointer at run time.
+MODULES   = split
+split_SEG = 0x37
+split_SRC = splitscan splitsc zsplit
+split_EXP = spemu_ spscan_ sptop_ spusp_ spufp_
+MODOBJ = $(foreach m,$(MODULES),$(patsubst %,$(OBJDIR)/%.o,$($(m)_SRC))) \
+	 $(OBJDIR)/modss.o
 
 # The CCP loads from A:CCP.Z8K into the TPA on cold and warm boots.
 CCPSRC = ccp ccpext ccpgo
@@ -280,12 +287,12 @@ CCPOBJ = $(UOBJDIR)/ccpcrt.o $(patsubst %,$(UOBJDIR)/%.o,$(CCPSRC))
 CCPXCL = $(OBJDIR)/ccpcrt.o $(patsubst %,$(OBJDIR)/%.o,$(CCPSRC))
 UCCP   = $(UOBJDIR)/CCP.Z8K
 
-# Exclude the transient CCP and split module from the resident link.
+# Exclude the transient CCP and the modules from the resident link.
 # Sort each object group to keep link order independent of source directory.
 SYSOBJ = $(filter-out $(MODOBJ) $(CCPXCL), \
        $(sort $(patsubst src/bdos/%.c,$(OBJDIR)/%.o,$(wildcard src/bdos/*.c)) \
               $(patsubst src/ccp/%.c,$(OBJDIR)/%.o,$(wildcard src/ccp/*.c))) \
        $(sort $(patsubst src/bdos/%.s,$(OBJDIR)/%.o,$(wildcard src/bdos/*.s)) \
               $(patsubst src/ccp/%.s,$(OBJDIR)/%.o,$(wildcard src/ccp/*.s)))) \
-       $(OBJDIR)/splitimg.o
-OBJ  = $(SRCOBJ) $(SYSOBJ)
+       $(OBJDIR)/modimg.o
+OBJ  = $(filter-out $(MODOBJ),$(SRCOBJ)) $(SYSOBJ)

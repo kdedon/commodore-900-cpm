@@ -5,8 +5,7 @@
 /*
  * splitscan.c -- the scan-and-patch half of the split-I/D shim.
  *
- * Runs in the relocated module (segment SPLITMSEG), entered as spscan()
- * through the module header's second slot.  The resident half
+ * Runs in the split module, entered as spscan().  The resident half
  * (splitld.c) has already mapped the data bank and the side-table
  * segment and cleared the side table and the scanner's LDR-target
  * bitmap; everything from here down is the walk itself.
@@ -28,8 +27,7 @@ extern char	*spcode;
 extern char	*spdata;
 extern zw	*sptab;
 
-/* splitent.s: the module header's live words */
-extern zw	sptop;
+extern zw	sptop;		/* splitsc.c */
 
 static zw *sptext;	/* the loaded text, as words (the code bank) */
 

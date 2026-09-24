@@ -68,7 +68,7 @@ $(CPMDISK): $(CPMSYS) $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) tools/mkcpmdis
 # not depend on the layer under test.  Legend: docs/run/D3.md.
 #
 # Everything it touches is named differently from the default build --
-# its own object directory, cpm.sys, split module, build log and medium --
+# its own object directory, cpm.sys, modules, build log and medium --
 # so `make all' still produces byte-identical build/cpm.sys and
 # build/cpmonly.bin whether or not this target has ever been run.  The
 # recursion follows the verify-hash-ab pattern in tests/verify.mk: a
@@ -77,14 +77,13 @@ $(CPMDISK): $(CPMSYS) $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) tools/mkcpmdis
 TRACEDIR = build/trace
 TRACEOBJ = $(TRACEDIR)/obj
 TRACESYS = $(TRACEDIR)/cpm.sys
-TRACEMOD = $(TRACEDIR)/split.mod
 TRACELOG = $(TRACEDIR)/build.log
 TRACEBIN = build/cpmtrace.bin
 
 .PHONY: trace-cpmsys cpmtrace
 trace-cpmsys:
 	@mkdir -p $(TRACEDIR)
-	$(MAKE) OBJDIR=$(TRACEOBJ) CPMSYS=$(TRACESYS) SPLITMOD=$(TRACEMOD) \
+	$(MAKE) OBJDIR=$(TRACEOBJ) CPMSYS=$(TRACESYS) \
 		LOG=$(TRACELOG) DEFS='-DBOOT_TRACE' $(TRACESYS)
 
 $(TRACEBIN): trace-cpmsys $(CPMARIMG) $(CPMBIMG) $(wildcard $(KBOOT)) \

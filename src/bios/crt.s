@@ -231,24 +231,6 @@ start:
 	ldb	rl0, $0x02
 	soutb	0x0ffc, rl0
 
-	/ seg SPLITMSEG -> phys 0x0F0000, attr 0x02 (SYS r/w, and SYS
-	/ execute -- the attribute byte's only access bits are SYS and
-	/ read-only): the relocated split-I/D module.  cmain copies the
-	/ linked image here out of our own data segment.  The limit is
-	/ SPLITMLIM, not the usual 0xff, so the segment stops below the
-	/ ROM's segment-1 data cells at the top of a 512 KB machine's RAM
-	/ (see c900cfg.h).
-	ldb	rl0, $SPLITMSEG
-	soutb	0x01fc, rl0
-	ldb	rl0, $SPLITMPHYSPAGE
-	soutb	0x0ffc, rl0
-	ldb	rl0, $0x00
-	soutb	0x0ffc, rl0
-	ldb	rl0, $SPLITMLIM
-	soutb	0x0ffc, rl0
-	ldb	rl0, $0x02
-	soutb	0x0ffc, rl0
-
 	/ seg 0x3F -> phys 0x0D0000, attr 0x02: the C stack.  Frame/local refs
 	/ carry the segment SS, defined above as 0x3F -- the same segment the
 	/ ROM's own routines frame in, which is what makes calling back into
@@ -274,15 +256,21 @@ hang:
 / mapseg_(seg, basepage, attr) -- program one Z8010 MMU descriptor from C.
 / basepage = phys>>8 (e.g. 0x0800 for phys 0x080000); attr: 0x02 = SYS r/w,
 / 0x03 = SYS read/execute.
+/ maplim_(seg, basepage, attr, limit) -- the same, limit = last 256-byte block.
 	.globl	mapseg_
+	.globl	maplim_
+maplim_:
+	ld	r3, rr14(10)		/ limit (low byte)
+	jr	mapset
 mapseg_:
+	ldb	rl3, $0xff		/ limit = 0xff (64K)
+mapset:
 	ld	r0, rr14(4)		/ seg (low byte)
 	ld	r1, rr14(6)		/ base page (hi:lo)
 	ld	r2, rr14(8)		/ attr (low byte)
 	soutb	0x01fc, rl0		/ select descriptor
 	soutb	0x0ffc, rh1		/ base hi
 	soutb	0x0ffc, rl1		/ base lo
-	ldb	rl3, $0xff
-	soutb	0x0ffc, rl3		/ limit = 0xff (64K)
+	soutb	0x0ffc, rl3		/ limit
 	soutb	0x0ffc, rl2		/ attr
 	ret

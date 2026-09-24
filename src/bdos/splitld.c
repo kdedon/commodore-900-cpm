@@ -9,7 +9,7 @@
  * the TPA (code bank), CON/DAT in the data bank.  Maps the data-bank and
  * side-table segments and clears the side table and the scanner's
  * LDR-target scratch bitmap, then hands the walk itself to spscan() in
- * the relocated module (splitscan.c, segment SPLITMSEG).
+ * the split module (splitscan.c).
  *
  * The split is where the resident cost is: the two mapseg() calls and
  * the two block clears are a handful of instructions that would
@@ -29,7 +29,7 @@
 
 extern int mapseg();
 extern int mem_clr();
-extern int spscan();		/* splitmod.s equate -> the module */
+extern int spscan();		/* in the split module */
 
 short	spflag;		/* nonzero: the loaded program is split I/D --
 			 * read by the SC gate's nonseg pointer mapping */

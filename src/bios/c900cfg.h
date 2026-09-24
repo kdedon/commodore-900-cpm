@@ -26,24 +26,13 @@
 #define	SPLITTSEG	0x36		/* side table + scanner scratch */
 #define	SPLITTBASE	0x36000000L
 #define	SPLITTPAGE	0x0e00		/* phys 0x0E0000, above the C stack */
-/* Split-I/D slow-path module: cmain.c copies its linked image from resident
- * data to SPLITMSEG at cold boot. The descriptor limit excludes ROM state
- * at physical 0x0FE400 on a 512 KB machine.
- * The fixed interface offsets are defined by splitent.s and checked at
- * build time; implementation entry addresses stay internal to the module. */
-#define	SPLITMSEG	0x37		/* relocated shim slow path */
-#define	SPLITMBASE	0x37000000L
-#define	SPLITMPAGE	0x0f00		/* phys 0x0F0000 (mapseg base page) */
-#define	SPLITMPHYSPAGE	0x0f		/* the same, high descriptor byte */
-#define	SPLITMLIM	0xE3		/* last valid page: 0x0FE3FF, one
-					 * short of the ROM's seg-1 cells */
-#define	SPM_MAGIC	0x5350		/* 'SP' at module offset 0 */
-#define	SPM_VERS	1		/* interface version, offset 2 */
-#define	SPM_EMU		0x37000004	/* jp spemu_  (SC #255 slow path) */
-#define	SPM_SCAN	0x3700000A	/* jp spscan_ (load-time scan) */
-#define	SPM_TOP		0x37000010	/* zw sptop */
-#define	SPM_USP		0x37000012	/* zw spusp */
-#define	SPM_UFP		0x37000014	/* zw spufp */
+/* Modules (mk/config.mk MODULES): each is linked alone at the base of its
+ * own logical segment.  cmain.c copies their images from resident data
+ * into this physical page at cold boot, packed on 256-byte boundaries,
+ * and maps each segment onto its slice.  The page stops at MODLIM, short
+ * of the ROM's state at physical 0x0FE400 on a 512 KB machine. */
+#define	MODPHYSPAGE	0x0f		/* phys 0x0F0000 */
+#define	MODLIM		0xE3		/* last usable 256-byte block */
 
 /* System-only disk cache segment. Buffers occupy NBCB*512 bytes starting
  * at offset zero; the directory signature table starts at 0x4000 and
@@ -81,8 +70,8 @@
  *
  * 0x28..0x2E is free: the ROM identity-maps all 64 descriptors at reset
  * and thereafter only ever addresses segments 0,
- * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32, 0x33, 0x35..0x37 and
- * 0x3F (crt.s), and nothing in the tree names a segment between 0x02 and
+ * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32..0x36, 0x3F and the
+ * module segments (0x37, 0x38), and nothing in the tree names a segment between 0x02 and
  * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
  *
  * AS MANY SLOTS AS RAM CAN BACK.  pginit() used to stop at seven whatever
@@ -112,7 +101,7 @@
 					 * the video planes */
 #define	PGSEG(i)	((i) < PGNUP ? PGSEGLO + (i) \
 				     : PGSEGLO - 1 - ((i) - PGNUP))
-#define	PGPGLO		0x10		/* SPLITMPHYSPAGE + 1		 */
+#define	PGPGLO		0x10		/* MODPHYSPAGE + 1		 */
 /*
  * The video-card probe's scratch segment (crsr.c vprobe, D8).  COHERENT
  * probes through its transient segment ES, 0x3D (md.s:27, 1146-1150); in
