@@ -120,6 +120,13 @@ struct biospb {
 #define	SEGBASE(s)	((long)(s) << 24)
 
 /*
+ * GSX, BIOS function 34, on bioscl()'s list: P2 is a struct gsxpb for
+ * the graphics module, P1 the gfx surface to draw on, or 0 for the HR
+ * screen.  Answers gsx()'s result, or -1 when there is no screen.
+ */
+#define	BIOS_GSX	34
+
+/*
  * BIOCOST-only codes, NOT reachable through function 50: bioscl()
  * refuses 2-7 outright, and these two do not even exist there -- they
  * are read through the raw SC #3 gate instead (__bios(), bdosglue.s

@@ -308,6 +308,7 @@ extern char *i86berr();		/* one sentence about the last refusal	*/
 extern int i86bdosfn;		/* the function that asked, or -1	*/
 extern int i86gsx();		/* GSX-86, function 73h			*/
 extern int (*i86gsxdev)();	/* its device, or null for none		*/
+extern int i86gsxb();		/* the machine's device			*/
 extern i32 i86nbdos;		/* calls serviced			*/
 extern i16 i86dmaoff, i86dmaseg;
 extern i16 i86ver;		/* what function 12 tells the guest	*/

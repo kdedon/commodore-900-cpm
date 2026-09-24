@@ -65,6 +65,7 @@ $(OBJDIR)/%.o: src/bdos/%.c $(SYSHDRS) $(TCSTAMP) | $(OBJDIR)
 
 $(OBJDIR)/crstek.o: src/lib/gfx.h src/lib/tek.h
 $(OBJDIR)/crshr.o: src/lib/gfx.h
+$(OBJDIR)/crsgsx.o: src/lib/gfx.h src/lib/gsx.h
 
 $(OBJDIR)/%.o: src/lib/%.c $(wildcard src/lib/*.h) $(TCSTAMP) | $(OBJDIR)
 	$(CC0) $(VAR) $< $(OBJDIR)/$*.z0 $(SRCINC) $(DEFS) >> $(LOG) 2>&1

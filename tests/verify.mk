@@ -1662,35 +1662,40 @@ verify-i86keyq: all $(I86FIX)/MANIFEST
 # ---- GSX-86 calls from an 8086 guest ----
 # GX86.CMD (tools/mkcmdfix.py p_gsx86) opens a workstation, draws a
 # polyline, a fill and text, and closes it.  The host shim draws it on a
-# RAM surface and the guest checks every array and pixel; the machine's
-# shim has no device yet, so it must refuse as GDOS does.
+# RAM surface and the guest checks every array and pixel.  On the machine
+# CPM86G draws it through BIOS function 34 and the graphics module on the
+# guest's own memory; CPM86, with no HR screen to draw on, must refuse as
+# GDOS does.
 GX86DISK = build/gx86disk
 GX86CPMA = build/gx86-cpma.img
 GX86IMG	 = build/gx86test.bin
 GX86LOG	 = build/verify-gsx86.log
 .PHONY: verify-gsx86
-verify-gsx86: all build/i86test $(I86FIX)/MANIFEST
+verify-gsx86: all build/i86test $(I86FIX)/MANIFEST $(UGX86)
 	./build/i86test -g $(I86FIX)
 	@rm -rf $(GX86DISK)
 	@mkdir -p $(GX86DISK)
 	@cp $(DISKA)/* $(GX86DISK)/
 	cp $(I86FIX)/GX86.CMD $(GX86DISK)/
+	cp $(UGX86) $(GX86DISK)/CPM86G.Z8K
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $(GX86CPMA) $(CPMA_BLOCKS) $(GX86DISK)
 	$(MKDISK) $(GX86IMG) $(CPMSYS) $(GX86CPMA) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(GX86IMG)) \
-		--input="$(OSSEL)$(SESS1)CPM86 GX86.CMD\r$(ENDIN)" \
+		--input="$(OSSEL)$(SESS1)CPM86G GX86.CMD\rCPM86 GX86.CMD\r$(ENDIN)" \
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(GX86LOG))
 	@$(EMUOK)
+	@grep -q 'GX86 OK' $(GX86LOG) \
+		|| { echo "verify-gsx86: FAIL -- the module did not draw the worked answers"; exit 1; }
 	@grep -q 'GSX-86 [0-9A-F]\{4\}:[0-9A-F]\{4\} Invalid Gios0000h (hex)' $(GX86LOG) \
 		|| { echo "verify-gsx86: FAIL -- no GDOS refusal without a device"; exit 1; }
 	@grep -q 'GSX Removed' $(GX86LOG) \
 		|| { echo "verify-gsx86: FAIL -- the refusal did not unload GSX"; exit 1; }
-	@grep -q 'i86: the guest terminated' $(GX86LOG) \
-		|| { echo "verify-gsx86: FAIL -- the guest did not terminate cleanly"; exit 1; }
-	@echo "verify-gsx86: PASS -- the host draws the worked answers; the"
-	@echo "            machine, with no device, refuses as GDOS does"
+	@test `grep -c 'i86: the guest terminated' $(GX86LOG)` -eq 2 \
+		|| { echo "verify-gsx86: FAIL -- a guest did not terminate cleanly"; exit 1; }
+	@echo "verify-gsx86: PASS -- the host and the graphics module draw the"
+	@echo "            worked answers; with no screen, CPM86 refuses as GDOS does"
 
 # CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
 # cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.

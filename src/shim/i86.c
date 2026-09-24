@@ -568,6 +568,7 @@ char *argv[];
 	i86segget = xsegget;
 	i86segput = xsegput;
 	i86wait = i86sleep;
+	i86gsxdev = i86gsxb;
 	i86bdosinit(&G);
 
 	limit = 20000000L;

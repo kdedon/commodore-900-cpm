@@ -567,7 +567,7 @@ $(UZRUN): $(UOBJDIR)/zrunt.lout $(LOUT2CPM)
 I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86deca.o $(UOBJDIR)/i86runa.o \
 	  $(UOBJDIR)/i86exec.o \
 	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o \
-	  $(UOBJDIR)/segclra.o $(UOBJDIR)/i86gsx.o
+	  $(UOBJDIR)/segclra.o $(UOBJDIR)/i86gsx.o $(UOBJDIR)/i86gsxb.o
 $(I86OBJ): src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h
 $(UOBJDIR)/i86gsx.o: src/lib/gsx.h src/lib/gfx.h
 
@@ -575,6 +575,16 @@ $(UOBJDIR)/i86.lout: $(I86OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(I86OBJ) $(ULIB)
 
 $(UI86): $(UOBJDIR)/i86.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+# The shim with a GSX-86 device that draws in the guest's own memory.
+GX86OBJ	= $(filter-out $(UOBJDIR)/i86gsxb.o,$(I86OBJ)) $(UOBJDIR)/gx86dev.o
+$(UOBJDIR)/gx86dev.o: src/shim/i86.h src/lib/gfx.h
+
+$(UOBJDIR)/gx86.lout: $(GX86OBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(GX86OBJ) $(ULIB)
+
+$(UGX86): $(UOBJDIR)/gx86.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
 $(UOBJDIR)/i86decc.o: src/shim/i86dec.c src/shim/i86.h $(TCSTAMP) | $(UOBJDIR)

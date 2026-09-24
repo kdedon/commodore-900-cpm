@@ -102,6 +102,7 @@ LONG	p1, p2;			/* its two LONG parameters		*/
 	case 28:		/* CONDEV -- see the table		*/
 	case 31:		/* AUXIST -- see the table		*/
 	case 32:		/* AUXDEV -- see the table		*/
+	case 34:		/* GSX -- the only route to the module	*/
 		return( bios(code, p1, p2) );
     }
     return(0xffffffffL);	/* refused -- see the table above */

@@ -1378,6 +1378,11 @@ long d1, d2;
 		}
 		return (0L);
 
+	/* GSX: one parameter block d2 on surface d1, or on the HR screen
+	 * when d1 is 0.  -1 when there is no screen to draw on. */
+	case 34:				/* GSX(surface, pb) */
+		return ((long)crsgsx((char *)d1, (char *)d2));
+
 	/*
 	 * BIOCOST-only, cpm.h BIOS_ROMCHAR/BIOS_VSETCHAR: not stock CP/M-8000
 	 * BIOS functions and not on bioscl()'s (sys/iosys.c) allowed list --

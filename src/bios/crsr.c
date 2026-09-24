@@ -116,6 +116,7 @@ extern tkinit(), tkput(), tkclear();
 
 /* HR character cells, drawn by the graphics module */
 extern hcinit(), hcram(), hcpark(), hcput(), hcblank(), hcscroll(), hcdelch();
+extern gxcall();
 static int hrow, hcol;			/* HR cursor			*/
 
 #ifndef CRSHOST
@@ -1019,6 +1020,15 @@ register char *p;
 		ncol = 80;
 		crsmode(k);
 	}
+}
+
+/* One GSX call on surface s, or on the HR screen; -1 when there is none. */
+crsgsx(s, pb)
+char *s, *pb;
+{
+	if (s == 0 && ckind != CK_HR)
+		return (-1);
+	return (gxcall(s, pb));
 }
 
 /*

@@ -148,6 +148,8 @@ UGFX	= $(UOBJDIR)/GFXT.Z8K
 UGSX	= $(UOBJDIR)/GSXT.Z8K
 # The graphics module's Tek parser against a linked copy (verify-tekgate).
 UTEKT	= $(UOBJDIR)/TEKT.Z8K
+# CPM86 drawing GSX-86 in the guest's memory through the module (verify-gsx86).
+UGX86	= $(UOBJDIR)/CPM86G.Z8K
 # The HR console on split surfaces against worked answers (verify-hrcon).
 UHRCON	= $(UOBJDIR)/HRCONT.Z8K
 # The two 8080/Z80 run loops compared on the machine (verify-zrun).
@@ -283,9 +285,9 @@ split_SEG = 0x37
 split_SRC = splitscan splitsc zsplit
 split_EXP = spemu_ spscan_ sptop_ spusp_ spufp_
 gfx_SEG   = 0x38
-gfx_SRC   = crstek crshr tek gfx gfxm1 gfxc4 gfxa hrfont gsxfont
+gfx_SRC   = crstek crshr crsgsx tek gfx gfxm1 gfxc4 gfxa hrfont gsx gsxfont
 gfx_EXP   = tkinit_ tkput_ tkclear_ hcinit_ hcram_ hcpark_ hcput_ \
-	    hcblank_ hcscroll_ hcdelch_
+	    hcblank_ hcscroll_ hcdelch_ gxcall_
 MODOBJ = $(foreach m,$(MODULES),$(patsubst %,$(OBJDIR)/%.o,$($(m)_SRC))) \
 	 $(OBJDIR)/modss.o
 
