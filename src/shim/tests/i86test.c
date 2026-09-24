@@ -25,6 +25,8 @@
 #include "../i86.h"
 #include "../gdpb.h"
 #include "../conmode.h"
+#include "../../lib/gfx.h"
+#include "../../lib/gsx.h"
 
 /* The native character control block functions 111 and 112 take. */
 struct sccb {
@@ -5253,6 +5255,51 @@ static void t_tod(const char *dir)
 	chk("... and left the clock", sclk[0] & 0xff, 0xcc);
 }
 
+/* GSX-86 (i86gsx.c).  The device draws 64 x 32 x 1 at DS:1000h, where
+ * GX86.CMD checks it against pixels worked out by hand. */
+static struct gsxws gxws;
+static struct gfxsurf gxs;
+
+static int gxdev(struct i86 *m, struct gsxpb *pb)
+{
+	unsigned char *p;
+
+	if (pb->contrl[0] == 1) {
+		p = (unsigned char *)i86addr(m, S_DS, (i16)0x1000, 256L);
+		if (p == 0)
+			return (-1);
+		gfx_ram(&gxs, 64, 32, 1, 8, p, p + 128, 128L);
+		gsxinit(&gxws, &gxs);
+	}
+	gsx(&gxws, pb);
+	return (0);
+}
+
+static void t_gsx86(const char *dir)
+{
+	char path[512];
+	long nstep;
+
+	sprintf(path, "%s/GX86.CMD", dir);
+	i86gsxdev = 0;
+	memset(scon, 0, sizeof scon);
+	chk("gsx86 without a device exits", crun(path, "", 0, &nstep), B_EXIT);
+	ntest++;
+	if (strstr(scon, " Invalid Gios0000h (hex)\n\rGSX Removed\r\n") == 0
+	 || strncmp(scon, "GSX-86 ", 7) != 0)
+		fail("gsx86 without a device is GDOS's refusal", 1, 0);
+
+	i86gsxdev = gxdev;
+	memset(scon, 0, sizeof scon);
+	chk("gsx86 exits", crun(path, "", 0, &nstep), B_EXIT);
+	i86gsxdev = 0;
+	ntest++;
+	if (strstr(scon, "GX86 OK") == 0) {
+		printf("i86test: GX86 said: %s\n", scon);
+		fail("gsx86 drew the worked answers", 1, 0);
+	}
+}
+
 /* ==================================================================
  * THE DMA WINDOW A MULTI-SECTOR TRANSFER ACTUALLY USES.
  *
@@ -6105,6 +6152,11 @@ char **argv;
 		runx(argv[2], argc > 3 ? argv[3] : "");
 		return (0);
 	}
+	if (argc == 3 && strcmp(argv[1], "-g") == 0) {
+		t_gsx86(argv[2]);
+		printf("i86test: %d checks, %d failures\n", ntest, nfail);
+		return (nfail != 0);
+	}
 	if (argc > 2 && strcmp(argv[1], "-c") == 0) {
 		for (i = 2; i < argc; i++)
 			sweep(argv[i]);
@@ -6148,6 +6200,7 @@ char **argv;
 	t_stat(argv[1]);
 	t_help(argv[1]);
 	t_tod(argv[1]);
+	t_gsx86(argv[2]);
 	t_dmabound();
 	t_random();
 	t_dma13();

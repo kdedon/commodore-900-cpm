@@ -832,6 +832,26 @@ i16 par;
 	return (X_SEGESC);
 }
 
+/* i86addr() for a far pointer, resolved as a segment load would be. */
+char *i86far(m, par, off, len)
+struct i86 *m;
+i16 par, off;
+i32 len;
+{
+	char *b, *p;
+	i16 r, o;
+
+	r = m->sr[S_ES];
+	b = m->sb[S_ES];
+	o = m->so[S_ES];
+	p = setsr(m, S_ES, par) == X_OK ? i86addr(m, S_ES, off, len)
+	    : (char *)0;
+	m->sr[S_ES] = r;
+	m->sb[S_ES] = b;
+	m->so[S_ES] = o;
+	return (p);
+}
+
 /* ------------------------------------------------------------------ */
 /* interrupts the guest itself handles				       */
 

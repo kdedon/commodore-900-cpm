@@ -567,8 +567,9 @@ $(UZRUN): $(UOBJDIR)/zrunt.lout $(LOUT2CPM)
 I86OBJ	= $(UOBJDIR)/i86.o $(UOBJDIR)/i86deca.o $(UOBJDIR)/i86runa.o \
 	  $(UOBJDIR)/i86exec.o \
 	  $(UOBJDIR)/i86load.o $(UOBJDIR)/i86bdos.o $(UOBJDIR)/gdpb.o \
-	  $(UOBJDIR)/segclra.o
+	  $(UOBJDIR)/segclra.o $(UOBJDIR)/i86gsx.o
 $(I86OBJ): src/shim/i86.h src/shim/gdpb.h src/shim/conmode.h
+$(UOBJDIR)/i86gsx.o: src/lib/gsx.h src/lib/gfx.h
 
 $(UOBJDIR)/i86.lout: $(I86OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(I86OBJ) $(ULIB)

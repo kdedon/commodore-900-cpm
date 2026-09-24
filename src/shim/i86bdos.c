@@ -973,6 +973,11 @@ struct i86 *m;
 		m->r[R_BX] = m->r[R_AX];
 		return (B_RUN);
 	}
+	if (fn == 0x73) {
+		r = i86gsx(m);
+		breason = r == B_FN ? BR_FN : r == B_ADDR ? BR_ADDR : BR_NONE;
+		return (r);
+	}
 	if (fn > 52) {
 		/* 53-56 and 58 stay refused: sized allocation is quantised
 		 * to a whole 64 KB segment here and there is nothing

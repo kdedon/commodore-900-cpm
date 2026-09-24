@@ -362,6 +362,159 @@ def p_keyq():
     return bytes(img)
 
 
+GXPB = 0x200                            # GX86's parameter block
+GXMSG = 0x220
+GXREC = 0x280                           # its call records
+GXEXP = 0x900                           # the surface it expects
+GXSURF = 0x1000                         # where the test device draws
+GXW, GXH = 64, 32
+GXLIVE = 162                            # contrl 6, intin 10, ptsin 8,
+GXOFF = (0, 12, 32, 48, 138)            # intout 45, ptsout 12 words
+GXNONE = 0xEEEE                         # an output nobody wrote
+
+
+def gxtodev(x, y):
+    """Normalised coordinates that land mid-pixel on the 64 x 32 test
+    surface: GDOS takes (2v * pixels) >> 16."""
+    return [512 * x + 100, 1024 * y + 200]
+
+
+def gx32k(v, p):
+    """GDOS's TransformTo32K: (v:2p-1) / p, halved; pinned when the
+    divide would overflow."""
+    if v >= p:
+        return 32767
+    return ((v << 16) + 2 * p - 1) // p >> 1
+
+
+def gxrec(contrl, intin, ptsin, cout, intout=(), ptsout=()):
+    """One call: what the guest passes, then what it must read back."""
+    def words(ws, n, fill):
+        ws = list(ws) + [fill] * (n - len(ws))
+        return b''.join(w16(w & 0xffff) for w in ws)
+    live = (words(contrl, 6, 0) + words(intin, 10, 0) + words(ptsin, 8, 0)
+            + words((), 45, GXNONE) + words((), 12, GXNONE))
+    exp = (words(cout, 6, 0) + words(intin, 10, 0) + words(ptsin, 8, 0)
+           + words(intout, 45, GXNONE) + words(ptsout, 12, GXNONE))
+    assert len(live) == len(exp) == GXLIVE
+    return live + exp
+
+
+def gxsurface():
+    """The 64 x 32 x 1 surface after the calls, pixel by pixel; raster
+    row = 31 - device y, most significant bit leftmost."""
+    px = set()
+    for x in range(2, 21):              # polyline (2,28)-(20,28)
+        px.add((x, 3))
+    for r in range(3, 12):              # ... -(20,20)
+        px.add((20, r))
+    for r in range(19, 27):             # solid fill (30,5)..(40,12),
+        for x in range(30, 41):         # outline included
+            px.add((x, r))
+    tee = [0x7F, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x00]
+    for i, b in enumerate(tee):         # 'T' at (44,4): top row is
+        for c in range(8):              # 4 + 6 above the point
+            if b >> (7 - c) & 1:
+                px.add((44 + c, 21 + i))
+    s = bytearray(GXW // 8 * GXH)
+    for x, r in px:
+        s[r * GXW // 8 + x // 8] |= 0x80 >> (x % 8)
+    return bytes(s)
+
+
+def p_gsx86():
+    """GX86.CMD -- GSX-86 through INT 0E0h, CX = 0473h.
+
+    Five calls: Open Workstation, polyline, fill area, text, Close.  After
+    each it compares its arrays with the answers beside them, then the
+    test device's surface in its own segment with the drawing worked out
+    in gxsurface().  Prints GX86 OK, or GX86 FAIL n naming the call (6 is
+    the surface).  With no device, GDOS's own refusal ends it at once.
+    """
+    a = Asm(0x100)
+    a.b(0x8c, 0xd8)                     # mov ax,ds
+    a.b(0x8e, 0xc0)                     # mov es,ax
+    for k in range(5):
+        a.b(0xa3, *w16(GXPB + 4 * k + 2))   # mov [pb+4k+2],ax
+    a.b(0xbb, *w16(GXREC))              # mov bx,records
+    a.b(0xbd, 0x05, 0x00)               # mov bp,5
+    a.b(0xfc)                           # cld
+    a.label('call')
+    a.b(0x89, 0xd8)                     # mov ax,bx
+    a.b(0xa3, *w16(GXPB))               # mov [pb],ax
+    for k in range(1, 5):
+        a.b(0x05, *w16(GXOFF[k] - GXOFF[k - 1]))    # add ax,next
+        a.b(0xa3, *w16(GXPB + 4 * k))               # mov [pb+4k],ax
+    a.b(0xb9, 0x73, 0x04)               # mov cx,0473h
+    a.b(0xba, *w16(GXPB))               # mov dx,pb
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0x89, 0xde)                     # mov si,bx
+    a.b(0x8d, 0xbf, *w16(GXLIVE))       # lea di,[bx+live]
+    a.b(0xb9, *w16(GXLIVE))             # mov cx,live
+    a.b(0xf3, 0xa6)                     # repe cmpsb
+    a.rel8(0x75, 'fail')                # jne fail
+    a.b(0x81, 0xc3, *w16(2 * GXLIVE))   # add bx,record
+    a.b(0xfe, 0x06, *w16(GXMSG + 0x1c)) # inc byte [digit]
+    a.b(0x4d)                           # dec bp
+    a.rel8(0x75, 'call')                # jnz call
+    a.b(0xbe, *w16(GXSURF))             # mov si,surface
+    a.b(0xbf, *w16(GXEXP))              # mov di,expected
+    a.b(0xb9, *w16(GXW // 8 * GXH + 16))    # mov cx,surface+guard
+    a.b(0xf3, 0xa6)                     # repe cmpsb
+    a.rel8(0x75, 'fail')                # jne fail
+    a.b(0xba, *w16(GXMSG))              # mov dx,ok
+    a.rel8(0xeb, 'out')                 # jmp out
+    a.label('fail')
+    a.b(0xba, *w16(GXMSG + 0x10))       # mov dx,fail
+    a.label('out')
+    a.b(0xb1, 0x09)                     # mov cl,9
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    a.b(0xb1, 0x00, 0xb2, 0x00)         # mov cl,0 / mov dl,0
+    a.b(0xcd, 0xe0)                     # int 0xe0
+    code = a.code()
+    if len(code) > GXPB - 0x100:
+        raise ValueError("GX86.CMD: code overlaps its data")
+
+    # Open Workstation on 64 x 32 x 1: the device's extents, pixel size
+    # for a 256 x 192 mm picture, two colours; the rest is its table.
+    intout = [-1] * 45
+    intout[0:16] = [GXW - 1, GXH - 1, 1, 256000 // GXW, 192000 // GXH,
+                    8, 8, 1, 8, 1, 1, 8, 8, 2, 1, 1]
+    intout[25] = 3
+    intout[35:45] = [0, 1, 1, 0, 2, 0, 0, 0, 0, 0]
+    raw = [7, 7, 56, 56, 1, 0, 1, 0, 0, 7, 0, 7]
+    ptsout = [gx32k(v, GXH if i & 1 else GXW) for i, v in enumerate(raw)]
+    x = 0x7777                          # a count the driver must set
+    recs = [
+        gxrec([1, 0, x, 10, x, 0], [1] * 10, [],
+              [1, 0, 6, 10, 45, 0], intout, ptsout),
+        gxrec([6, 3, x, 0, x, 0], [],
+              gxtodev(2, 28) + gxtodev(20, 28) + gxtodev(20, 20),
+              [6, 3, 0, 0, 0, 0]),
+        gxrec([9, 4, x, 0, x, 0], [],
+              gxtodev(30, 5) + gxtodev(40, 5) + gxtodev(40, 12)
+              + gxtodev(30, 12),
+              [9, 4, 0, 0, 0, 0]),
+        gxrec([8, 1, x, 1, x, 0], [ord('T')], gxtodev(44, 4),
+              [8, 1, 0, 1, 0, 0]),
+        gxrec([2, 0, x, 0, x, 0], [], [], [2, 0, 0, 0, 0, 0]),
+    ]
+    img = bytearray(GXSURF + GXW // 8 * GXH + 16)
+    img[0x100:0x100 + len(code)] = code
+    img[GXMSG:GXMSG + 16] = b'\r\nGX86 OK$'.ljust(16, b'\0')
+    img[GXMSG + 0x10:GXMSG + 0x20] = b'\r\nGX86 FAIL 1$'.ljust(16, b'\0')
+    r = b''.join(recs)
+    if GXREC + len(r) > GXEXP:
+        raise ValueError("GX86.CMD: records overlap the surface answer")
+    img[GXREC:GXREC + len(r)] = r
+    # Open Workstation clears the 0x55 the surface starts as; the guard
+    # after it must survive.
+    img[GXEXP:GXEXP + GXW // 8 * GXH] = gxsurface()
+    img[GXEXP + GXW // 8 * GXH:GXEXP + GXW // 8 * GXH + 16] = b'\x55' * 16
+    img[GXSURF:] = b'\x55' * (GXW // 8 * GXH + 16)
+    return bytes(img)
+
+
 def p_multi():
     """I86MG.CMD -- the large model, and the only multi-group .CMD there is.
 
@@ -794,6 +947,9 @@ def main(argv):
 
     img = p_keyq()
     write(d, 'I86KEYQ.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
+
+    img = p_gsx86()
+    write(d, 'GX86.CMD', [(G_CODE, npar(img), 0, 512, 0)], [img])
 
     # ---- and the one fixture that is not a .CMD: GENCMD's input.
     hexf, msg = p_hex()

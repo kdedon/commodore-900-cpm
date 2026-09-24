@@ -272,6 +272,7 @@ extern int (*i86segput)();
  * check that stands between a guest offset near 0xFFFF and our BDOS
  * writing 128 bytes into the segment next door. */
 extern char *i86addr();
+extern char *i86far();		/* (m, par, off, len) a far pointer	*/
 
 /* Instructions executed, and lazy records actually materialised.  Their
  * ratio is the flag-read rate. */
@@ -305,6 +306,8 @@ extern int i86bdosfini();	/* put the console mode back		*/
 extern int i86oflush();		/* send collected fn 2 output as one fn 111 */
 extern char *i86berr();		/* one sentence about the last refusal	*/
 extern int i86bdosfn;		/* the function that asked, or -1	*/
+extern int i86gsx();		/* GSX-86, function 73h			*/
+extern int (*i86gsxdev)();	/* its device, or null for none		*/
 extern i32 i86nbdos;		/* calls serviced			*/
 extern i16 i86dmaoff, i86dmaseg;
 extern i16 i86ver;		/* what function 12 tells the guest	*/

@@ -409,7 +409,9 @@ splitcheck: build/splitchk
 # real DRI hex with real checksums around a hand-assembled 8086 program,
 # and I86T.A86, ASM86's.
 I86SRC = src/shim/i86dec.c src/shim/i86exec.c src/shim/i86load.c \
-	 src/shim/i86bdos.c src/shim/gdpb.c src/shim/segclr.c
+	 src/shim/i86bdos.c src/shim/gdpb.c src/shim/segclr.c \
+	 src/shim/i86gsx.c src/lib/gsx.c src/lib/gsxfont.c src/lib/gfx.c \
+	 src/lib/gfxm1.c src/lib/gfxc4.c src/lib/gfxb.c
 I86CORPUS = src/shim/tests/i86corpus
 I86FIX = build/cmdfix
 .PHONY: i86test
@@ -1656,6 +1658,39 @@ verify-i86keyq: all $(I86FIX)/MANIFEST
 		|| { echo "verify-i86keyq: FAIL -- the guest did not terminate cleanly"; exit 1; }
 	@echo "verify-i86keyq: PASS -- four keys typed at 200 characters of"
 	@echo "            guest output all reached function 50 CONIN, in order"
+
+# ---- GSX-86 calls from an 8086 guest ----
+# GX86.CMD (tools/mkcmdfix.py p_gsx86) opens a workstation, draws a
+# polyline, a fill and text, and closes it.  The host shim draws it on a
+# RAM surface and the guest checks every array and pixel; the machine's
+# shim has no device yet, so it must refuse as GDOS does.
+GX86DISK = build/gx86disk
+GX86CPMA = build/gx86-cpma.img
+GX86IMG	 = build/gx86test.bin
+GX86LOG	 = build/verify-gsx86.log
+.PHONY: verify-gsx86
+verify-gsx86: all build/i86test $(I86FIX)/MANIFEST
+	./build/i86test -g $(I86FIX)
+	@rm -rf $(GX86DISK)
+	@mkdir -p $(GX86DISK)
+	@cp $(DISKA)/* $(GX86DISK)/
+	cp $(I86FIX)/GX86.CMD $(GX86DISK)/
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(GX86CPMA) $(CPMA_BLOCKS) $(GX86DISK)
+	$(MKDISK) $(GX86IMG) $(CPMSYS) $(GX86CPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GX86IMG)) \
+		--input="$(OSSEL)$(SESS1)CPM86 GX86.CMD\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GX86LOG))
+	@$(EMUOK)
+	@grep -q 'GSX-86 [0-9A-F]\{4\}:[0-9A-F]\{4\} Invalid Gios0000h (hex)' $(GX86LOG) \
+		|| { echo "verify-gsx86: FAIL -- no GDOS refusal without a device"; exit 1; }
+	@grep -q 'GSX Removed' $(GX86LOG) \
+		|| { echo "verify-gsx86: FAIL -- the refusal did not unload GSX"; exit 1; }
+	@grep -q 'i86: the guest terminated' $(GX86LOG) \
+		|| { echo "verify-gsx86: FAIL -- the guest did not terminate cleanly"; exit 1; }
+	@echo "verify-gsx86: PASS -- the host draws the worked answers; the"
+	@echo "            machine, with no device, refuses as GDOS does"
 
 # CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
 # cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.
@@ -8534,8 +8569,8 @@ verify-shim: build/z80test-asan build/i86test-asan $(Z80CORPUS)/SOURCES \
 		|| { echo "verify-shim: FAIL -- the CP/M-80 suite did not run all 1022 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-z80.log`)."; \
 		     echo "             A smaller passing run is not a pass."; exit 1; }
-	@grep -q 'i86test: 1801 checks, 0 failures' build/verify-shim-i86.log \
-		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1801 of its"; \
+	@grep -q 'i86test: 1805 checks, 0 failures' build/verify-shim-i86.log \
+		|| { echo "verify-shim: FAIL -- the CP/M-86 suite did not run all 1805 of its"; \
 		     echo "             checks (`grep -o '[0-9]* checks, [0-9]* failures' build/verify-shim-i86.log`)."; exit 1; }
 	@# The two instruction-count triples verify-z80 and verify-i86 gate on
 	@# the TARGET are measured here on the HOST, and they are the reason
