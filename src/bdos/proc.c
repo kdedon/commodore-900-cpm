@@ -39,6 +39,7 @@ EXTERN	VOID	pghold();
 EXTERN	WORD	pgrelproc();	/* free THIS process's scratch segments	*/
 EXTERN	WORD	xvclr();	/* src/bios/bios900.c: forget a process's
 				   recorded trap vectors		*/
+EXTERN	WORD	gxend();	/* unbind the GSX workstation it opened	*/
 EXTERN	WORD	pgcur;		/* and the allocator's idea of which
 				   process that is.  It is `pcur', and
 				   the two are assigned together: see
@@ -909,6 +910,7 @@ GLOBAL WORD procdead()
 					   jump into it.  Its row alone --
 					   another console's debugger keeps
 					   its own (bios900.c xvec)	*/
+	gxend(pcur);
 	pmrtrel();			/* the debugger's segment, if this
 					   program ever asked for one.  Above
 					   the session test below on purpose:
@@ -1065,6 +1067,8 @@ REG WORD con;
 {
 	REG WORD n, j;
 
+	if (con == 0)
+		gxend(pcur);	/* the screen goes with console 0 */
 	j = pcur;
 	for (n = 0; n < PNPROC; n++) {
 		if (++j >= PNPROC)

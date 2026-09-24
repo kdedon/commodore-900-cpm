@@ -102,7 +102,7 @@ char *argv[];
 
 	/* ---- the default arm ----
 	   51-97 and 113-127 -> 00FFh; 128 and up -> 0.  Pick numbers
-	   this BDOS does not otherwise implement (55/90, 115/120,
+	   this BDOS does not otherwise implement (55/90, 116/120,
 	   146/200) so the probe lands in the default arm and not on a
 	   real function.
 
@@ -112,7 +112,7 @@ char *argv[];
 	   does not implement, so nothing is behind it.  */
 	check("fn 55  (51-97 gap)", __bdos(55, 0L), 0x00ff);
 	check("fn 90  (51-97 gap)", __bdos(90, 0L), 0x00ff);
-	check("fn 115 (113-127 gap)", __bdos(115, 0L), 0x00ff);
+	check("fn 116 (113-127 gap)", __bdos(116, 0L), 0x00ff);
 	check("fn 120 (113-127 gap)", __bdos(120, 0L), 0x00ff);
 	check("fn 146 (>=128, XDOS/MP/M)", __bdos(146, 0L), 0);
 	check("fn 200 (>=128, XDOS/MP/M)", __bdos(200, 0L), 0);

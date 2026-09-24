@@ -587,6 +587,11 @@ $(UOBJDIR)/gx86.lout: $(GX86OBJ) $(UOBJDIR)/crt0.o $(ULIB)
 $(UGX86): $(UOBJDIR)/gx86.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/gdost.o: src/lib/gfx.h
+
+$(UGDOS): $(UOBJDIR)/gdost.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/i86decc.o: src/shim/i86dec.c src/shim/i86.h $(TCSTAMP) | $(UOBJDIR)
 	$(CC0) $(VAR) $< $(UOBJDIR)/i86decc.z0 -Isrc/shim -Isrc/lib \
 		-Di86dec=i86decc >> $(LOG) 2>&1

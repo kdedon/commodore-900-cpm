@@ -78,6 +78,12 @@ char *p;
 	__bdos(BDOS_SETDMA, (long) p);
 }
 
+int gdos(pb)
+struct gdospb *pb;
+{
+	return (__bdos(BDOS_GSX, (long) pb));
+}
+
 /*
  * Parse "NAME", "NAME.EXT" or "D:NAME.EXT" (already uppercased by the
  * CCP) into a fresh FCB.

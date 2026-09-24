@@ -786,6 +786,9 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 112: prt_blk(infop, func == 111);/* print block to list	*/
 		    break;
 
+		  /* GSX: the caller's block is the module's, uncopied. */
+	  case 115: return((UWORD)bios(34, 0L, infop));
+
 		  /* Function 144 takes a 165-byte {FCB, tail length, tail} request.
  * Function 145 reports the number of live processes. */
 	  case 144: return(pcreate(infop));	/* create process	*/

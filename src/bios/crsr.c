@@ -115,6 +115,8 @@ extern tkinit(), tkput(), tkclear();
 /* HR character cells, drawn by the graphics module */
 extern hcinit(), hcram(), hcpark(), hcput(), hcblank(), hcscroll(), hcdelch();
 extern gxcall();
+extern int pgcur, concur;
+extern int pconown();
 static int hrow, hcol;			/* HR cursor			*/
 
 #ifndef CRSHOST
@@ -1014,13 +1016,15 @@ register char *p;
 	}
 }
 
-/* One GSX call on surface s, or on the HR screen; -1 when there is none. */
+/*
+ * One GSX call from the running process, on surface s or the HR screen.
+ * The screen is console 0's, so only its owner, there, may open GSX.
+ */
 crsgsx(s, pb)
 char *s, *pb;
 {
-	if (s == 0 && ckind != CK_HR)
-		return (-1);
-	return (gxcall(s, pb));
+	return (gxcall(s, pb, ckind == CK_HR, pgcur,
+	    concur == 0 && pconown(0) == pgcur));
 }
 
 /*

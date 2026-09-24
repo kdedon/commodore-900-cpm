@@ -150,6 +150,8 @@ UGSX	= $(UOBJDIR)/GSXT.Z8K
 UTEKT	= $(UOBJDIR)/TEKT.Z8K
 # CPM86 drawing GSX-86 in the guest's memory through the module (verify-gsx86).
 UGX86	= $(UOBJDIR)/CPM86G.Z8K
+# GSX through BDOS 115 on a surface of its own (verify-gdos).
+UGDOS	= $(UOBJDIR)/GDOST.Z8K
 # The HR console on split surfaces against worked answers (verify-hrcon).
 UHRCON	= $(UOBJDIR)/HRCONT.Z8K
 # The two 8080/Z80 run loops compared on the machine (verify-zrun).
@@ -287,7 +289,7 @@ split_EXP = spemu_ spscan_ sptop_ spusp_ spufp_
 gfx_SEG   = 0x38
 gfx_SRC   = crstek crshr crsgsx tek gfx gfxm1 gfxc4 gfxa hrfont gsx gsxfont
 gfx_EXP   = tkinit_ tkput_ tkclear_ hcinit_ hcram_ hcpark_ hcput_ \
-	    hcblank_ hcscroll_ hcdelch_ gxcall_
+	    hcblank_ hcscroll_ hcdelch_ gxcall_ gxend_
 rtc_SEG   = 0x39
 rtc_SRC   = rtc900 modio
 rtc_EXP   = rtcinit_ rtctime_

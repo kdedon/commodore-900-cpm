@@ -1697,6 +1697,45 @@ verify-gsx86: all build/i86test $(I86FIX)/MANIFEST $(UGX86)
 	@echo "verify-gsx86: PASS -- the host and the graphics module draw the"
 	@echo "            worked answers; with no screen, CPM86 refuses as GDOS does"
 
+# ---- GSX from native programs, BDOS 115 ----
+# GDOST's Open through BDOS 115 must be refused with no HR screen.  BIOS
+# function 34 then opens a surface in its own memory, BDOS 115 draws on
+# it and closes it, and GDOST checks every pixel against worked answers.
+# Detaching console 0 must unbind it, and GDOST Z, selecting console 0
+# without owning it, must be refused Open.
+# GDOST Y, a second process started while GDOST holds the workstation,
+# must be refused it.  GDOST exits with it open; GDOST X, loaded at the
+# same address, must find it unbound and its memory untouched.
+GDOSDISK = build/gdosdisk
+GDOSCPMA = build/gdos-cpma.img
+GDOSIMG	 = build/gdostest.bin
+GDOSLOG	 = build/verify-gdos.log
+.PHONY: verify-gdos
+verify-gdos: all $(UGDOS)
+	@rm -rf $(GDOSDISK)
+	@mkdir -p $(GDOSDISK)
+	@cp $(DISKA)/* $(GDOSDISK)/
+	cp $(UGDOS) $(GDOSDISK)/GDOST.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(GDOSCPMA) $(CPMA_BLOCKS) $(GDOSDISK)
+	$(MKDISK) $(GDOSIMG) $(CPMSYS) $(GDOSCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GDOSIMG)) \
+		--input="$(OSSEL)GDOST\rGDOST X\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GDOSLOG))
+	@$(EMUOK)
+	@grep -q 'GDOST OK' $(GDOSLOG) \
+		|| { echo "verify-gdos: FAIL -- GDOST did not draw the worked answers"; exit 1; }
+	@grep -q 'GDOST Y OK' $(GDOSLOG) \
+		|| { echo "verify-gdos: FAIL -- a second process reached the workstation"; exit 1; }
+	@grep -q 'GDOST Z OK' $(GDOSLOG) \
+		|| { echo "verify-gdos: FAIL -- a process not owning console 0 opened GSX"; exit 1; }
+	@grep -q 'GDOST X OK' $(GDOSLOG) \
+		|| { echo "verify-gdos: FAIL -- a dead program's surface stayed bound"; exit 1; }
+	@echo "verify-gdos: PASS -- BDOS 115 refuses Open with no screen, draws the"
+	@echo "            worked answers, refuses a second process, and forgets a"
+	@echo "            surface when its program ends"
+
 # CP/M 3 directory format (BDOS, mkcpmfs.py) must stay byte-compatible with
 # cpmtools, a third-party reader/writer of it, driven by tests/cpmtools/diskdefs.
 # Empty (not on $PATH) leaves each recipe to refuse by name.

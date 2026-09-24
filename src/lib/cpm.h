@@ -51,6 +51,22 @@
 #define	BDOS_PRTBLK	111	/* print block to console		*/
 #define	BDOS_LSTBLK	112	/* print block to list device		*/
 
+/*
+ * GSX(pb) on the HR screen: gsx.h's struct gsxpb, five XADDRs in GSX's
+ * order.  Answers gsx()'s result, or -1 when the caller's console is
+ * not the HR screen or another process has the workstation open.  Only
+ * console 0 may open one on any surface.
+ */
+#define	BDOS_GSX	115
+
+struct gdospb {
+	int	*contrl;
+	int	*intin;
+	int	*ptsin;
+	int	*intout;
+	int	*ptsout;
+};
+
 /* CP/M 3 date and time stamping */
 #define	BDOS_SETLABEL	100	/* set directory label(fcb)		*/
 #define	BDOS_GETLABEL	101	/* return dir label data(drive) -> mode	*/
@@ -122,7 +138,7 @@ struct biospb {
 /*
  * GSX, BIOS function 34, on bioscl()'s list: P2 is a struct gsxpb for
  * the graphics module, P1 the gfx surface to draw on, or 0 for the HR
- * screen.  Answers gsx()'s result, or -1 when there is no screen.
+ * screen.  Answers as BDOS function 115 does.
  */
 #define	BIOS_GSX	34
 
@@ -207,3 +223,4 @@ extern VOID	printstr();
 extern VOID	putdec();
 extern VOID	setdma();
 extern VOID	mkfcb();
+extern int	gdos();		/* (pb) BDOS function 115		*/
