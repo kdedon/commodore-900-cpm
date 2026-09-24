@@ -71,7 +71,7 @@
  * 0x28..0x2E is free: the ROM identity-maps all 64 descriptors at reset
  * and thereafter only ever addresses segments 0,
  * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32..0x36, 0x3F and the
- * module segments (0x37, 0x38), and nothing in the tree names a segment between 0x02 and
+ * module segments (0x37..0x39, 0x3C), and nothing in the tree names a segment between 0x02 and
  * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
  *
  * AS MANY SLOTS AS RAM CAN BACK.  pginit() used to stop at seven whatever

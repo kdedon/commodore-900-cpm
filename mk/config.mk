@@ -280,7 +280,7 @@ SRCOBJ = $(OBJDIR)/crt.o \
 # is a name, a segment, its objects and the symbols cpm.sys may call or
 # name in it.  It resolves only among its own objects; to reach cpm.sys it
 # must be handed a pointer at run time.
-MODULES   = split gfx
+MODULES   = split gfx rtc parse
 split_SEG = 0x37
 split_SRC = splitscan splitsc zsplit
 split_EXP = spemu_ spscan_ sptop_ spusp_ spufp_
@@ -288,6 +288,12 @@ gfx_SEG   = 0x38
 gfx_SRC   = crstek crshr crsgsx tek gfx gfxm1 gfxc4 gfxa hrfont gsx gsxfont
 gfx_EXP   = tkinit_ tkput_ tkclear_ hcinit_ hcram_ hcpark_ hcput_ \
 	    hcblank_ hcscroll_ hcdelch_ gxcall_
+rtc_SEG   = 0x39
+rtc_SRC   = rtc900 modio
+rtc_EXP   = rtcinit_ rtctime_
+parse_SEG = 0x3c
+parse_SRC = parsefn pfio modio
+parse_EXP = parsefn_
 MODOBJ = $(foreach m,$(MODULES),$(patsubst %,$(OBJDIR)/%.o,$($(m)_SRC))) \
 	 $(OBJDIR)/modss.o
 
