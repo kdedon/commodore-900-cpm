@@ -881,6 +881,39 @@ verify-zdec: all $(UZDEC)
 	@echo "             opcode, operand pattern and program counter swept"
 
 
+# ---- the drawing library draws what its model says ----
+# GFXT draws into 1 and 4 bpp surfaces split across two buffers, most
+# splits inside a raster, and compares every byte with what it packed
+# from a pixel-per-byte model of the same operations.  Then the two HR
+# geometries across a real 64 KB segment boundary.
+GFXDISK	 = build/gfxdisk
+GFXCPMA	 = build/gfx-cpma.img
+GFXIMG	 = build/gfxtest.bin
+GFXLOG	 = build/verify-gfx.log
+.PHONY: verify-gfx
+verify-gfx: all $(UGFX)
+	@rm -rf $(GFXDISK)
+	@mkdir -p $(GFXDISK)
+	@cp $(DISKA)/* $(GFXDISK)/
+	cp $(UGFX) $(GFXDISK)/GFXT.Z8K
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(GFXCPMA) $(CPMA_BLOCKS) $(GFXDISK)
+	$(MKDISK) $(GFXIMG) $(CPMSYS) $(GFXCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GFXIMG)) \
+		--input="$(OSSEL)GFXT\r$(ENDIN)" \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(GFXLOG))
+	@$(EMUOK)
+	@grep -q 'GFXT: start' $(GFXLOG) \
+		|| { echo "verify-gfx: FAIL -- GFXT did not run at all"; exit 1; }
+	@grep -q 'GFXT: FAIL' $(GFXLOG) \
+		&& { echo "verify-gfx: FAIL -- the line above names the check,"; \
+		     echo "            the split and the byte."; exit 1; } || true
+	@grep -q 'GFXT: ok' $(GFXLOG) \
+		|| { echo "verify-gfx: FAIL -- GFXT did not finish"; exit 1; }
+	@echo "verify-gfx: PASS -- every byte drawn at every split matches the model"
+
+
 # ---- the two 8080/Z80 run loops must do the same thing ----
 # The machine runs src/shim/z80runa.s, which executes the frequent classes
 # in assembly; z80run.c over z80exec.c stays the reference.  ZRUNT links

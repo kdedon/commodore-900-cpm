@@ -438,6 +438,17 @@ $(UOBJDIR)/zdect.lout: $(ZDECOBJ) $(UOBJDIR)/crt0.o $(ULIB)
 $(UZDEC): $(UOBJDIR)/zdect.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+# The drawing library, linked by programs that draw rather than by ULIB.
+GFXOBJ	= $(UOBJDIR)/gfx.o $(UOBJDIR)/gfxm1.o $(UOBJDIR)/gfxc4.o
+$(GFXOBJ) $(UOBJDIR)/gfxt.o: src/lib/gfx.h
+
+$(UOBJDIR)/gfxt.lout: $(UOBJDIR)/gfxt.o $(GFXOBJ) $(UOBJDIR)/crt0.o $(ULIB)
+	$(LD) -e start -R $(UBASE) -o $@ $(UOBJDIR)/crt0.o $(UOBJDIR)/gfxt.o \
+		$(GFXOBJ) $(ULIB)
+
+$(UGFX): $(UOBJDIR)/gfxt.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 # ZRUNT links both run loops: the C executor and run loop are compiled a
 # second time, renamed, over the C decoder.
 ZRUNREN	= -Dz80step=cz80step -Dz80exec=cz80exec -Dz80run=cz80run \
