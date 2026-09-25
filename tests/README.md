@@ -16,7 +16,7 @@ says what makes running several at once safe. The two mutation gates,
 and rebuild from the wreckage, so the runner first copies the working tree
 into `build/mut/<target>/` and runs each of them there — they are then
 ordinary parallel jobs like everything else. It skips `verify-zcc`, which rebuilds the
-`src/app` programs on the machine with DRI's `ZCC` and takes twenty
+`src/app` programs on the machine with DRI's `ZCC` and takes about twelve
 minutes on its own; run that one by name before a release.
 
 ## The three kinds

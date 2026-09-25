@@ -23,7 +23,7 @@ help:
 	  '                     VERIFYJOBS at a time (default 4, 1 = one by one);' \
 	  '                     VERIFYSET="verify-a verify-b" runs just those' \
 	  'make verify-zcc      rebuild src/app on the machine with DRI ZCC and' \
-	  '                     run those binaries; 20 minutes, not in verify-all' \
+	  '                     run those binaries; 12 minutes, not in verify-all' \
 	  'make cpmlocal        LOCALDIR=<dir> LOCALOUT=<path outside the checkout>:' \
 	  '                     a boot medium with extra files you supply' \
 	  'make deps            fetch inputs listed in DEPS' \

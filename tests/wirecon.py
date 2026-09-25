@@ -81,6 +81,13 @@ def main():
                          'rather than at whatever happens to be reading.')
     ap.add_argument('--send', action='append', default=[],
                     help='typed at console 1; repeatable')
+    ap.add_argument('--type', action='append', dest='send',
+                    type=lambda s: ('type', s),
+                    help='a --send typed a byte at a time, each once the '
+                         'guest has echoed the one before, so no two are '
+                         'ever in flight.  How a command survives '
+                         '--rx-overrun on a loaded host, where a fixed '
+                         '--send-delay does not.')
     ap.add_argument('--send-after', action='append', default=[],
                     help='...once this text has been printed on console 1')
     ap.add_argument('--send-delay', type=float, default=0.0,
@@ -130,8 +137,15 @@ def main():
     step = 0
     if len(a.send_after) < len(a.send):
         a.send_after += [''] * (len(a.send) - len(a.send_after))
-    script = [(unescape(w).encode('latin-1'), unescape(s).encode('latin-1'))
-              for w, s in zip(a.send_after, a.send)]
+    script = []
+    for w, s in zip(a.send_after, a.send):
+        w = unescape(w).encode('latin-1')
+        if isinstance(s, tuple):
+            for b in unescape(s[1]).encode('latin-1'):
+                script.append((w, bytes([b])))
+                w = bytes([b])
+        else:
+            script.append((w, unescape(s).encode('latin-1')))
     seen = 0             # how much of the wire the current step may match in
     try:
         conn, _ = srv.accept()

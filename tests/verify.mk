@@ -4,7 +4,7 @@
 # Emulator verification harness; paths are relative to the repository root.
 # make verify-<name> runs one check; make verify-all runs the suite.
 # make verify-zcc rebuilds the src/app programs on the machine with DRI's
-# ZCC and runs those; it is opt-in and not in verify-all, being 20 minutes.
+# ZCC and runs those; it is opt-in and not in verify-all, being 12 minutes.
 # verify-util asserts the development disk contents; verify-setb copies them.
 
 # Runtime tests consume built emulator and kboot artifacts resolved by tools/deps.sh.
@@ -2333,7 +2333,7 @@ verify-sdb: all
 # intermittently, which is the worst way for a verification target to be
 # wrong.  The read-back and the assertions stay here.
 #
-# SDB alone is fourteen compiles and a link.  That is most of twenty
+# SDB alone is fourteen compiles and a link.  That is most of twelve
 # minutes, which is why this target is NOT in verify-all -- the
 # enumeration there skips it by name -- and is run deliberately:
 #
@@ -5104,8 +5104,8 @@ GCSYS	= build/gencpm-cpm.sys
 GCDAT	= build/gencpm-test.dat
 GCBAD	= build/gencpm-bad.dat
 GCBADSYS = build/gencpm-bad.sys
-GCIMG	= build/gencpm.bin
-GCLOG	= build/verify-gencpm.log
+GCPMIMG	= build/gencpm.bin
+GCPMLOG	= build/verify-gencpm.log
 # CPM3FN prints the serial; it lives on A:, and the prompt under test is B:.
 # STAT lays its columns out from the console width it reads back (SCB 1ah),
 # so a narrow console drops the header to `Attrib' where 80 says `Attributes'.
@@ -5142,16 +5142,16 @@ verify-gencpm: all $(CPMAIMG) $(CPMBIMG)
 	@printf 'serial = ZZZZZZ\ndefault_drive = B\nhash_a = on\nhash_b = on\ncon_width = 40\ncon_page = 0\n' \
 		> $(GCDAT)
 	python3 tools/gencpm.py $(GCDAT) $(GCSYS)
-	$(MKDISK) $(GCIMG) $(GCSYS) $(CPMAIMG) $(CPMBIMG)
-	{ $(EMUCD) && ./c900 --disk=$(abspath $(GCIMG)) \
+	$(MKDISK) $(GCPMIMG) $(GCSYS) $(CPMAIMG) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(GCPMIMG)) \
 		--input="$(GCIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
-		| tee $(abspath $(GCLOG))
+		| tee $(abspath $(GCPMLOG))
 	@$(EMUOK)
-	@grep -q 'serial  -> ZZZZZZ' $(GCLOG) \
+	@grep -q 'serial  -> ZZZZZZ' $(GCPMLOG) \
 		|| { echo "verify-gencpm: FAIL -- fn 107 did not return the configured serial"; exit 1; }
-	@grep -q 'B>A:' $(GCLOG) \
+	@grep -q 'B>A:' $(GCPMLOG) \
 		|| { echo "verify-gencpm: FAIL -- the CCP did not come up on the configured drive"; exit 1; }
-	@grep -q 'FCBs Attrib   Name' $(GCLOG) \
+	@grep -q 'FCBs Attrib   Name' $(GCPMLOG) \
 		|| { echo "verify-gencpm: FAIL -- STAT laid out for a wide console, so the configured width never reached the SCB"; exit 1; }
 	cp $(CPMSYS) $(GCPSYS)
 	@printf 'serial = C90001\ndefault_drive = A\nhash_a = on\nhash_b = on\ncon_width = 80\ncon_page = 3\n' \
@@ -6457,6 +6457,9 @@ verify-conn: all $(CPMAXDOS)
 # so an unpaced burst would measure the emulator's write granularity and not
 # the driver.  2 ms a byte is a wire, and it is still far shorter than the
 # program's busy period, which is what makes the polled phase lose.
+# The commands are typed with --type instead: on a loaded host the emulator
+# can be descheduled for longer than 2 ms, two bytes land at once, and the
+# overrun eats one of them before RXOV has even started.
 RXOVIMG	= build/rxovtest.bin
 RXOVC0	= build/verify-rxov-c0.log
 RXOVC1	= build/verify-rxov-c1.log
@@ -6467,8 +6470,8 @@ verify-rxov: all $(CPMAXDOS)
 	python3 tests/wirecon.py --emu '$(EMU)' --disk $(RXOVIMG) \
 		--input='$(SESS1)RXOV\r' --max=$(EMUMAX) --stop-on=idle \
 		--rx-overrun --send-delay=0.002 \
-		--send-after='RXOV: on 1' --send='USER 0\r' \
-		--send-after='A>' --send='CATT D\r' \
+		--send-after='RXOV: on 1' --type='USER 0\r' \
+		--send-after='A>' --type='CATT D\r' \
 		--send-after='RXOV: burst 1' --send='$(RXOVBURST)' \
 		--send-after='RXOV: burst 2' --send='$(RXOVBURST)' \
 		--log $(RXOVC0) --wire-log $(RXOVC1)
@@ -6674,7 +6677,7 @@ verify-xdospoll5: all $(CPMAXDOSPOL)
 # without registering it here -- and the pattern keeps hyphens
 # (verify-hash-ab, verify-rtc-host).
 # verify-zcc is skipped by name: it rebuilds src/app on the machine with
-# DRI's ZCC, which is twenty minutes on its own.  `make verify-zcc' runs it.
+# DRI's ZCC, which is twelve minutes on its own.  `make verify-zcc' runs it.
 # A test target, reached from nothing: `all' never runs an emulator.
 #
 # tests/verifyrun.sh is what makes running several at once safe; its header
@@ -9205,7 +9208,7 @@ verify-local: all
 # target list is: a target added above is prepared without being registered
 # here.  The first sed joins continued prerequisite lines; the $(eval)
 # expands the variable names the list is written in.  verify-zcc is left out
-# for the reason verify-all leaves it out: its inputs are the twenty-minute
+# for the reason verify-all leaves it out: its inputs are the twelve-minute
 # ZCC rebuild, and `make verify-zcc' is where that belongs.  The name has no
 # hyphen after `verify', so verify-all's enumeration does not take it for a
 # test.
