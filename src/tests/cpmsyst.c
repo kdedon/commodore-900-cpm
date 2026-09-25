@@ -11,6 +11,9 @@
  *   CPMSYST ODD n FILE		write n pattern bytes to FILE as a binary
  *				file, reopen it, and print where lseek to
  *				the end lands and how many bytes read gives
+ *   CPMSYST APPEND T B		write `old' to text files T and B, then
+ *				append `new' to T with fopen and `bin' to
+ *				B with fopenb
  */
 
 #include <stdio.h>
@@ -53,6 +56,25 @@ char *argv[];
 		printf("ODD %s lseek %ld read %ld\n", argv[3], end, got);
 		exit(0);
 	}
-	fprintf(stderr, "Usage: CPMSYST ARGS arg... | ODD n file\n");
+	if (argc == 4 && strcmp(argv[1], "APPEND") == 0) {
+		for (i = 2; i < 4; i++) {
+			if ((fp = fopen(argv[i], "w")) == NULL) {
+				perror(argv[i]);
+				exit(1);
+			}
+			fputs("old\n", fp);
+			fclose(fp);
+		}
+		if ((fp = fopen(argv[2], "a")) == NULL
+		 || (fputs("new\n", fp), fclose(fp)) != 0
+		 || (fp = fopenb(argv[3], "a")) == NULL
+		 || (fputs("bin", fp), fclose(fp)) != 0) {
+			perror("APPEND");
+			exit(1);
+		}
+		printf("APPEND done\n");
+		exit(0);
+	}
+	fprintf(stderr, "Usage: CPMSYST ARGS arg... | ODD n file | APPEND t b\n");
 	exit(1);
 }

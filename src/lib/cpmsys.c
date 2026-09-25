@@ -448,6 +448,21 @@ int n;
 	return (n);
 }
 
+/* The end of a text file: the first ^Z in its last record, if any. */
+static long textend(f)
+register struct fd *f;
+{
+	register int	i;
+	long		end;
+
+	end = f->nrec << 7;
+	if (f->nrec > 0 && load(f, f->nrec - 1) > 0)
+		for (i = 0; i < SECLEN; i++)
+			if (f->rec[i] == CTLZ)
+				return (end - SECLEN + i);
+	return (end);
+}
+
 long lseek(fd, off, whence)
 int fd;
 long off;
@@ -466,7 +481,7 @@ int whence;
 	else if (whence == 2) {
 		if (flush(f) < 0)
 			return (-1L);
-		off += f->text ? f->nrec << 7 : f->size;
+		off += f->text ? textend(f) : f->size;
 	} else if (whence != 0) {
 		errno = EINVAL;
 		return (-1L);
@@ -642,19 +657,9 @@ static int append(fd, name)
 int fd;
 char *name;
 {
-	register struct fd *f;
-	register int	i;
-
 	if (fdopen1(fd, name, 1, 0) < 0)
 		return (fdopen1(fd, name, 1, 1));
-	f = &fds[fd];
-	f->pos = f->nrec << 7;
-	if (f->nrec > 0 && load(f, f->nrec - 1) > 0)
-		for (i = 0; i < SECLEN; i++)
-			if (f->rec[i] == CTLZ) {
-				f->pos -= SECLEN - i;
-				break;
-			}
+	fds[fd].pos = textend(&fds[fd]);
 	return (fd);
 }
 

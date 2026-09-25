@@ -3449,6 +3449,34 @@ verify-ranext: all
 	@echo "verify-ranext: PASS -- a random write after error 4 made its own extent,"
 	@echo "               and an open on extent N started at record N*128"
 
+# ---- fopen "a" on a ^Z-padded text file ----
+# CPMSYST APPEND writes `old' to two text files, so each is one record of
+# text and ^Z padding, then appends `new' to the first with fopen "a" and
+# `bin' to the second with fopenb "a".  Text append must go on from the
+# first ^Z; binary append must keep the padding and go on after it.
+FAPPIMG	= build/fappend.bin
+FAPPLOG	= build/verify-fappend.log
+.PHONY: verify-fappend
+verify-fappend: all
+	$(MKDISK) $(FAPPIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(FAPPIMG)) \
+		--input="$(OSSEL)CPMSYST APPEND APT.TXT APB.TXT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(FAPPLOG))
+	@$(EMUOK)
+	@grep -q 'APPEND done' $(FAPPLOG) \
+		|| { echo "verify-fappend: FAIL -- CPMSYST APPEND did not finish"; exit 1; }
+	dd if=$(FAPPIMG) of=build/fappend-cpma.img bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	rm -rf build/fappend-fs
+	python3 tools/mkcpmfs.py --extract build/fappend-cpma.img build/fappend-fs
+	@python3 -c 'import sys; sys.exit(open(sys.argv[1], "rb").read()[:11] != b"old\r\nnew\r\n\x1a")' \
+		build/fappend-fs/APT.TXT \
+		|| { echo "verify-fappend: FAIL -- fopen \"a\" did not append at the ^Z"; exit 1; }
+	@python3 -c 'import sys; sys.exit(open(sys.argv[1], "rb").read()[:131] != b"old\r\n" + b"\x1a" * 123 + b"bin")' \
+		build/fappend-fs/APB.TXT \
+		|| { echo "verify-fappend: FAIL -- fopenb \"a\" did not append after the padding"; exit 1; }
+	@echo "verify-fappend: PASS -- fopen \"a\" appended at the ^Z, fopenb \"a\" after it"
+
 # ---- the six refusals: check$wild and file$exists ----
 # CP/M 3 refuses an ambiguous FCB on the four functions that name ONE
 # file -- open (ref/cpm3/bdos30.asm:3924), make (:4241), rename, both
