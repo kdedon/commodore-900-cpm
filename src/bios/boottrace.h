@@ -7,7 +7,7 @@
  *
  * The cold path from crt.s to the BDOS sign-on banner has no output of
  * its own between "CP/M-8000(tm) for the Commodore 900" (cmain.c) and
- * prt_line(SYS_BANNER) (bdosmisc.c).  A machine that stops in that window
+ * prt_line(SYS_BANNER) (bdosboot.c).  A machine that stops in that window
  * says nothing about where.  BTRACE() emits one short marker per step so
  * a single boot names the last step reached.
  *

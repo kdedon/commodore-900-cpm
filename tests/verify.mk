@@ -3519,7 +3519,7 @@ verify-wild: all
 	@echo "verify-wild: PASS -- six refusals made, and the unambiguous cases still work"
 
 # ---- the sign-on prints once per cold boot ----
-# bdosinit() (src/bdos/bdosmisc.c) prints the identification, and ccpif.s's
+# bdosinit() (src/bdos/bdosboot.c) prints the identification, and ccpif.s's
 # `tsetb sysinit; jr mi, ccploop' latch (c900oses/cpm8000/ref/may83/ccp/ccpif.z8k:88-91)
 # runs bdosinit() on the cold start only.  BIOS function 1 re-enters the
 # CCP through ccpentry_ without reloading cpm.sys, so every warm boot
@@ -3557,10 +3557,10 @@ verify-signon: all
 		|| { echo "verify-signon: FAIL -- STAT did not run, or printed no row for HELLO.TXT"; exit 1; }
 	@grep -q 'BEEP' $(SIGNLOG) \
 		|| { echo "verify-signon: FAIL -- BEEP did not run"; exit 1; }
-	@python3 tests/signoncount.py src/bdos/bdosmisc.c $(OBJDIR)/cpmver.h $(SIGNLOG) $(SIGNWARMBOOTS) \
+	@python3 tests/signoncount.py src/bdos/bdosboot.c $(OBJDIR)/cpmver.h $(SIGNLOG) $(SIGNWARMBOOTS) \
 		|| { echo "verify-signon: FAIL -- see the counts above"; exit 1; }
 	@echo "verify-signon: PASS -- one sign-on, $(SIGNWARMBOOTS) warm boots"
-# ---- the cold-start system identification (src/bdos/bdosmisc.c bdosinit) ----
+# ---- the cold-start system identification (src/bdos/bdosboot.c bdosinit) ----
 # One cold boot, and the three lines the system introduces itself with are
 # checked against the values THIS build was told to use -- not against
 # whatever the image happens to say, which would pass for any string.
@@ -3587,7 +3587,7 @@ verify-banner: all
 # reaches the running system, not a host-side string.
 #
 # The suite runs this in a tree of its own, a plain copy of the working
-# tree made by tests/verifyrun.sh: it edits src/bdos/bdosmisc.c and
+# tree made by tests/verifyrun.sh: it edits src/bdos/bdosboot.c and
 # rebuilds, so neither src/ nor build/ can be shared with anybody.
 verify-banner-mutants:
 	EMU='$(EMU)' KBOOT='$(KBOOT)' CPMSYS='$(CPMSYS)' \
@@ -4196,7 +4196,7 @@ verify: all
 	@$(EMUOK)
 	@sh tests/bannerchk.sh build/verify.log '$(CPMVER)' '$(CPMDATE)' \
 		'$(COPYYEAR)' || { echo "verify: FAIL -- the sign-on"; exit 1; }
-	@python3 tests/signoncount.py src/bdos/bdosmisc.c $(OBJDIR)/cpmver.h \
+	@python3 tests/signoncount.py src/bdos/bdosboot.c $(OBJDIR)/cpmver.h \
 		build/verify.log $(VERIFYWARMBOOTS) \
 		|| { echo "verify: FAIL -- see the counts above"; exit 1; }
 	@sh tests/verifychk.sh verify build/verify.log \
@@ -7726,7 +7726,7 @@ verify-ddtbrk: all $(CPMADDT)
 # other process that asks for it WAITS.  That is MP/M's Attach Console and
 # Detach Console, XDOS 146 and 147 (src/bdos/xdos.c); the rule itself is
 # src/bdos/proc.c pconatt().  With an owner named, the second session
-# starts at the COLD BOOT -- proc.c pcoldses(), called from bdosmisc.c
+# starts at the COLD BOOT -- pcoldses(), called from bdosboot.c
 # bdosinit() -- which is the thing C5 built, measured and withdrew.
 # SINCE D8 A SERIAL BOOT STARTS NONE (only a video console gets one, on
 # SCC-B), so c10wait, c10brk and c10two type SESSION 1 first.

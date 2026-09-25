@@ -2952,7 +2952,7 @@ static int smultio(int fn, char *addr)
 }
 
 /*
- * Drive A: as src/bios/bios900.c drvinit() builds it for the 10 MB
+ * Drive A: as src/bios/boot900.c drvinit() builds it for the 10 MB
  * partition: BLS 4096 (bsh 5, blm 31) over 20,480 512-byte blocks, so
  * dsm is 20480/8 - 1 and exm is 1 because dsm is over 255.  DRM 511 with
  * four directory blocks reserved, a fixed disk (cks 0), no system

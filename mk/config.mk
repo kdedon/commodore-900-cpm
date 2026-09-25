@@ -298,8 +298,12 @@ rtc_EXP   = rtcinit_ rtctime_
 parse_SEG = 0x3c
 parse_SRC = parsefn pfio modio
 parse_EXP = parsefn_
+# The boot module: code only cold boot runs.  It links after cpm.sys,
+# against its symbols, and runs where cpm.sys loads it, past the bss.
+BOOT_SEG  = 0x3d
+BOOT_SRC  = bootent boot900 crsinit tickinit pginit bdosboot
 MODOBJ = $(foreach m,$(MODULES),$(patsubst %,$(OBJDIR)/%.o,$($(m)_SRC))) \
-	 $(OBJDIR)/modss.o
+	 $(OBJDIR)/modss.o $(BOOT_SRC:%=$(OBJDIR)/%.o)
 
 # The CCP loads from A:CCP.Z8K into the TPA on cold and warm boots.
 CCPSRC = ccp ccpext ccpgo

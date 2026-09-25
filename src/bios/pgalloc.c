@@ -30,17 +30,10 @@
 extern int mapseg();
 extern short sysstk;
 
-/* Segment 1 offset zero contains a CPU far pointer, (seg<<24)|offset,
- * to the ROM configuration block. rom_bram/rom_eram are its first two
- * words, in 1 KB clicks (COHERENT machine.h ctob() uses shift 10). */
-#define ROMCONF_PP	0x01000000L	/* seg 1:0 -- the ROM's far ptr	*/
-#define RC_BRAM		0		/* word 0: first click of RAM	*/
-#define RC_ERAM		1		/* word 1: click past the end	*/
-
 /* clicks are 1 KB, a page is 64 KB: 64 clicks to the page */
 #define CLICKPAGE	6		/* clicks >> 6 = page		*/
 
-static char	pgown[PGNSLOT];	/* 0: slot i free.  Otherwise the owning
+char		pgown[PGNSLOT];	/* 0: slot i free.  Otherwise the owning
 				 * process's index plus one -- see the
 				 * banner.  Zero cannot be an owner code
 				 * because a bss-cleared table has to read
@@ -50,7 +43,7 @@ int		pgcur;		/* THE RUNNING PROCESS, as a descriptor
 				 * assigns pcur.  Zero before there are any
 				 * processes, which is right: everything
 				 * allocated then belongs to process 0. */
-static char	pghld[PGNSLOT];	/* slot i is a LIVE PROCESS's parked 64 KB
+char		pghld[PGNSLOT];	/* slot i is a LIVE PROCESS's parked 64 KB
 				 * image (src/bdos/proc.c), not a transient's
 				 * scratch.  The distinction exists for one
 				 * reason: pgrelall() runs on every warm boot
@@ -59,7 +52,7 @@ static char	pghld[PGNSLOT];	/* slot i is a LIVE PROCESS's parked 64 KB
 				 * reclaimed there and does not take part in
 				 * pgtparest(), because the page it holds is
 				 * a program that is still alive. */
-static char	pgpg[PGNSLOT];	/* the physical page slot i points at.
+char		pgpg[PGNSLOT];	/* the physical page slot i points at.
 				 * Normally PGPGLO+i, and it starts there;
 				 * a pgtpaswap() exchange is the only thing
 				 * that ever makes it differ, and then it
@@ -111,35 +104,6 @@ unsigned bram, eram;
 	if (n > PGNSLOT)
 		n = PGNSLOT;
 	return (n);
-}
-
-/* Size the pool once at cold boot. Unrecognized ROM reports leave it
- * empty; resident pages and the top RAM page are never allocated. */
-pginit()
-{
-	register long pp;
-	register unsigned *rc;
-	register int i;
-
-	pgnslot = 0;
-	pgbram = pgeram = 0;
-	pgcur = 0;
-	tpaphys = TPAPHYSPAGE;		/* where crt.s left segment TPASEG */
-	for (i = 0; i < PGNSLOT; i++) {
-		pgown[i] = 0;
-		pghld[i] = 0;
-		pgpg[i] = PGPGLO + i;
-	}
-
-	pp = *(long *)ROMCONF_PP;
-	if (((pp >> 24) & 0x7fL) != 1L)
-		return (0);		/* not the ROM's pointer */
-	rc = (unsigned *)pp;
-	pgbram = rc[RC_BRAM];
-	pgeram = rc[RC_ERAM];
-
-	pgnslot = pgsize(pgbram, pgeram);
-	return (pgnslot);
 }
 
 /*

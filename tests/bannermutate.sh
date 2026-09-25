@@ -19,7 +19,7 @@
 # lines printed in the wrong order.  Three are make-variable overrides --
 # the version and the dates are build inputs, which is the whole point of
 # the CPMVER block in the Makefile -- and three are edits to
-# src/bdos/bdosmisc.c, applied to the real file and restored on any exit.
+# src/bdos/bdosboot.c, applied to the real file and restored on any exit.
 #
 # Run from the repository root as `make verify-banner-mutants'.  Each mutant is a
 # relink and a full cold boot -- slow on purpose: it proves the assertion
@@ -36,7 +36,7 @@ set -u
 : ${CPMDATE:?the true date must be passed in}
 : ${COPYYEAR:?the true year must be passed in}
 
-SRC=src/bdos/bdosmisc.c
+SRC=src/bdos/bdosboot.c
 work=build/banmut
 img=$work/mutant.bin
 seen=$work/seen
@@ -95,7 +95,7 @@ mutate() {
 	restore
 }
 
-# edit SED-SCRIPT NAME -- apply a defect to src/bdos/bdosmisc.c and insist it
+# edit SED-SCRIPT NAME -- apply a defect to src/bdos/bdosboot.c and insist it
 # changed something.  A mutation that does not apply is itself a failure:
 # it means the code moved and the defect is no longer being injected.
 edit() {

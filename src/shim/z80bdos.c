@@ -613,7 +613,7 @@ struct z80 *m;
  * names, and a physical device sharing it is read as the logical one.
  *
  * Both baud codes are zero, which is CP/M 3's "no rate to report".  The
- * serial channel runs at 38,400 (bios900.c sccinit) and CP/M 3's codes
+ * serial channel runs at 38,400 (boot900.c sccinit) and CP/M 3's codes
  * stop at 19,200, so there is no honest code to put there; DEVM_SOFTBAUD
  * is off on both because the rate is the BIOS's and a guest cannot
  * change it, which is also why vector 21 stays refused by name.

@@ -6,7 +6,7 @@
  * dbound.c -- F1(c): a corrupt directory block number must not reach
  * another drive's allocation map.
  *
- * src/bios/bios900.c drvinit() carves every drive's `alv' out of ONE
+ * src/bios/boot900.c drvinit() carves every drive's `alv' out of ONE
  * 1536-byte pool, in drive order, so A:'s map is alvpool[0..319] (dsm 2559)
  * and B:'s starts at alvpool[320].  src/bdos/fileio.c alloc(), the drive
  * login scan, handed `setaloc' the block numbers out of each directory entry

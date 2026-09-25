@@ -72,7 +72,7 @@ $(OBJDIR)/cpmver.h: FORCE | $(OBJDIR)
 	@cmp -s $@$(TMPSFX) $@ || mv $@$(TMPSFX) $@
 	@rm -f $@$(TMPSFX)
 
-$(OBJDIR)/bdosmisc.o: $(OBJDIR)/cpmver.h
+$(OBJDIR)/bdosboot.o: $(OBJDIR)/cpmver.h
 
 include mk/system.mk
 include mk/programs.mk

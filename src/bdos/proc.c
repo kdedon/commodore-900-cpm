@@ -682,22 +682,6 @@ WORD	con;
 }
 
 
-/* Start the cold boot's ONE extra session: on the console bound to SCC-B,
- * and only when console 0 is video (BIOS function 33 decides), following
- * COHERENT's /etc/ttys.  A serial operator gets
- * none.  Other bound consoles get nothing automatically; SESSION n still
- * reaches them.  Insufficient memory or a missing CCP leaves no session. */
-
-GLOBAL VOID pcoldses()
-{
-	REG WORD c;
-
-	c = bconses();
-	if (c > 0)
-		psession(c);
-}
-
-
 /* Resume pnxt after the caller saves its state. Gate-parked processes use
  * presume; processes parked in a BDOS call resume their supervisor stack. */
 

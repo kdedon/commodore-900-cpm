@@ -110,7 +110,7 @@ WORD		dirindx;	/* index into directory for *dirp */
 		the drive's dsm, which is the one place that covers this
 		scan, close()'s merge, delete() and truncit() alike.  The
 		bound matters because every drive's alv comes out of one
-		pool (src/bios/bios900.c drvinit), so an out-of-range bit
+		pool (src/bios/boot900.c drvinit), so an out-of-range bit
 		is a bit in ANOTHER drive's live allocation map.	 */
 	    i = 0;
 	    if ((GBL.parmp)->dsm < 256)

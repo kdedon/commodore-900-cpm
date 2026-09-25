@@ -71,7 +71,7 @@
  * 0x28..0x2E is free: the ROM identity-maps all 64 descriptors at reset
  * and thereafter only ever addresses segments 0,
  * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32..0x36, 0x3F and the
- * module segments (0x37..0x39, 0x3C), and nothing in the tree names a segment between 0x02 and
+ * module segments (0x37..0x39, 0x3C, 0x3D), and nothing in the tree names a segment between 0x02 and
  * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
  *
  * AS MANY SLOTS AS RAM CAN BACK.  pginit() used to stop at seven whatever
@@ -103,7 +103,7 @@
 				     : PGSEGLO - 1 - ((i) - PGNUP))
 #define	PGPGLO		0x10		/* MODPHYSPAGE + 1		 */
 /*
- * The video-card probe's scratch segment (crsr.c vprobe, D8).  COHERENT
+ * The video-card probe's scratch segment (crsinit.c vprobe, D8).  COHERENT
  * probes through its transient segment ES, 0x3D (md.s:27, 1146-1150); in
  * this BIOS 0x3D is unused too, but 0x2F is chosen because it sits in the
  * range the paragraph above establishes as free (nothing names 0x02..0x31

@@ -10,16 +10,7 @@
 #include "stdio.h"		/* DRI types layer (sys/stdio.h)	*/
 #include "bdosdef.h"		/* BDOS structs: dpb, dph (sys/)	*/
 #include "bcb.h"		/* LRU sector cache (sys/bcb.c)		*/
-#include <bootinfo.h>		/* kboot handoff block, from the kboot checkout	*/
-
-/* The version this BIOS asks the loader for, and the block length that goes
- * with it.  It is this system's choice, not part of the handoff layout. */
-#define	BI_ASK		4
-#if	BI_ASK == 4
-#define	BI_ASKLEN	BI_LEN4
-#else
-#define	BI_ASKLEN	BI_LEN3
-#endif
+#include "bios900.h"
 
 /************************************************************************/
 /*	Console								*/
@@ -41,27 +32,6 @@
  * while spare channels enable receive interrupts. Do not arm channel 0:
  * ROM console routines also access it. */
 
-/* The console table's size: console 0 and up to three bound lines.  It is
- * NOT the process-descriptor count PNPROC -- but every console with a
- * session running holds a
- * descriptor, so a larger table costs program slots.  Additional reported
- * channels remain unbound. */
-#define CONMAX		4
-#define NCHAN		16	/* bi_serial is 16 bits			*/
-
-#define CD_NONE		0	/* nothing is attached to this console	*/
-#define CD_ROM		1	/* the console the ROM selected at boot	*/
-#define CD_SCCA		2	/* SCC channel A, raw			*/
-/*
- * The device number of serial channel `c'.  CD_SCCA IS CD_SER(1) -- the
- * guest-visible numbering of BIOS function 28 is unchanged, and channels
- * past the first spare simply continue it.  CD_SER(0) is CD_ROM, which
- * is the truth: channel 0 is the ROM's own console channel, and console
- * 0 reaches it the ROM's way (through crsr.c, or the keyboard on a video
- * machine) rather than as a raw line.
- */
-#define CD_SER(c)	((c) + 1)
-
 extern int inb();
 extern outb();
 
@@ -74,7 +44,7 @@ extern outb();
  */
 #include "kbd900.h"
 
-static int convid;	/* nonzero: video console, input = local keyboard */
+int convid;	/* nonzero: video console, input = local keyboard */
 /*
  * CD_ROM on a console OTHER than 0, on a video machine, is SCC channel B
  * as a raw line.  CD_SER(0) and CD_ROM are the same number, and on a
@@ -84,10 +54,10 @@ static int convid;	/* nonzero: video console, input = local keyboard */
  * never take channel 0.
  */
 #define CONRAW0(con)	((con) != 0 && convid)
-static int pend[CONMAX];	/* CONST lookahead, 0 = none, per console */
-static char condev[CONMAX];	/* console -> device; see the banner	*/
-static unsigned int conmap;	/* the serial map the table was built from */
-static int ncon = 1;	/* consoles 0..ncon-1.  coninit() sets it; 1 until
+int pend[CONMAX];	/* CONST lookahead, 0 = none, per console */
+char condev[CONMAX];	/* console -> device; see the banner	*/
+unsigned int conmap;	/* the serial map the table was built from */
+int ncon = 1;		/* consoles 0..ncon-1.  coninit() sets it; 1 until
 			   then, so that a console call made before cold
 			   start is over reaches console 0 and not an
 			   unbuilt table entry. */
@@ -110,7 +80,7 @@ static unsigned int sccbase[NSCCBASE] = {
  * base | (register << 1) | 1 -- the register number is AD4:AD1 and the
  * odd address is the byte lane the console's own constants use.
  */
-static sccport(chan, reg)
+sccport(chan, reg)
 int chan, reg;
 {
 	if (chan < 0 || chan >= NSCCBASE)
@@ -168,7 +138,7 @@ sccrxdrn()
 /* Arm receive interrupts with vectors base|0x04 (B) or base|0x0c (A),
  * matching crt.s. WR9=0x09 enables MIE and low-position vector status
  * without resetting either channel. Returns 1 if armed, otherwise 0. */
-static rxarm(chan)
+rxarm(chan)
 int chan;
 {
 	if (chan <= 0 || chan >= NSCCBASE || sccport(chan, 0) == 0)
@@ -282,7 +252,7 @@ int n, mode;
  * to prevent console polling from consuming transfer bytes.
  * READER is nonblocking: 0x1a means no byte or a literal EOF character;
  * BIOS 31 reports availability so callers can implement their own timeout. */
-static int auxchan = -1;	/* channel BIOS 6/7 use; -1 = no AUX line */
+int auxchan = -1;	/* channel BIOS 6/7 use; -1 = no AUX line */
 
 /* Bind AUX using CD_SER numbering; negative values query, CD_NONE detaches.
  * CD_ROM is refused to preserve the machine's console. Returns the old
@@ -372,28 +342,9 @@ int c;
 	outb(sccport(auxchan, 8), c & 0xff);
 }
 
-/* Configure a spare serial channel for eight data bits, one stop bit,
- * no parity, and BRG clocking. Arm receive interrupts after enabling it. */
-static sccinit(chan)
-int chan;
-{
-	if (sccport(chan, 0) == 0)
-		return;			/* no address for that channel */
-	outb(sccport(chan, 4), 0x44);	/* x16 clock, 1 stop bit, no parity */
-	outb(sccport(chan, 3), 0xc0);	/* Rx 8 bits/char, receiver off	    */
-	outb(sccport(chan, 5), 0x60);	/* Tx 8 bits/char, transmitter off  */
-	outb(sccport(chan, 11), 0x50);	/* Rx and Tx clock from the BRG	    */
-	outb(sccport(chan, 12), 0x03);	/* BRG divisor low  = 38,400 baud   */
-	outb(sccport(chan, 13), 0x00);	/*   and high			    */
-	outb(sccport(chan, 14), 0x03);	/* BRG source = PCLK, BRG enable    */
-	outb(sccport(chan, 3), 0xc1);	/* receiver ON			    */
-	outb(sccport(chan, 5), 0x68);	/* transmitter ON		    */
-	rxarm(chan);			/* and its receive ring (C8)	    */
-}
-
 /* Only IOBYTE bits 7:6 (LST) affect routing: 0/1 use the ROM console,
  * 2/3 discard output. Other fields are stored but do not change devices. */
-static char iobyte;
+char iobyte;
 
 /* LIST routes to the console iff the LST: field selects TTY: or CRT:. */
 #define LSTCON()	((iobyte & 0x80) == 0)
@@ -505,50 +456,6 @@ int con;
 /*	Disk: drives A: and B: on the raw hard disk			*/
 /************************************************************************/
 
-/* kboot slots 8..14 describe drives A:..G:; zero-sized slots are absent.
- * Without a usable drive handoff, use dflpart[]. Layout is fixed at boot.
- * Tracks are drive-relative: record = track*64 + sector (zero-based),
- * physical block = drive base + record/4, offset = (record%4)*128.
- * Every DPB has trk_off=0; allocation blocks are 4096 bytes. */
-#define ASPT		64		/* 128-byte records per track */
-#define BLSBLKS		8		/* 512-byte blocks per 4096-byte alloc blk */
-#define BIDRV0		8		/* bootinfo slot of drive A: */
-#define NDRIVE		7		/* A: .. G:, slots 8..14 */
-/* SECLEN (128) comes from bdosdef.h */
-
-/* Fallback layout: A: spans 20480 blocks at 38144; B: spans 16384 at
- * 59136. The intervening 512 blocks hold CPM.SYS. */
-#define CPMABASE	38144L		/* cpma partition base block */
-#define CPMABLKS	20480L		/* 2560 x 4096 = 10 MB */
-#define BTRKOFF		1312L		/* B:'s old track offset within cpma */
-#define CPMBBASE	(CPMABASE + BTRKOFF * 16L)
-#define CPMBBLKS	16384L		/* 2048 x 4096 = 8 MB */
-
-static struct bipart dflpart[NDRIVE] = {
-	{ CPMABASE, CPMABLKS },		/* A: */
-	{ CPMBBASE, CPMBBLKS },		/* B: */
-	{ 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L }
-};
-
-/* Keep this externally patched handoff in initialized data: kboot scans
- * the staged l.out data segment for its magic before launching the image. */
-struct bootinfo bootinf = {
-	BI_MAGIC,
-	BI_ASK,			/* the version asked of the loader		*/
-	(unsigned short)BI_ASKLEN,
-	BI_NPART,
-	0,			/* bi_sum */
-	BI_SRC_KERNEL,		/* until a loader says otherwise */
-	0, 0L, 0L,		/* swapdev/bot/top: CP/M has no swap */
-	{ { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
-	  { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
-	  { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L },
-	  { 0L, 0L }, { 0L, 0L }, { 0L, 0L }, { 0L, 0L } },
-	0,			/* bi_flags */
-	BI_CON_ANY,		/* bi_console */
-	0			/* bi_serial: nothing was probed */
-};
-
 /* Deblocking runs over the LRU sector cache (sys/bcb.c), whose buffers sit
  * in the seg-0x33 buffer segment the startup code maps at phys 0x0C0000;
  * the WD controller DMAs straight to their physical addresses. */
@@ -561,144 +468,20 @@ extern long tickget();		/* src/bios/tick900.c, trap.s	*/
  * Carve maps from a bounded pool in drive order; refuse a drive when its
  * map does not fit. A 83776-sector disk needs at most 1316 bytes for
  * disjoint partitions with 4096-byte allocation blocks. */
-static UBYTE dirbuf[128];
-#define ALVPOOL		1536
-static UBYTE alvpool[ALVPOOL];
+UBYTE dirbuf[128];
+UBYTE alvpool[ALVPOOL];
 
 /* The table itself.  drvthere[] is the answer seldsk gives; drvbase[] is
  * the absolute block dskread/dskwrite add to. */
-static struct dpb dpbtab[NDRIVE];
-static struct dph dphtab[NDRIVE];
-static long drvbase[NDRIVE];
-static char drvthere[NDRIVE];
-static long curbase;		/* drvbase[] of the selected drive */
-
-/*
- * A slot smaller than this cannot be a CP/M drive here: DRM 511 with
- * dir_al 0xF000 reserves four 4096-byte blocks for the directory, so a
- * drive needs those plus data.  64 blocks (32 KB) is 8 allocation blocks,
- * half directory and half data -- useless but coherent, and the point of
- * the limit is to refuse a slot that would give a NEGATIVE dsm.
- */
-#define MINBCNT		64L
-/* dsm is a UWORD, so no drive can be longer than 65536 allocation blocks. */
-#define MAXBCNT		524288L
-
-static drvsay(i, why)
-int i;
-char *why;
-{
-	puts("BIOS: drive ");
-	putchar('A' + i);
-	puts(": ignored -- ");
-	puts(why);
-	putchar('\n');
-}
-
-/* Accept loader-supplied blocks only with a recognized version, matching
- * length, and valid checksum. Drive and console consumers validate their
- * respective fields separately. */
-static int bivalid()
-{
-	if (bootinf.bi_src != BI_SRC_KBOOT)
-		return (0);
-	/* ANY version this header knows is a handoff: a block says which
-	 * version it is and how long it is, and bilen() is the agreement
-	 * between the two.  What is not there is decided from the LENGTH,
-	 * below, and never from the number -- kboot's own rule, and the
-	 * reason a v3 loader and a v4 one can both hand this BIOS a table. */
-	if (bilen(bootinf.bi_version) == 0)
-		return (0);
-	if (bootinf.bi_len != bilen(bootinf.bi_version))
-		return (0);
-	if (bisum(&bootinf) != 0)
-		return (0);
-	return (1);
-}
-
-/* Require a drive A: slot before using the handoff's partition table.
- * A valid handoff without CP/M drives can still supply console metadata. */
-static int bigood()
-{
-	if (!bivalid())
-		return (0);
-	if (bootinf.bi_npart <= BIDRV0)
-		return (0);
-	if (bootinf.bi_part[BIDRV0].bcount == 0L)
-		return (0);
-	return (1);
-}
-
-/*
- * Build the drive table.  Cold start only: a warm boot does not re-read
- * the medium's layout, and the BDOS holds pointers into dphtab[].
- */
-static drvinit()
-{
-	register int i;
-	struct bipart *pp;
-	long start, count, dsm;
-	int alvlen, used;
-	int fromkboot;
-
-	fromkboot = bigood();
-	used = 0;
-	for (i = 0; i < NDRIVE; i++) {
-		drvthere[i] = 0;
-		drvbase[i] = 0L;
-		pp = fromkboot ? &bootinf.bi_part[BIDRV0 + i] : &dflpart[i];
-		start = pp->bstart;
-		count = pp->bcount;
-		if (count == 0L)
-			continue;		/* that letter is not there */
-		if (count < MINBCNT) {
-			drvsay(i, "the slot is too small to hold a directory");
-			continue;
-		}
-		if (count > MAXBCNT)
-			count = MAXBCNT;	/* CP/M cannot address the rest */
-		dsm = count / BLSBLKS - 1L;
-		alvlen = (int)(dsm >> 3) + 1;
-		if (used + alvlen > ALVPOOL) {
-			drvsay(i, "no room left for its allocation vector");
-			continue;
-		}
-		/* BLS 4096 (bsh 5, blm 31), DRM 511 with four directory
-		 * blocks reserved (dir_al 0xF000), fixed disk (CKS 0), no
-		 * system tracks (trk_off 0: the base is kept here).  EXM is
-		 * 1 for BLS 4096 with DSM > 255 and 3 below that, which is
-		 * CP/M's own table and not a choice. */
-		dpbtab[i].spt = ASPT;
-		dpbtab[i].bsh = 5;
-		dpbtab[i].blm = 31;
-		dpbtab[i].exm = (dsm < 256L) ? 3 : 1;
-		dpbtab[i].dpbdum = 0;
-		dpbtab[i].dsm = (UWORD)dsm;
-		dpbtab[i].drm = 511;
-		dpbtab[i].dir_al = 0xF000;
-		dpbtab[i].cks = 0;
-		dpbtab[i].trk_off = 0;
-		dphtab[i].xlt = (UBYTE *)0;
-		dphtab[i].hiwater = 0;
-		dphtab[i].dum1 = 0;
-		dphtab[i].dum2 = 0;
-		dphtab[i].dbufp = dirbuf;
-		dphtab[i].dpbp = &dpbtab[i];
-		dphtab[i].csv = (UBYTE *)0;
-		dphtab[i].alv = &alvpool[used];
-		used += alvlen;
-		drvbase[i] = start;
-		drvthere[i] = 1;
-	}
-	/* Somewhere to point before the first SELDSK.  The BDOS always
-	 * selects before it transfers (iosys.c do_phio), so this is a
-	 * defence against a caller that does not, not a working default. */
-	curbase = drvbase[0];
-}
+struct dpb dpbtab[NDRIVE];
+struct dph dphtab[NDRIVE];
+long drvbase[NDRIVE];
+char drvthere[NDRIVE];
+long curbase;		/* drvbase[] of the selected drive */
 
 static int settrk, setsec;	/* selected track / sector (0-based)	*/
 static long setdma;		/* DMA address (XADDR)			*/
-static int dskerr;
+int dskerr;
 
 /*
  * The buffer used last.  Four 128-byte records share one physical sector,
@@ -708,7 +491,7 @@ static int dskerr;
  * recently used one, so it cannot be the buffer a later bcbfind() evicts.
  */
 static long curblk;
-static int curix = -1;
+int curix = -1;
 
 static getbuf(blk, fill)
 long blk;
@@ -801,7 +584,6 @@ int dsk;
  * TOD block.
  */
 extern long rtctime();
-extern rtcinit();
 
 /*
  * The segment allocator (src/bios/pgalloc.c), reached by BIOS function
@@ -810,7 +592,6 @@ extern rtcinit();
 extern int	pgalloc();
 extern int	pgfree();
 extern int	pgcount();
-extern		pginit();
 extern		pgrelall();
 extern int	pgtpaswap();
 extern int	tpaphys;
@@ -827,7 +608,7 @@ extern int	procdead();
 /************************************************************************/
 
 /*
- * Layout shared with the readers: bdosmisc.c bdosinit ({WORD nmbr;
+ * Layout shared with the readers: bdosboot.c bdosinit ({WORD nmbr;
  * XADDR low; LONG length;}) and go.c/pgmld.c (struct m_rt, NREGIONS = 2)
  * -- count at 0, first region at 2/6, second at 10/14, 18 bytes total.
  * More than one slot is declared so pgmld's m_reg[1] (split-I/D) read
@@ -1045,131 +826,6 @@ int vec, id, fcw, pcseg, pcoff;
 /*	Init + dispatcher						*/
 /************************************************************************/
 
-/* Build consoles from bi_serial at cold boot. Console 0 is whatever
- * crsinit() chose; other fitted channels are bound in order up to CONMAX.
- * When console 0 is video, channel 0 (SCC-B, the ROM's console line) is a
- * free terminal and becomes console 1; the spare channels follow it.
- * Missing/older handoffs and zero bitmaps use the on-board channel map. */
-#define CONDFLMAP	0x0003		/* channels 0 and 1: the on-board SCC */
-
-static coninit()
-{
-	register int chan;
-	unsigned int map;
-
-	map = CONDFLMAP;
-	if (bivalid() && bootinf.bi_len >= (unsigned short)BI_LEN4
-	    && bootinf.bi_serial != 0)
-		map = bootinf.bi_serial;
-	conmap = map;
-
-	/*  Program CIO #1 port A for the keyboard, once, here -- the ROM
-	 *  does it only inside its own getchar(), which we never call.
-	 *  Without this kbdpoll() reads a port that was never set up.  */
-	if (convid)
-		kbdinit();
-
-	/*  CHANNEL 0 IS WRITTEN BY US, AND NOBODY MAY HAVE SET IT UP.
-	 *
-	 *  Two paths drive SCC channel 0 without going anywhere near the
-	 *  ROM: crsr.c's crtty() for a serial console, and conout() below
-	 *  for console 1 at a video console (condev == CD_ROM with
-	 *  CONRAW0(), which resolves to sccport(0, ...)).  Neither is
-	 *  covered by whatever the ROM did for its OWN console.
-	 *
-	 *  On a machine whose ROM believes it is a video console the ROM
-	 *  never programmed the SCC at all, so the transmitter is disabled,
-	 *  TXEMPTY never asserts, crtty()'s bounded wait expires and every
-	 *  byte is discarded in silence.  conpoll() only ever READ this
-	 *  channel, which is why the fault never showed on input.
-	 *
-	 *  crsromser() asks the ROM'S OWN flags whether the ROM is on the
-	 *  serial line.  If it is, it configured this channel and we leave
-	 *  its settings -- the baud above all -- alone, so a serial machine
-	 *  that works today is not touched.  If it is not, nothing has
-	 *  programmed the channel and this is the only reason it can ever
-	 *  transmit.  rxarm() inside sccinit() refuses channel 0, so no
-	 *  interrupt is armed on the ROM's line: it stays polled.
-	 */
-	if (!crsromser())
-		sccinit(0);
-
-	for (chan = 0; chan < CONMAX; chan++) {
-		condev[chan] = CD_NONE;
-		pend[chan] = 0;
-	}
-	condev[0] = CD_ROM;		/* whatever the ROM chose	   */
-	ncon = 1;
-	/*  The AUX device starts on the SAME channel console 1 does --
-	 *  the first spare port, 0x0120 on this machine.  That is not two
-	 *  owners of one wire by accident: there is only one spare wire, and
-	 *  which of the two owns it is the program's choice, made with
-	 *  function 28 (`CONDEV(1, CD_NONE)') at the moment a transfer
-	 *  starts.  Binding AUX somewhere else, or nowhere, is function 32.  */
-	auxchan = -1;
-	/*  SCC-B as console 1 at a video console.  Not sccinit(): the
-	 *  ROM configured this line, and it stays polled (CONRAW0).  AUX
-	 *  still starts on the first SPARE channel below, 0x0120.  */
-	if (convid && (map & 1) != 0) {
-		condev[ncon] = CD_ROM;		/* channel 0, raw: CONRAW0() */
-		ncon++;
-	}
-	for (chan = 1; chan < NCHAN && ncon < CONMAX; chan++) {
-		if ((map & (1 << chan)) == 0)
-			continue;
-		/*
-		 * bi_serial is sixteen bits and this BIOS has addresses for
-		 * six channels (sccbase), so a loader that reports bit 6 or
-		 * above names a port we cannot reach.  Binding it would give
-		 * a console every operation is a no-op on and -- the reason
-		 * the check is here rather than left to taste -- would set
-		 * auxchan to an index PAST THE END of rxbuf/rxhead/rxtail,
-		 * which auxist()/auxin() then read (they are indexed, not
-		 * guarded).  Function 28's CONDEV path already refuses the
-		 * same thing; cold boot has to as well.
-		 */
-		if (sccport(chan, 0) == 0)
-			continue;
-		condev[ncon] = CD_SER(chan);	/* console 1 = the first spare */
-		sccinit(chan);			/* a no-op with no address    */
-		if (auxchan < 0)
-			auxchan = chan;		/* ...and so is the AUX line */
-		ncon++;
-	}
-}
-
-biosinit()
-{
-	extern int mapseg();
-
-	BTRACE("<1>");		/* binit (BIOS fn 0) entered */
-	/* Console type as kboot decided it, in bi_console, and never the
-	 * ROM's flags (crsr.c crsinit).  No handoff, or one older than
-	 * version 3, carries no bi_console and is passed as BI_CON_ANY:
-	 * nobody decided, so crsinit() falls back to probing the cards. */
-	convid = (crsinit((bivalid() && bootinf.bi_len >= (unsigned short)BI_LEN3)
-			  ? (int)bootinf.bi_console : BI_CON_ANY) != 0);
-	drvinit();			/* the drive table: the loader bootinfo,
-					 * or the compiled fallback */
-	coninit();			/* the console table: the loader's
-					 * bi_serial, or the known map */
-	iobyte = 0;
-	/* split-I/D shim banks: pgmld's loadseg copies a 0xEE0B program's
-	 * D segments into SPLITDSEG before spload() runs, so both shim
-	 * segments must be mapped from boot, not at scan time */
-	mapseg(SPLITDSEG, SPLITDPAGE, 2);
-	mapseg(SPLITTSEG, SPLITTPAGE, 2);
-	/* size the segment pool from the ROM's memory report -- before
-	 * anything can ask, and answering zero on a 512 KB machine */
-	pginit();
-	rtcinit();			/* CIO #1 Port B/PC1 -> MSM58321 */
-	tickinit();			/* CIO #1 C/T 3 -> the 100 Hz tick */
-	wdinit900();
-	bcbinit();
-	curix = -1;
-	dskerr = 0;
-}
-
 long bios(d0, d1, d2)
 int d0;
 long d1, d2;
@@ -1180,7 +836,7 @@ long d1, d2;
 	switch (d0) {
 
 	case 0:					/* INIT */
-		biosinit();
+		bootent(0);		/* biosinit() in the boot module */
 		break;
 
 	case 1:					/* WBOOT: back to the CCP */
@@ -1364,7 +1020,7 @@ long d1, d2;
 
 	/*
 	 * CONSES: the console the cold boot starts its one extra session on,
-	 * or 0 for none (src/bdos/proc.c pcoldses).  That is the console bound
+	 * or 0 for none (src/bdos/bdosboot.c pcoldses).  That is the console bound
 	 * to SCC-B, and only when console 0 is video; a serial operator gets
 	 * no cold-boot session.  Resident only: not on bioscl()'s list.
 	 */

@@ -33,8 +33,10 @@ extern struct modent	modtab[];
 extern short		modn;
 extern long		modblob;
 extern unsigned		modlen;
+extern short		bootseg, bootpg, bootlim;
 
-/* Runs before anything uses bss, which the images still occupy. */
+/* Runs before anything uses bss, which the images still occupy.  The boot
+ * module runs where it loaded, in RAM nothing uses after cold boot. */
 static modinit()
 {
 	register struct modent *m;
@@ -47,6 +49,7 @@ static modinit()
 		mem_clr(base + (long)m->imglen, (long)m->bsslen);
 	}
 	mem_clr(modblob, (long)modlen);
+	maplim(bootseg, bootpg, 0x02, bootlim);
 }
 
 #ifndef M12_HARNESS

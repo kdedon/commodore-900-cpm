@@ -6,7 +6,7 @@
 
 Usage: signoncount.py SRC HEADER LOG WARMBOOTS
 
-SRC is src/bdos/bdosmisc.c, HEADER the generated build/obj/cpmver.h that holds
+SRC is src/bdos/bdosboot.c, HEADER the generated build/obj/cpmver.h that holds
 the two banner lines the build supplies, LOG a console transcript of one
 cold boot, and WARMBOOTS the number of transient programs the session
 ran.

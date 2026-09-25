@@ -19,7 +19,7 @@ endef
 $(foreach m,$(MODULES),$(eval $(call MODLINK,$(m))))
 
 $(OBJDIR)/modimg.s: $(MODULES:%=$(OBJDIR)/%.mod) tools/mkblob.py src/bios/c900cfg.h
-	python3 tools/mkblob.py $@ $(foreach m,$(MODULES),\
+	python3 tools/mkblob.py $@ --boot $(BOOT_SEG) $(foreach m,$(MODULES),\
 	    $(m) $($(m)_SEG) $(OBJDIR)/$(m).mod '$($(m)_EXP)')
 
 $(OBJDIR)/modimg.bin: $(OBJDIR)/modimg.s ;
@@ -28,10 +28,20 @@ $(OBJDIR)/modimg.o: $(OBJDIR)/modimg.s
 	$(AS) -g -o $@ $< >> $(LOG) 2>&1
 
 # The module images load over bss (mkblob.py --place): what stays resident
-# is the link's size, what kboot loads is cpm.sys's.
-$(CPMSYS): $(OBJ) $(OBJDIR)/modimg.bin tools/gencpm.py $(GENCPMDAT)
+# is the link's size, what kboot loads is cpm.sys's.  The boot module
+# links against cpm.lnk, so it is built inside this recipe.
+BOOTOBJ = $(OBJDIR)/bootent.o $(OBJDIR)/modss.o \
+	  $(filter-out $(OBJDIR)/bootent.o,$(BOOT_SRC:%=$(OBJDIR)/%.o))
+$(CPMSYS): $(OBJ) $(BOOTOBJ) $(OBJDIR)/modimg.bin tools/gencpm.py $(GENCPMDAT)
 	$(LD) $(LDSYS) -e start -R 0x30000000 -o $(OBJDIR)/cpm.lnk $(OBJ) > $(OBJDIR)/link.txt 2>&1
-	python3 tools/mkblob.py --place $(OBJDIR)/cpm.lnk $(OBJDIR)/modimg.bin $@
+	python3 tools/mkblob.py --syms $(OBJDIR)/cpm.lnk $(BOOT_SEG) $(OBJDIR)/ressym.s
+	$(AS) -g -o $(OBJDIR)/ressym.o $(OBJDIR)/ressym.s >> $(LOG) 2>&1
+	$(LD) -L -R $(BOOT_SEG)000000 -o $(OBJDIR)/boot.mod $(BOOTOBJ) \
+	    $(OBJDIR)/ressym.o > $(OBJDIR)/bootlink.txt 2>&1 \
+	    || { cat $(OBJDIR)/bootlink.txt; exit 1; }
+	@cat $(OBJDIR)/bootlink.txt
+	python3 tools/mkblob.py --place $(OBJDIR)/cpm.lnk $(OBJDIR)/modimg.bin \
+	    $(OBJDIR)/boot.mod $@
 	@python3 -c 'import struct,sys; \
 hd = lambda f: open(f,"rb").read(48); \
 gl = lambda o: (struct.unpack_from("<H",b,o)[0]<<16)|struct.unpack_from("<H",b,o+2)[0]; \

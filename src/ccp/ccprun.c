@@ -46,7 +46,7 @@
 extern	UWORD	bdos();		/* To do I/O into myself		*/
 extern	XADDR	bios();		/* To get MRT pointer			*/
 extern	VOID	xfer();		/* Transfer control to user program	*/
-extern	VOID	bdosinit();	/* One-time BDOS/CCP bring-up		*/
+extern	VOID	bootent();	/* bootent(1): one-time BDOS bring-up	*/
 extern	LONG	map_adr();
 
 struct lpb {
@@ -349,7 +349,7 @@ VOID ccprun()
 
     if (!sysinit) {		/* the latch ccpif.s used to hold	*/
 	sysinit = TRUE;
-	bdosinit();
+	bootent(1);		/* bdosinit() in the boot module */
 	ccpsvinit(ccpsvcur());
     }
 
