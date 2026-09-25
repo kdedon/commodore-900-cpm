@@ -184,6 +184,134 @@ MLOCAL UBYTE hi_ext;		/* v3's high$ext, for the call in progress */
 MLOCAL UBYTE xfcb_ro;		/* FCB name byte 7 bit 7 preserves an open without its write password.
  * keephi operations restore it into xfcb_ro for write checks. */
 
+/* Functions that are one call dispatch through bdfn[bdslot[func] - 1],
+ * called as bdhow says; the rest go through xbdos's switch.  Unused
+ * arguments are harmless: the caller pops them. */
+
+#define BH_RET	0x01	/* return the result, skipping the epilogue */
+#define BH_VAL	0x02	/* else rtnval = result; neither: rtnval = 0 */
+#define BH_W	0x04	/* pass info; else infop */
+#define BH_FCB	0x10	/* tmp_sel() and pass the FCB copy */
+#define BH_A1	0x20	/* second argument 1; else 0 */
+#define BH_B1	0x40	/* third argument 1; else 0 */
+
+EXTERN	uprt_line();
+EXTERN	ureadline();
+
+MLOCAL UWORD (*bdfn[])() = {
+	conin,		/*   1 console input		*/
+	rawconio,	/*   6 raw console I/O		*/
+	uprt_line,	/*   9 print line		*/
+	ureadline,	/*  10 read console line	*/
+	constat,	/*  11 console status		*/
+	close_fi,	/*  16 close file		*/
+	multio,		/*  20 read sequential		*/
+	multio,		/*  33 read random		*/
+	getsize,	/*  35 get file size		*/
+	setran,		/*  36 set random record	*/
+	flushit,	/*  48 flush buffers		*/
+	pgmld,		/*  59 program load		*/
+	setexc,		/*  61 set exception vector	*/
+	set_tpa,	/*  63 get/set TPA limits	*/
+	set_label,	/* 100 set directory label	*/
+	rd_stamps,	/* 102 read date stamps		*/
+	wr_xfcb,	/* 103 write file XFCB		*/
+	set_dfltpw,	/* 106 default password, at infop,
+			       not the DMA		*/
+	xmemrq,		/* 128 absolute memory request	*/
+	xmemrq,		/* 129 relocatable memory request */
+	xmemfr,		/* 130 memory free		*/
+	xpoll,		/* 131 poll device		*/
+	xflgwt,		/* 132 flag wait		*/
+	xflgset,	/* 133 flag set			*/
+	xqmakef,	/* 134 make queue		*/
+	xqopenf,	/* 135 open queue		*/
+	xqdelf,		/* 136 delete queue		*/
+	xqread,		/* 137 read queue		*/
+	xqread,		/* 138 conditional read queue	*/
+	xqwrite,	/* 139 write queue		*/
+	xqwrite,	/* 140 conditional write queue	*/
+	xdelay,		/* 141 delay			*/
+	pcreate,	/* 144 create process from
+			       {FCB, tail len, tail}	*/
+	proccnt,	/* 145 live processes, not MP/M
+			       Set Priority		*/
+	xconatt,	/* 146 attach the fn 148 console;
+			       waits on its owner	*/
+	xcondet,	/* 147 detach console		*/
+	xsetcon,	/* 148 set console		*/
+	xassigncon,	/* 149 assign console		*/
+	ccpsvget,	/* 150 caller's CCP state out;
+			       it is SYS-only		*/
+	ccpsvput,	/* 151 ...and back in		*/
+	parsefn,	/* 152 parse filename		*/
+	xgetcon		/* 153 get console number	*/
+};
+
+MLOCAL UBYTE bdhow[] = {
+	BH_RET|BH_W,			/*   1 */
+	BH_RET|BH_W,			/*   6 */
+	0,				/*   9 */
+	0,				/*  10 */
+	BH_RET|BH_W,			/*  11 */
+	BH_VAL|BH_FCB,			/*  16 */
+	BH_VAL|BH_FCB|BH_A1,		/*  20 multio(fcb, TRUE, 0) */
+	BH_VAL|BH_FCB|BH_A1|BH_B1,	/*  33 multio(fcb, TRUE, 1) */
+	BH_FCB,				/*  35 */
+	BH_FCB,				/*  36 */
+	BH_VAL|BH_W,			/*  48 */
+	BH_VAL,				/*  59 */
+	BH_RET,				/*  61 */
+	0,				/*  63 */
+	BH_VAL|BH_FCB,			/* 100 */
+	BH_VAL|BH_FCB,			/* 102 */
+	BH_VAL|BH_FCB,			/* 103 */
+	BH_VAL,				/* 106 */
+	BH_RET|BH_A1,			/* 128 xmemrq(infop, 1) */
+	BH_RET,				/* 129 xmemrq(infop, 0) */
+	BH_RET,				/* 130 */
+	BH_RET|BH_W,			/* 131 */
+	BH_RET|BH_W,			/* 132 */
+	BH_RET|BH_W,			/* 133 */
+	BH_RET,				/* 134 */
+	BH_RET,				/* 135 */
+	BH_RET,				/* 136 */
+	BH_RET,				/* 137 */
+	BH_RET|BH_A1,			/* 138 */
+	BH_RET,				/* 139 */
+	BH_RET|BH_A1,			/* 140 */
+	BH_RET|BH_W,			/* 141 */
+	BH_RET,				/* 144 */
+	BH_RET|BH_W,			/* 145 */
+	BH_RET|BH_W,			/* 146 */
+	BH_RET|BH_W,			/* 147 */
+	BH_RET|BH_W,			/* 148 */
+	BH_RET,				/* 149 */
+	BH_RET,				/* 150 */
+	BH_RET,				/* 151 */
+	BH_RET,				/* 152 */
+	BH_RET|BH_W			/* 153 */
+};
+
+MLOCAL UBYTE bdslot[154] = {
+/*   0 */  0, 1, 0, 0, 0, 0, 2, 0, 0, 3,
+/*  10 */  4, 5, 0, 0, 0, 0, 6, 0, 0, 0,
+/*  20 */  7, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  30 */  0, 0, 0, 8, 0, 9,10, 0, 0, 0,
+/*  40 */  0, 0, 0, 0, 0, 0, 0, 0,11, 0,
+/*  50 */  0, 0, 0, 0, 0, 0, 0, 0, 0,12,
+/*  60 */  0,13, 0,14, 0, 0, 0, 0, 0, 0,
+/*  70 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  80 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  90 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/* 100 */ 15, 0,16,17, 0, 0,18, 0, 0, 0,
+/* 110 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/* 120 */  0, 0, 0, 0, 0, 0, 0, 0,19,20,
+/* 130 */ 21,22,23,24,25,26,27,28,29,30,
+/* 140 */ 31,32, 0, 0,33,34,35,36,37,38,
+/* 150 */ 39,40,41,42
+};
+
 
 /* xbdos receives the function number and both word and segmented forms
  * of its parameter. The SC gate returns the word result in r7. */
@@ -198,8 +326,10 @@ REG UWORD info;		/* parameter as word */
 REG XADDR infop;	/* parameter as (segmented) pointer */
 {
     REG UWORD rtnval;
-    REG UWORD dsk;
-    REG UWORD newpw;		/* fn 22: f6', assign a password	*/
+    REG UWORD dsk;		/* also the bdfn index			*/
+    REG UWORD newpw;		/* fn 22: f6', assign a password;
+				   also the bdhow flags			*/
+    XADDR p;			/* bdfn's pointer argument		*/
     LOCAL struct tempstr temp;
     BSETUP
 
@@ -232,17 +362,29 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	    }
 	}
 
-	switch (func)	/* switch on function number */
+	if (func == 2)			/* the hottest call, ahead of bdfn */
+	    cookdout((UBYTE)info,FALSE);/* "cooked" console output */
+	else if ( (UWORD)func < sizeof bdslot
+		  && (dsk = UBWORD(bdslot[func])) )
 	{
-	  case 0:   warmboot(0);		/* warm boot function */
-		    /* break; */
-
-	  case 1:   return((UWORD)conin());	/* console input function */
-		    /* break; */
-
-	  case 2:   cookdout((UBYTE)info,FALSE);/* "cooked" console output */
-		    break;
-
+	    newpw = UBWORD(bdhow[--dsk]);
+	    if (newpw & BH_W)
+		rtnval = (*bdfn[dsk])(info);
+	    else
+	    {
+		p = infop;
+		if (newpw & BH_FCB)
+		{
+		    tmp_sel(&temp);
+		    p = (XADDR)temp.fptr;
+		}
+		rtnval = (*bdfn[dsk])(p, (newpw >> 5) & 1, (newpw >> 6) & 1);
+	    }
+	    if (newpw & BH_RET) return(rtnval);
+	    if ( ! (newpw & BH_VAL) ) rtnval = 0;
+	}
+	else switch (func)	/* switch on function number */
+	{
 	  case 3:   return((UWORD)brdr());	/* get reader from bios */
 		    /* break; */
 
@@ -252,23 +394,11 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 5:   blstout((UBYTE)info);	/* list output from bios */
 		    break;
 
-	  case 6:   return((UWORD)rawconio(info)); /* raw console I/O */
-		    /* break; */
-
 	  case 7:   return(bgetiob());		/* get i/o byte */
 		    /* break; */
 
 	  case 8:   bsetiob(info);		/* set i/o byte function */
 		    break;
-
-	  case 9:   uprt_line(infop);		/* print line function */
-		    break;
-
-	  case 10:  ureadline(infop);		/* read buffered con input */
-		    break;
-
-	  case 11:  return((UWORD)constat());	/* console status */
-		    /* break; */
 
 	  case 12:  return(VERSION);		/* return version number */
 		    /* break; */
@@ -370,10 +500,6 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			temp.fptr->cur_rec = temp.fptr->s1;
 		    break;
 
-	  case 16:  tmp_sel(&temp);		/* close file */
-		    rtnval = close_fi(temp.fptr);
-		    break;
-
 	  case 17:  GBL.srchp = infop;		/* search first */
 		    tmp_sel(&temp);
 		    rtnval = search(temp.fptr, 0, &temp);
@@ -410,10 +536,6 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			/* the XFCB goes with the file it named (:1690):
 			   left behind it would hand its password to the
 			   NEXT file created under that name	*/
-		    break;
-
-	  case 20:  tmp_sel(&temp);		/* read sequential */
-		    rtnval = multio(temp.fptr, TRUE, 0);
 		    break;
 
 	  case 21:  tmp_sel(&temp);		/* write sequential */
@@ -557,10 +679,6 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    return(0);
 		    /* break; */
 
-	  case 33:  tmp_sel(&temp);		/* random read */
-		    rtnval = multio(temp.fptr, TRUE, 1);
-		    break;
-
 	  case 34:  tmp_sel(&temp);		/* random write */
 		    if (hi_ext || xfcb_ro)
 			/* a file reached through the user-0 fallback is
@@ -576,14 +694,6 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    }
 		    upd_stamp(temp.fptr);
 		    rtnval = multio(temp.fptr, FALSE, 1);
-		    break;
-
-	  case 35:  tmp_sel(&temp);		/* get file size */
-		    getsize(temp.fptr);
-		    break;
-
-	  case 36:  tmp_sel(&temp);		/* set random record */
-		    setran(temp.fptr);
 		    break;
 
 	  case 37:  info = ~info;		/* reset drive */
@@ -663,9 +773,6 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    warmboot(0);		/* terminate calling program */
 		    /* break; */
 
-	  case 48:  rtnval = flushit();		/* flush buffers */
-		    break;
-
 		  /* Get/set the system control block.  The image is not
 		     addressable from a program here (the BDOS data segment
 		     is SYS-only), so this function is the whole of the
@@ -673,16 +780,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	  case 49:  return(scb_fn(infop, info));
 		    /* break; */
 
-	  case 59:  rtnval = pgmld(infop);	/* program load */
-		    break;
-
 	  case 60:  rtnval = rsxfn(info, infop);/* unclaimed RSX service (rsx.c) */
-		    break;
-
-	  case 61:  return(setexc(infop));	/* set exception vector */
-		    /* break; */
-
-	  case 63:  set_tpa(infop);		/* get/set TPA limits */
 		    break;
 
 		  /*  Truncate file: shorten it to the record its random
@@ -718,30 +816,8 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 
 		  /* Date stamps and password metadata are maintained by fileio.c. */
 
-	  case 100: tmp_sel(&temp);		/* set directory label	*/
-		    rtnval = set_label(temp.fptr);
-		    break;
-
 	  case 101: return(get_label(info & 0xff));
 		    /* break; */
-
-	  case 102: tmp_sel(&temp);		/* read file date stamps */
-		    rtnval = rd_stamps(temp.fptr);
-		    break;
-
-	  case 103: tmp_sel(&temp);		/* write file XFCB	*/
-		    rtnval = wr_xfcb(temp.fptr);
-		    break;
-
-		  /*  Fn 106's eight bytes are at the PARAMETER address,
-		      not the DMA -- the one call in this group that does
-		      not go through the DMA (bdos30.asm:5066-5076,
-		      set.plm:1014).  It is what lets a program open a
-		      password-protected file without carrying the
-		      password itself, which is the only reason function
-		      103 is usable from the console at all.	*/
-	  case 106: rtnval = set_dfltpw(infop);	/* set default password	*/
-		    break;
 
 		  /*  Fn 104 stores the caller's four bytes in @DATE and
 		      pushes them down to the clock, zeroing @SEC on the
@@ -789,73 +865,17 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		  /* GSX: the caller's block is the module's, uncopied. */
 	  case 115: return((UWORD)bios(34, 0L, infop));
 
-		  /* Function 144 takes a 165-byte {FCB, tail length, tail} request.
- * Function 145 reports the number of live processes. */
-	  case 144: return(pcreate(infop));	/* create process	*/
-		    /* break; */
-
 		/* Start a CCP on the requested console, in the corresponding user area.
  * Sessions reload their CCP after a transient warm boot. */
 	  case 142: return(psession((WORD)(info & 0x0f)));
 		    /* break; */
 
-	  case 145: return(proccnt());		/* live processes	*/
-		    /* break; */
-
-		  /* MP/M-style services are implemented in xdos.c. Function 145 is this
- * port's process-count query, rather than MP/M Set Priority. */
-
-	  case 128: return(xmemrq(infop, 1));	/* absolute memory req	*/
-	  case 129: return(xmemrq(infop, 0));	/* relocatable mem req	*/
-	  case 130: return(xmemfr(infop));	/* memory free		*/
-	  case 131: return(xpoll(info));	/* poll device		*/
-	  case 132: return(xflgwt(info));	/* flag wait		*/
-	  case 133: return(xflgset(info));	/* flag set		*/
-	  case 134: return(xqmakef(infop));	/* make queue		*/
-	  case 135: return(xqopenf(infop));	/* open queue		*/
-	  case 136: return(xqdelf(infop));	/* delete queue		*/
-	  case 137: return(xqread(infop, 0));	/* read queue		*/
-	  case 138: return(xqread(infop, 1));	/* conditional read	*/
-	  case 139: return(xqwrite(infop, 0));	/* write queue		*/
-	  case 140: return(xqwrite(infop, 1));	/* conditional write	*/
-	  case 141: return(xdelay(info));	/* delay		*/
-
 		  /* Termination uses the ordinary warm-boot cleanup path. */
+	  case 0:				/* warm boot		*/
 	  case 143: warmboot(0);		/* terminate process	*/
 		    break;		/* warmboot() does not return; this
 					   is here so that if it ever did,
 					   the next case would not run	*/
-
-		  /*  146/147 Attach and Detach Console.  A console has ONE
-		      owner and everybody else waits, so 146 is the only
-		      call in this dispatcher that can block on another
-		      PROCESS rather than on a device or on the clock.
-		      Neither takes a parameter: they act on the console
-		      fn 148 has already chosen.  The rule is pconatt().  */
-	  case 146: return(xconatt());		/* attach console	*/
-	  case 147: return(xcondet());		/* detach console	*/
-
-	  case 148: return(xsetcon(info));	/* set console		*/
-	  case 149: return(xassigncon(infop));	/* assign console	*/
-	  case 153: return(xgetcon());		/* get console number	*/
-
-		  /*  150/151 -- THE TRANSIENT CCP'S STATE.  It is resident
-		      and per process (src/bdos/proc.c), and resident
-		      storage is SYS-only, so a Normal-mode program cannot
-		      address it: these two calls are the whole interface.
-		      They act on the CALLER'S descriptor, which is what
-		      makes a second session's CCP reach its own state and
-		      never another's.  This port's own numbers, in the
-		      range v3 answers "not present" for (the default below
-		      returns 0 for anything from 128 up), so a program
-		      that probes them on another CP/M gets that answer
-		      rather than a wrong one.  src/ccp/ccprun.c.	*/
-
-	  case 150: return(ccpsvget(infop));	/* CCP state -> caller	*/
-	  case 151: return(ccpsvput(infop));	/* caller -> CCP state	*/
-
-	  case 152: return(parsefn(infop));	/* parse filename	*/
-		    /* break; */
 
 	  /*  v3's function table does not stop at the highest number it
 	      implements: cpmbdos1.asm:255-262 fills 51-97 and 113-127
