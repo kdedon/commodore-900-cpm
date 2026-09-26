@@ -6067,6 +6067,29 @@ verify-conclk: all $(CPMACONC)
 	@echo "verify-conclk: PASS -- a prompt under the lock shuts the other process"
 	@echo "               out completely, and lets it straight back in when answered"
 
+# ---- two processes contend for one record (verify-lock) ----
+# LOCKT locks record 0 and starts itself again as B; flags hand the turn
+# back and forth.  B finds record 0 locked and unwritable, A finds B's
+# record 1 locked, and both locks go away when B closes and when B dies.
+LOCKIMG	= build/locktest.bin
+LOCKLOG	= build/verify-lock.log
+LOCKWANT = 'A lock0=0' 'A lock5=1' 'B lock0=8' 'B write0=8' 'B read0=0' \
+	'B lock1=0' 'A lock1=8' 'A unlock0=0' 'B lock0=0' 'A relock0=0' \
+	'A relock1=0' 'A write1=0' 'A: done'
+.PHONY: verify-lock
+verify-lock: all $(CPMALOCK)
+	$(MKDISK) $(LOCKIMG) $(CPMSYS) $(CPMALOCK) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(LOCKIMG)) \
+		--input="$(OSSEL)LOCKT\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(LOCKLOG))
+	@$(EMUOK)
+	@for w in $(LOCKWANT); do \
+		tr -d '\r' < $(LOCKLOG) | grep -qx "$$w" \
+		|| { echo "verify-lock: FAIL -- no line '$$w'"; exit 1; }; \
+	 done
+	@echo "verify-lock: PASS -- a record locked by one process is refused to"
+	@echo "             another, and close and exit release it"
+
 # ---- the MP/M XDOS calls, one process (verify-xdos) ----
 # src/bdos/xdos.c, BDOS functions 128-141 and 148/149/153.  XDOSM.Z8K makes
 # every call whose ANSWER does not depend on a second process running: what

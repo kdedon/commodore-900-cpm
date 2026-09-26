@@ -50,7 +50,8 @@ EXTERN		cookdrun();	/* Print a run of characters	*/
 EXTERN		readline();	/* Buffered console read	*/
 EXTERN		seldsk();	/* Select disk			*/
 EXTERN BOOLEAN	openfile();	/* Open File			*/
-EXTERN UWORD	close_fi();	/* Close File			*/
+EXTERN UWORD	lkclose();	/* Close File, dropping its locks */
+EXTERN UWORD	lkrec();	/* Lock/Unlock Record		*/
 EXTERN UWORD	search();	/* Search first and next fcns	*/
 EXTERN UWORD	dirscan();	/* General directory scanning routine */
 EXTERN UWORD	bdosrw();	/* Sequential and Random disk read/write */
@@ -164,6 +165,7 @@ REG UWORD dsk;
 
 #define fcbfunc(f) ( ((f) >= 15 && (f) <= 23) || (f) == 30 \
 		     || ((f) >= 33 && (f) <= 36) || (f) == 40 \
+		     || (f) == 42 || (f) == 43 \
 		     || (f) == 99 || (f) == 100 || (f) == 102 \
 		     || (f) == 103 )
 #define wrtfunc(f) ( (f) == 16 || (f) == 19 || ((f) >= 21 && (f) <= 23) \
@@ -174,7 +176,8 @@ REG UWORD dsk;
  * that origin across calls; keephi selects operations that preserve it. */
 
 #define keephi(f) ( (f) == 16 || (f) == 20 || (f) == 21 \
-		    || (f) == 33 || (f) == 34 || (f) == 40 )
+		    || (f) == 33 || (f) == 34 || (f) == 40 \
+		    || (f) == 42 || (f) == 43 )
 
 MLOCAL UBYTE hi_ext;		/* v3's high$ext, for the call in progress */
 
@@ -204,7 +207,7 @@ MLOCAL UWORD (*bdfn[])() = {
 	uprt_line,	/*   9 print line		*/
 	ureadline,	/*  10 read console line	*/
 	constat,	/*  11 console status		*/
-	close_fi,	/*  16 close file		*/
+	lkclose,	/*  16 close file		*/
 	multio,		/*  20 read sequential		*/
 	multio,		/*  33 read random		*/
 	getsize,	/*  35 get file size		*/
@@ -736,13 +739,10 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 		    rtnval = multio(temp.fptr, FALSE, 2);
 		    break;
 
-	  /* Record lock and unlock.  CP/M 3 outside MP/M defines both as
-	     func$ret (bdos30.asm:4594-4596) -- the call succeeds and does
-	     nothing, because there is nothing to lock against on a
-	     single-tasking system.  Programs written for MP/M therefore
-	     run here unchanged, which is the whole point of the pair. */
 	  case 42:				/* lock record	 */
-	  case 43:  break;			/* unlock record */
+	  case 43:  tmp_sel(&temp);		/* unlock record */
+		    rtnval = lkrec(temp.fptr, func == 42);
+		    break;
 
 	  case 44:  rtnval = info & 0xff;	/* set multi-sector count */
 		    if (rtnval == 0 || rtnval > 128) return(0xff);

@@ -16,6 +16,16 @@ $(CPMACONC): $(CPMAIMG) $(UCONCFS) tools/mkcpmfs.py tools/sparse.py tests/concpa
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAC)
 
+# Record-lock fixture.
+CPMALOCK = build/cpma-lock.img
+DISKAL   = build/diska-lock
+$(CPMALOCK): $(CPMAIMG) $(ULOCK) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKAL)
+	@mkdir -p $(DISKAL)
+	@cp $(DISKA)/* $(ULOCK) $(DISKAL)/
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAL)
+
 # XDOS and console fixtures.
 CPMAXDOS = build/cpma-xdos.img
 DISKAX   = build/diska-xdos

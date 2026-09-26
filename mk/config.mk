@@ -172,6 +172,9 @@ UCONCFS	= $(UOBJDIR)/CONCD.Z8K $(UOBJDIR)/CONCE.Z8K \
 	  $(UOBJDIR)/CONCH.Z8K $(UOBJDIR)/CONCI.Z8K \
 	  $(UOBJDIR)/CONCX.Z8K $(UOBJDIR)/CONCY.Z8K
 
+# Two processes contending for one record (verify-lock).
+ULOCK	= $(UOBJDIR)/LOCKT.Z8K
+
 # The default-DMA-across-a-spawn exerciser (verify-xout).
 UXDMA	= $(UOBJDIR)/XDMA.Z8K
 

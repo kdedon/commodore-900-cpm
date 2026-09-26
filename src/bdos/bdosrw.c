@@ -18,6 +18,7 @@ EXTERN	BOOLEAN openfile();	/* open file function passed to dirscan */
 EXTERN	UWORD	close_fi();	/* close file function		*/
 EXTERN	BOOLEAN create();	/* create file function passed to dirscan */
 EXTERN	UWORD	error();	/* error handler		*/
+EXTERN	BOOLEAN	lkother();	/* record locked by another process? */
 
 /* External variable definitions */
 EXTERN	UWORD	ro_dsk;		/* read-only disk vector	*/
@@ -278,7 +279,12 @@ WORD random;			/* 0 = sequential, 1 = random (normal),  */
     }
     index = blkindx(fcbp);		/* get index into fcb disk map */
     block = blknum(fcbp, index, bigfile);
-    if (block) parm = (reading ? 0 : 1);
+    if (block)
+    {
+	if ( ! reading && lkother(block, fcbp->cur_rec) )
+	    return(8);		/* another process has it locked */
+	parm = (reading ? 0 : 1);
+    }
     else		/* if allocated block, parm is just read or write */
     {			/* unallocated block	*/
 	if (reading) return(1);		/* reading unwritten data */

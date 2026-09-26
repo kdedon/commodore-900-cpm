@@ -39,6 +39,7 @@ EXTERN	VOID	pghold();
 EXTERN	WORD	pgrelproc();	/* free THIS process's scratch segments	*/
 EXTERN	WORD	xvclr();	/* src/bios/bios900.c: forget a process's
 				   recorded trap vectors		*/
+EXTERN	VOID	lkdrop();	/* drop a process's record locks	*/
 EXTERN	WORD	gxend();	/* unbind the GSX workstation it opened	*/
 EXTERN	WORD	pgcur;		/* and the allocator's idea of which
 				   process that is.  It is `pcur', and
@@ -908,6 +909,7 @@ GLOBAL WORD procdead()
 					   warm boot too, where it is a no-op
 					   unless a BDOS error killed the
 					   program inside a locked region */
+	lkdrop();			/* its record locks */
 	pconrel();			/* release console ownership on every termination path */
 	/*  A SESSION DOES NOT DIE HERE.  Returning 0 sends the BIOS on to
 	    the ordinary warm boot (bios900.c case 1), which reloads the CCP

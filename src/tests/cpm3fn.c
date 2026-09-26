@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 /*
- * cpm3fn.c - Exercise CP/M 3 functions 42/43, 98, and 107-112. Function 98
+ * cpm3fn.c - Exercise CP/M 3 functions 98 and 107-112. Function 98
  * must reclaim the allocation left by an unclosed file.
  */
 
@@ -28,14 +28,8 @@ char *argv[];
 	long		free2;
 	long		free3;
 
-	/* 42/43 - record lock/unlock, defined to succeed and do nothing */
-	cputs("fn 42 (lock)   -> ");
-	putdec((unsigned) __bdos(42, 0L));
-	cputs("\r\nfn 43 (unlock) -> ");
-	putdec((unsigned) __bdos(43, 0L));
-
 	/* 107 - system serial number, six bytes to the given address */
-	cputs("\r\nfn 107 serial  -> ");
+	cputs("fn 107 serial  -> ");
 	for (i = 0; i < 8; i++)
 		serial[i] = 0;
 	__bdos(BDOS_SERIAL, (long) serial);

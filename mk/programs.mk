@@ -249,6 +249,9 @@ $(UOBJDIR)/CONCX.Z8K: $(UOBJDIR)/concx.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCY.Z8K: $(UOBJDIR)/concy.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/LOCKT.Z8K: $(UOBJDIR)/lockt.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/CONCZ.Z8K: $(UOBJDIR)/concz.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

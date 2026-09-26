@@ -155,8 +155,8 @@ static i8 pmap[53] = {
 	P_NO,		/* 39 MP/M free drive				*/
 	P_FCB,		/* 40 write random with zero fill		*/
 	P_NO,		/* 41 does not exist				*/
-	P_FCB,		/* 42 lock record (a no-op here)			*/
-	P_FCB,		/* 43 unlock record (ditto)			*/
+	P_FCB,		/* 42 lock record				*/
+	P_FCB,		/* 43 unlock record				*/
 	P_BYTE,		/* 44 set multi-sector count			*/
 	P_BYTE,		/* 45 set BDOS error mode -- PIP's fourth call	*/
 	P_BYTE,		/* 46 get disk free space -> the DMA buffer	*/
