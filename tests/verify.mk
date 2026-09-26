@@ -738,6 +738,86 @@ verify-z80save: all
 	@echo "            second function 59, and it wrote the guest's own page"
 	@echo "            zero out to a file on the machine"
 
+# ---- HEXCOM: Intel HEX to .COM, then the .COM run by the CP/M-80 shim ----
+# TEST.HEX has its message record ahead of its code record and a gap
+# between them; BAD.HEX has a wrong checksum, LOW.HEX loads below 0100h.
+HEXDISK	= build/hexcomdisk
+HEXCPMA	= build/hexcom-cpma.img
+HEXIMG	= build/hexcomtest.bin
+HEXLOG	= build/verify-hexcom.log
+.PHONY: verify-hexcom
+verify-hexcom: all
+	@rm -rf $(HEXDISK)
+	@mkdir -p $(HEXDISK)
+	@cp $(DISKA)/* $(HEXDISK)/
+	printf ':0A018000484558434F4D204F4B24D3\r\n:090100001180010E09CD0500C9B2\r\n:00000001FF\r\n' \
+		> $(HEXDISK)/TEST.HEX
+	printf ':020100000102FB\r\n:00000001FF\r\n' > $(HEXDISK)/BAD.HEX
+	printf ':020000000102FB\r\n:00000001FF\r\n' > $(HEXDISK)/LOW.HEX
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $(HEXCPMA) $(CPMA_BLOCKS) $(HEXDISK)
+	$(MKDISK) $(HEXIMG) $(CPMSYS) $(HEXCPMA) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(HEXIMG)) \
+		--input='$(OSSEL)$(SESS1)HEXCOM TEST\rHEXCOM BAD\rHEXCOM LOW\rHEXCOM NOSUCH\rZ80 TEST.COM\r$(ENDIN)' \
+		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(HEXLOG))
+	@$(EMUOK)
+	@grep -q 'VERS: 3.00' $(HEXLOG) \
+		|| { echo "verify-hexcom: FAIL -- HEXCOM did not run"; exit 1; }
+	@grep -q 'FIRST ADDRESS 0180' $(HEXLOG) \
+		&& grep -q 'LAST  ADDRESS 0189' $(HEXLOG) \
+		&& grep -q 'BYTES READ    0013' $(HEXLOG) \
+		&& grep -q 'RECORDS WRITTEN 02' $(HEXLOG) \
+		|| { echo "verify-hexcom: FAIL -- wrong conversion summary"; exit 1; }
+	@grep -q 'CHECKSUM ERROR' $(HEXLOG) \
+		|| { echo "verify-hexcom: FAIL -- bad checksum not caught"; exit 1; }
+	@grep -q 'ERROR: LOAD ADDRESS LESS THAN 100' $(HEXLOG) \
+		|| { echo "verify-hexcom: FAIL -- load address below 0100h not refused"; exit 1; }
+	@grep -q 'ERROR: CANNOT OPEN SOURCE FILE' $(HEXLOG) \
+		|| { echo "verify-hexcom: FAIL -- missing .HEX not reported"; exit 1; }
+	@grep -q 'HEXCOM OK' $(HEXLOG) \
+		|| { echo "verify-hexcom: FAIL -- the .COM did not run under the shim"; exit 1; }
+	dd if=$(HEXIMG) of=build/hexcom-after.img bs=512 skip=$(CPMA_BASEBLK) \
+		count=$(CPMA_BLOCKS) status=none conv=sparse
+	rm -rf build/hexcom-fs
+	python3 tools/mkcpmfs.py --extract build/hexcom-after.img build/hexcom-fs
+	@python3 -c 'import sys; d = open("build/hexcom-fs/TEST.COM","rb").read(); c = bytes.fromhex("1180010E09CD0500C9"); m = b"HEXCOM OK$$"; sys.exit(0 if d == c + bytes(0x80 - len(c)) + m + bytes(0x80 - len(m)) else 1)' \
+		|| { echo "verify-hexcom: FAIL -- TEST.COM is not the zero-filled image"; exit 1; }
+	@echo "verify-hexcom: PASS"
+
+# ---- DEVICE: the displays, console size, and reassignment refused ----
+DEVIMG	= build/devicetest.bin
+DEVLOG	= build/verify-device.log
+# The bare DEVICE's prompt is no gate character, so its RETURN goes gate-off.
+DEVIN	= $(OSSEL)DEVICE CRT\rDEVICE SIO\rDEVICE AUX\rDEVICE LST:=CRT\rDEVICE CRT[1200]\rDEVICE CON:=BOGUS\rDEVICE CONIN:=NULL\rDEVICE CONSOLE[COLUMNS=80,LINES=24]\rDEVICE\r\\g\r$(ENDIN)
+.PHONY: verify-device
+verify-device: all
+	$(MKDISK) $(DEVIMG) $(CPMSYS) $(CPMAIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(DEVIMG)) \
+		--input="$(DEVIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(DEVLOG))
+	@$(EMUOK)
+	@grep -q 'CRT    NONE  IO     SIO    NONE  IOS' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- physical device list"; exit 1; }
+	@grep -q 'CONIN:  = CRT' $(DEVLOG) && grep -q 'AUXOUT: = SIO' $(DEVLOG) \
+		&& grep -q 'LST:    = CRT' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- assignments"; exit 1; }
+	@grep -q 'Enter new assignment or hit RETURN' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- no prompt"; exit 1; }
+	@grep -q 'Physical Device:  CRT' $(DEVLOG) && grep -q ' PARALLEL' $(DEVLOG) \
+		&& grep -q ' SERIAL' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- characteristics"; exit 1; }
+	@grep -q 'Device Reassignment Not Supported' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- reassignment not refused"; exit 1; }
+	@grep -q 'Baud rate can not be set for this device' $(DEVLOG) \
+		&& grep -q 'Invalid physical device' $(DEVLOG) \
+		&& grep -q 'A NULL device can not be assigned to CONIN' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- error paths"; exit 1; }
+	@grep -q 'Console width set to 80 columns' $(DEVLOG) \
+		&& grep -q 'Console page set to 24 lines' $(DEVLOG) \
+		|| { echo "verify-device: FAIL -- console size"; exit 1; }
+	@echo "verify-device: PASS"
+
 # ---- CP/M-80 shim, ON THE MACHINE: console polling ----
 # POLL80.COM reads a key through the BIOS CONIN vector and echoes it, then
 # 64 times writes a dot with function 6 and polls with E = 0FFh.  A poll

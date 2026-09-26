@@ -378,6 +378,12 @@ $(UOBJDIR)/SDIR.Z8K: $(UOBJDIR)/sdir.lout $(LOUT2CPM)
 $(UOBJDIR)/SHOW.Z8K: $(UOBJDIR)/show.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/DEVICE.Z8K: $(UOBJDIR)/device.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/HEXCOM.Z8K: $(UOBJDIR)/hexcom.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/HELP.Z8K: $(UOBJDIR)/help.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

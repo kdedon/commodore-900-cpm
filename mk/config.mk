@@ -134,8 +134,9 @@ UPROGS	= $(UOBJDIR)/MHELLO.Z8K $(UOBJDIR)/FCOPY.Z8K $(UOBJDIR)/BEEP.Z8K \
 	  $(UOBJDIR)/CRSRDEMO.Z8K $(UOBJDIR)/CONCOST.Z8K $(UOBJDIR)/BIOCOST.Z8K \
 	  $(UOBJDIR)/CPUTCOST.Z8K $(UCONC) \
 	  $(UPROGS3) $(UPROGSU) $(UPROGSR) $(UPIP) $(USTAT) $(UZ80) $(UI86) \
-	  $(UKERMIT) $(UV5) $(UGP) $(USESSION)
+	  $(UKERMIT) $(UV5) $(UGP) $(USESSION) $(UDEVT)
 UKERMIT	= $(UOBJDIR)/KERMIT.Z8K
+UDEVT	= $(UOBJDIR)/DEVICE.Z8K $(UOBJDIR)/HEXCOM.Z8K
 # Compatibility shims, shipped on the release disk.  They run a guest
 # program the user supplies; nothing on either disk is one.
 UZ80	= $(UOBJDIR)/Z80.Z8K
