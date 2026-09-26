@@ -6,7 +6,8 @@
 #include "stdio.h"
 #include "c900cfg.h"
 
-extern char	pgown[], pghld[], pgpg[];
+extern char	pgown[], pghld[];
+extern unsigned char pgpg[];
 extern int	pgcur, tpaphys, pgnslot;
 extern unsigned	pgbram, pgeram;
 
@@ -17,9 +18,80 @@ extern unsigned	pgbram, pgeram;
 #define RC_BRAM		0		/* word 0: first click of RAM	*/
 #define RC_ERAM		1		/* word 1: click past the end	*/
 
+/* clicks are 1 KB, a page is 64 KB: 64 clicks to the page */
+#define CLICKPAGE	6		/* clicks >> 6 = page		*/
+
+static unsigned char pghole[] = PGHOLES;
+
+/*
+ * The loader's map, nram (first, count) runs, if every page in it is RAM
+ * the ROM reported and none is LR text: a loader may reserve more than
+ * the holes but never invent RAM.  Runs must ascend without overlap.
+ */
+static int pgmapok(lo, hi, ram, nram)
+int lo, hi, nram;
+unsigned short *ram;
+{
+	register int r, p, c;
+
+	if (nram <= 0)
+		return (0);
+	for (r = 0; r < nram; r++) {
+		p = ram[2 * r];
+		c = ram[2 * r + 1];
+		if (p < lo || p >= hi || c <= 0 || c > hi - p
+		    || (p <= PGLRTEXT && PGLRTEXT - p < c))
+			return (0);
+		lo = p + c;
+	}
+	return (1);
+}
+
+/*
+ * Fill pgpg[] with the pages a ROM report of [bram, eram) clicks backs,
+ * less the loader's reservations when its map is good and the holes when
+ * not, and answer how many.
+ */
+int pgsize(bram, eram, ram, nram)
+unsigned bram, eram;
+unsigned short *ram;
+int nram;
+{
+	register int p, hi, n, h;
+
+	hi = (int)(eram >> CLICKPAGE);	/* one past the last page */
+
+	/* A report that leaves out the resident system is not this machine. */
+	if ((int)(bram >> CLICKPAGE) > SYSPHYSPAGE || hi <= PGPGLO)
+		return (0);
+	if (eram >= (unsigned)(PGPGHI << CLICKPAGE))
+		hi = PGPGHI;
+
+	n = 0;
+	if (pgmapok((int)(bram >> CLICKPAGE), hi, ram, nram)) {
+		for (; nram > 0; nram--, ram += 2)
+			for (p = ram[0], h = p + ram[1]; p < h; p++)
+				if (p >= PGPGLO && p < hi - 1 && n < PGNSLOT)
+					pgpg[n++] = p;
+		return (n);
+	}
+
+	hi--;				/* the ROM's segment-1 page */
+	for (p = PGPGLO; p < hi; p++) {
+		for (h = 0; h < PGNHOLE && pghole[h] != p; h++)
+			;
+		if (h == PGNHOLE)
+			pgpg[n++] = p;
+	}
+	return (n);
+}
+
 /* Size the pool once at cold boot. Unrecognized ROM reports leave it
- * empty; resident pages and the top RAM page are never allocated. */
-pginit()
+ * empty; resident pages and the top RAM page are never allocated.
+ * ram/nram are the loader's memory map, nram 0 for none. */
+pginit(ram, nram)
+unsigned short *ram;
+int nram;
 {
 	register long pp;
 	register unsigned *rc;
@@ -32,7 +104,6 @@ pginit()
 	for (i = 0; i < PGNSLOT; i++) {
 		pgown[i] = 0;
 		pghld[i] = 0;
-		pgpg[i] = PGPGLO + i;
 	}
 
 	pp = *(long *)ROMCONF_PP;
@@ -42,6 +113,6 @@ pginit()
 	pgbram = rc[RC_BRAM];
 	pgeram = rc[RC_ERAM];
 
-	pgnslot = pgsize(pgbram, pgeram);
+	pgnslot = pgsize(pgbram, pgeram, ram, nram);
 	return (pgnslot);
 }

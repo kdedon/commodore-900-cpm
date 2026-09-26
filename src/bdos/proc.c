@@ -35,7 +35,7 @@ EXTERN	VOID	ccpsvinit();	/* and its state-page builder		*/
 EXTERN	WORD	pgalloc();
 EXTERN	WORD	pgfree();
 EXTERN	WORD	pgtpaswap();
-EXTERN	VOID	pghold();
+EXTERN	WORD	pghold();
 EXTERN	WORD	pgrelproc();	/* free THIS process's scratch segments	*/
 EXTERN	WORD	xvclr();	/* src/bios/bios900.c: forget a process's
 				   recorded trap vectors		*/
@@ -623,7 +623,7 @@ WORD	con, sess;
 	kid->pd_prio  = me->pd_prio;
 	kid->pd_quant = pqfor(kid->pd_prio);	/* filled once, so the hot
 						   paths only assign	*/
-	pghold(seg, 1);			/* a live process's page is not a
+	kid->pd_seg = pghold(seg, 1);	/* a live process's page is not a
 					   transient's leak: the warm boot
 					   must not reclaim it	*/
 	if (kid->pd_split)

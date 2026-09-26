@@ -48,8 +48,11 @@ O_PART = 28			# 16 x { unsigned long bstart, bcount }
 O_FLAGS = 156
 O_CONSOLE = 158
 O_SERIAL = 160
+O_NRAM = 162			# then BI_NRAM x { unsigned short first, count }
 BI_LEN3 = 160
 BI_LEN4 = 162
+BI_LEN5 = 196
+BI_NRAM = 8
 BI_NPART = 16
 BI_SRC_KBOOT = 1
 
@@ -78,19 +81,24 @@ def main():
     if d.find(MAGIC, i + 1) >= 0:
         sys.exit('bipatch: more than one bootinfo block in %s' % a.inp)
     have = struct.unpack_from('>H', d, i + O_LEN)[0]
-    if have not in (BI_LEN3, BI_LEN4):
-        sys.exit('bipatch: %s declares bi_len %d, which is neither BI_LEN3 '
-                 '(%d) nor BI_LEN4 (%d) -- the struct has moved and this '
-                 'script must be rechecked against bootinfo.h'
-                 % (a.inp, have, BI_LEN3, BI_LEN4))
+    if have not in (BI_LEN3, BI_LEN4, BI_LEN5):
+        sys.exit('bipatch: %s declares bi_len %d, which is not BI_LEN3 '
+                 '(%d), BI_LEN4 (%d) or BI_LEN5 (%d) -- the struct has moved '
+                 'and this script must be rechecked against bootinfo.h'
+                 % (a.inp, have, BI_LEN3, BI_LEN4, BI_LEN5))
 
-    struct.pack_into('>H', d, i + O_VERSION, 4)
-    struct.pack_into('>H', d, i + O_LEN, BI_LEN4)
+    # A v5 block keeps its length with an empty memory map, which the BIOS
+    # reads as no map.
+    ver, blen = (5, BI_LEN5) if have == BI_LEN5 else (4, BI_LEN4)
+    struct.pack_into('>H', d, i + O_VERSION, ver)
+    struct.pack_into('>H', d, i + O_LEN, blen)
     struct.pack_into('>H', d, i + O_NPART, BI_NPART)
     struct.pack_into('>H', d, i + O_SRC, BI_SRC_KBOOT)
     struct.pack_into('>H', d, i + O_FLAGS, 0)
     struct.pack_into('>H', d, i + O_CONSOLE, 0)
     struct.pack_into('>H', d, i + O_SERIAL, int(a.serial, 0))
+    if ver == 5:
+        d[i + O_NRAM:i + BI_LEN5] = bytes(BI_LEN5 - O_NRAM)
     for slot in range(BI_NPART):
         struct.pack_into('>LL', d, i + O_PART + 8 * slot, 0, 0)
     struct.pack_into('>LL', d, i + O_PART + 8 * 8, *a.part8)
@@ -100,14 +108,14 @@ def main():
     # The checksum, computed the way bisum() does: the 16-bit words of the
     # first bi_len bytes must sum to zero.
     struct.pack_into('>H', d, i + O_SUM, 0)
-    s = sum(struct.unpack_from('>%dH' % (BI_LEN4 // 2), d, i)) & 0xffff
+    s = sum(struct.unpack_from('>%dH' % (blen // 2), d, i)) & 0xffff
     struct.pack_into('>H', d, i + O_SUM, (-s) & 0xffff)
-    s = sum(struct.unpack_from('>%dH' % (BI_LEN4 // 2), d, i)) & 0xffff
+    s = sum(struct.unpack_from('>%dH' % (blen // 2), d, i)) & 0xffff
     assert s == 0, 'bipatch: checksum did not close'
 
     open(a.out, 'wb').write(bytes(d))
-    print('bipatch: %s -> %s: v4 handoff, bi_serial=%s, A: at %d+%d'
-          % (a.inp, a.out, a.serial, a.part8[0], a.part8[1]))
+    print('bipatch: %s -> %s: v%d handoff, bi_serial=%s, A: at %d+%d'
+          % (a.inp, a.out, ver, a.serial, a.part8[0], a.part8[1]))
 
 
 main()

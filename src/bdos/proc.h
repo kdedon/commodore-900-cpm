@@ -97,7 +97,7 @@ struct context {
 
 struct pdesc {
 	short	pd_state;	/* PS_FREE / PS_LIVE / PS_RSVD		*/
-	short	pd_seg;		/* the pool segment PARKING this process's
+	short	pd_seg;		/* the pool handle PARKING this process's
 				   64 KB image, or 0 while this process is
 				   the one segment TPASEG points at.  Exactly
 				   one live descriptor may hold 0.	*/

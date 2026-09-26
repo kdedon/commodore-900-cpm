@@ -6,7 +6,8 @@
  * concwc.c -- CONCWC.Z8K, the claimant.  The CCP runs it after CONCW's
  * warm boot; see src/cmd/concw.c for the shape of the test.
  *
- * It asks for every segment the pool will part with and prints them.  The
+ * It prints the pool's size, then asks for every segment the pool will
+ * part with and prints them.  The
  * list is the verdict on pgrelall(): CONCW's segment must be in it (a warm
  * boot still reclaims the warm-booting program's own scratch) and CONCWB's
  * must not (CONCWB is still alive and still using it).
@@ -45,7 +46,9 @@ char *argv[];
 {
 	register int	i, n, seg;
 
-	cputs("CONCWC: got");
+	cputs("CONCWC: slots ");
+	phex2((int) segcall(SEG_SLOTS, 0L));
+	cputs("\r\nCONCWC: got");
 	n = 0;
 	for (i = 0; i < MAXSEG; i++) {
 		seg = (int) segcall(SEG_GET, 0L);

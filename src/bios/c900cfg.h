@@ -52,9 +52,10 @@
 					 * scan scratch begins at this offset
 					 * in the SPLITTSEG segment */
 
-/* Allocator slots pair logical segments with physical 64 KB pages.
- * PGPGLO follows the resident physical layout. pginit() limits capacity
- * using the ROM RAM report and reserves its top page for ROM state.
+/* Allocator slots are physical 64 KB pages, from PGPGLO to the end of the
+ * RAM the ROM reports, less its top page (ROM state) and the video holes.
+ * A slot takes one of PGNSEG logical segments while allocated; a parked
+ * process image gives its segment back (pgalloc.c).
  *
  * THE POOL MUST NOT OVERLAP THE ROM'S VIDEO DESCRIPTORS.  It used to run
  * 0x38..0x3E, which INCLUDES logical segments 0x3A and 0x3B -- the ROM's
@@ -74,15 +75,12 @@
  * module segments (0x37..0x39, 0x3C, 0x3D), and nothing in the tree names a segment between 0x02 and
  * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
  *
- * AS MANY SLOTS AS RAM CAN BACK.  pginit() used to stop at seven whatever
- * the ROM reported, which on a 2560 KB machine left 1536 KB idle.  Slot i
- * needs physical page PGPGLO+i, and RAM cannot reach the LR card's
- * character RAM at 0x37; pginit() keeps the top RAM page for the ROM, so
- * the largest machine backs pages 0x10..0x35 -- 38 slots.  Their segments:
- * slots 0..7 are 0x28..0x2F, exactly the numbers the first seven always
- * were, and slot 8 onwards counts DOWN from 0x27, which ends at 0x0A.
- * 0x02..0x27 is otherwise unused, for the same reason given above.
- * pgsize() in pgalloc.c does the sizing.
+ * The logical segments are 0x28..0x2F, then 0x27 down to 0x0A, handed out
+ * in that order.  Physical pages run to 16 MB; the MMU reaches past the
+ * motherboard's 4 MB decode.  The holes are skipped whatever card is
+ * fitted: the BIOS does not probe when the loader picks the console, and
+ * a probe cannot tell HR bitmap RAM from memory.  Without an HR card,
+ * 0x3F is the ROM's stack RAM.
  */
 #define	SYSPHYSPAGE	0x08		/* phys 0x080000: CPM.SYS's text */
 /*
@@ -96,12 +94,18 @@
 #define	SYSDSEG		0x31		/* CPM.SYS data + bss		 */
 #define	PGSEGLO		0x28		/* slot 0's logical segment	 */
 #define	PGNUP		8		/* slots 0..7 ascend, 0x28..0x2F */
-#define	PGNSLOT		38		/* 0x28..0x2F, then 0x27..0x0A --
+#define	PGNSEG		38		/* 0x28..0x2F, then 0x27..0x0A --
 					 * NOT 0x38..0x3E: 0x3A/0x3B are
 					 * the video planes */
 #define	PGSEG(i)	((i) < PGNUP ? PGSEGLO + (i) \
 				     : PGSEGLO - 1 - ((i) - PGNUP))
 #define	PGPGLO		0x10		/* MODPHYSPAGE + 1		 */
+#define	PGPGHI		0x100		/* 16 MB: one past the last page */
+#define	PGLRTEXT	0x37		/* never RAM, even in a loader's map */
+#define	PGHOLES		{ PGLRTEXT, 0x3e, 0x3f }	/* LR text, HR bitmap */
+#define	PGNHOLE		3
+#define	PGNSLOT		(PGPGHI - 1 - PGPGLO - PGNHOLE)	/* 236 */
+#define	PGPARK		0x40		/* handle of parked slot i: PGPARK+i */
 /*
  * The video-card probe's scratch segment (crsinit.c vprobe, D8).  COHERENT
  * probes through its transient segment ES, 0x3D (md.s:27, 1146-1150); in

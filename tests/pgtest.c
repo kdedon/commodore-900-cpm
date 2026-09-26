@@ -4,12 +4,11 @@
  */
 /* pgtest.c -- the segment pool's sizing and segment numbers, on the host.
  *
- * The emulator has 1 MB of RAM and no way to be given another size, so
- * pginit()'s arithmetic for other machines cannot be run there.  This
- * compiles src/bios/pgalloc.c itself (its "stdio.h" is the host's here; it
- * uses nothing from it) and drives pgsize(), pgalloc() and pgfree() for a
- * ROM report of 512, 1024 and 2560 KB, and for RAM up to the video card.
- * `make pgtest'.  Exit status is the verdict.
+ * This compiles the allocator and its sizing itself (their "stdio.h" is
+ * the host's here) and drives pgsize(), pgalloc(), pghold() and pgfree()
+ * for ROM reports from 512 KB to 16 MB, with and without a loader's map,
+ * including maps that must be refused.  `make pgtest'.  Exit status is
+ * the verdict.
  */
 #include <stdio.h>
 #include <string.h>
@@ -17,62 +16,178 @@
 static int mseg, mbase, mattr, mcalls;
 int mapseg(seg, base, attr) int seg, base, attr;
 { mseg = seg; mbase = base; mattr = attr; mcalls++; return 0; }
+short sysstk;
 
 #include "pgalloc.c"
+#include "pginit.c"
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("pgtest: FAIL -- " __VA_ARGS__); printf("\n"); } } while (0)
 
+static void reset(void)
+{
+	memset(pgown, 0, sizeof pgown);
+	memset(pghld, 0, sizeof pghld);
+	memset(pgss, 0, sizeof pgss);
+	memset(pgks, 0, sizeof pgks);
+	pgcur = 0;
+	tpaphys = TPAPHYSPAGE;
+}
+
 /* A ROM report for `kb' of RAM starting at phys 0x080000, in 1 KB clicks. */
-static void machine(const char *label, unsigned kb, int want, const char *segs)
+static void machine(const char *label, unsigned kb, int want, int top, const char *segs)
 {
 	unsigned bram = 512, eram = 512 + kb;
-	int n, i, s, seen[64], got = 0;
+	int n, i, s, seen[64], pages[256], got = 0;
 	char list[256] = "";
 
-	for (i = 0; i < PGNSLOT; i++) { pgown[i] = pghld[i] = 0; pgpg[i] = PGPGLO + i; }
+	reset();
 	memset(seen, 0, sizeof seen);
-	pgcur = 0;
-	n = pgnslot = pgsize(bram, eram);
+	memset(pages, 0, sizeof pages);
+	n = pgnslot = pgsize(bram, eram, NULL, 0);
 	CHECK(n == want, "%s: pgsize gave %d slots, want %d", label, n, want);
+	CHECK(n <= PGNSLOT, "%s: %d slots overflow PGNSLOT %d", label, n, PGNSLOT);
+	for (i = 0; i < n; i++) {
+		CHECK(pgpg[i] >= PGPGLO && pgpg[i] != 0x37 && pgpg[i] != 0x3e && pgpg[i] != 0x3f,
+		      "%s: slot %d is page 0x%02X", label, i, pgpg[i]);
+		CHECK(!pages[pgpg[i]]++, "%s: page 0x%02X twice", label, pgpg[i]);
+	}
+	CHECK(n == 0 || pgpg[n - 1] == top, "%s: last page 0x%02X, want 0x%02X",
+	      label, n ? pgpg[n - 1] : 0, top);
+	CHECK(pgcount() == (n < PGNSEG ? n : PGNSEG), "%s: pgcount %d before any allocation", label, pgcount());
+
+	/* Park all but one allocation at a time, so every page gets served. */
 	while ((s = pgalloc()) != 0) {
-		CHECK(s >= 2 && s < 0x30, "%s: slot %d is segment 0x%02X, outside 0x02..0x2F",
+		CHECK(s >= 2 && s < 0x30, "%s: allocation %d is segment 0x%02X, outside 0x02..0x2F",
 		      label, got, s);
 		CHECK(s != PGSEGVIDA && s != PGSEGVIDB, "%s: segment 0x%02X is a display plane", label, s);
-		CHECK(!seen[s & 63], "%s: segment 0x%02X handed out twice", label, s);
-		seen[s & 63] = 1;
-		CHECK(mseg == s && mbase == (PGPGLO + got) << 8 && mattr == 0,
+		CHECK(mseg == s && mbase == pgpg[got] << 8 && mattr == 0,
 		      "%s: slot %d mapped 0x%02X -> page 0x%04X attr %d", label, got, mseg, mbase, mattr);
 		CHECK(pgslot(s) == got, "%s: pgslot(0x%02X) = %d, want %d", label, s, pgslot(s), got);
 		if (got < 7)
 			CHECK(s == 0x28 + got, "%s: slot %d is 0x%02X; the first seven must stay 0x28..0x2E",
 			      label, got, s);
-		if (strlen(list) < 200) sprintf(list + strlen(list), " %02X", s);
+		if (got < 7 && strlen(list) < 200) sprintf(list + strlen(list), " %02X", s);
+		CHECK(!seen[s & 63], "%s: segment 0x%02X served while mapped", label, s);
+		if (got < PGNSEG / 2)
+			seen[s & 63] = 1;		/* scratch: stays mapped */
+		else
+			CHECK(pghold(s, 1) == PGPARK + got && mattr == 2 && pgss[pgsegix(s)] == 0,
+			      "%s: parking slot %d kept segment 0x%02X", label, got, s);
 		if (++got > PGNSLOT) break;
 	}
 	CHECK(got == want, "%s: pgalloc served %d, want %d", label, got, want);
 	CHECK(pgcount() == 0, "%s: pgcount %d after exhausting the pool", label, pgcount());
-	CHECK(pgfree(0x30) == 0 && pgfree(0x01) == 0 && pgfree(0x00) == 0 && pgfree(0x3A) == 0,
-	      "%s: pgfree accepted a resident or ROM segment", label);
-	if (want < PGNSLOT)
-		CHECK(pgfree(PGSEG(want)) == 0, "%s: pgfree accepted 0x%02X, a slot this machine lacks",
-		      label, PGSEG(want));
-	for (i = 0; i < got; i++)
-		CHECK(pgfree(PGSEG(i)) == 1 && mattr == 2, "%s: pgfree(0x%02X) refused", label, PGSEG(i));
-	CHECK(pgcount() == want, "%s: pgcount %d after freeing all, want %d", label, pgcount(), want);
-	CHECK(segs == NULL || strcmp(list, segs) == 0,"%s: segments%s, want%s", label, list, segs ? segs : "");
-	printf("pgtest: %-8s %4u KB -> %2d slots:%s\n", label, kb, n, list);
+	CHECK(pgfree(0x30) == 0 && pgfree(0x01) == 0 && pgfree(0x00) == 0 && pgfree(0x3A) == 0
+	      && pgfree(0x09) == 0 && pgfree(PGPARK + want) == 0,
+	      "%s: pgfree accepted a resident, ROM or unknown segment", label);
+	for (i = 0; i < got; i++) {
+		if (i < PGNSEG / 2)
+			s = PGSEG(i);
+		else {
+			s = PGPARK + i;
+			CHECK(pgmine(s, 0, 1, 0) == 0, "%s: pgmine accepted handle 0x%X", label, s);
+			CHECK(pghold(s, 0) == s, "%s: unholding 0x%X", label, s);
+		}
+		mcalls = 0;
+		CHECK(pgfree(s) == 1, "%s: pgfree(0x%X) refused", label, s);
+		CHECK(s >= PGPARK ? mcalls == 0 : mattr == 2, "%s: pgfree(0x%X) mapping", label, s);
+		CHECK(pgfree(s) == 0, "%s: pgfree(0x%X) twice", label, s);
+	}
+	CHECK(pgcount() == (n < PGNSEG ? n : PGNSEG), "%s: pgcount %d after freeing all", label, pgcount());
+	CHECK(segs == NULL || strcmp(list, segs) == 0, "%s: segments%s, want%s", label, list, segs ? segs : "");
+	printf("pgtest: %-8s %5u KB -> %3d slots, last page 0x%02X\n", label, kb, n, n ? pgpg[n - 1] : 0);
+}
+
+/* A parked process swaps with the TPA without a segment. */
+static void swaps(void)
+{
+	int s, h, pg;
+
+	reset();
+	pgnslot = pgsize(512, 512 + 16384, NULL, 0);
+	s = pgalloc();
+	pg = pgpg[0];
+	CHECK(pgtpaswap(s) == 1 && tpaphys == pg && pgpg[0] == TPAPHYSPAGE, "swap by segment");
+	h = pghold(s, 1);
+	CHECK(pgsegof(0) == 0, "held slot still mapped");
+	mcalls = 0;
+	CHECK(pgtpaswap(h) == 1 && tpaphys == TPAPHYSPAGE && pgpg[0] == pg && mcalls == 1,
+	      "swap by handle touched %d descriptors", mcalls);
+	CHECK(pgtpaswap(h) == 1 && pgheld() && pgtparest() == 1 && tpaphys == TPAPHYSPAGE
+	      && pgpg[0] == pg && mcalls == 3, "restore onto a parked slot");
+	CHECK(pgalloc() == PGSEG(0), "the parked slot's segment was not reused");
+	pgcur = 1;
+	pgrelproc();
+	CHECK(pgown[0] && pgown[1], "another process's slots released");
+	pgcur = 0;
+	pgrelproc();
+	CHECK(pgown[0] && !pgown[1], "held slot released or scratch kept");
+}
+
+/* A loader's map for a ROM report of `kb' from phys 0x080000: `want' slots,
+ * the last `top', and 0x3E in the pool iff `hr3e'. */
+static void mapped(const char *label, unsigned kb, unsigned short *ram, int nram,
+		   int want, int top, int hr3e)
+{
+	int n, i, has3e = 0;
+
+	reset();
+	n = pgsize(512, 512 + kb, ram, nram);
+	CHECK(n == want, "%s: %d slots, want %d", label, n, want);
+	CHECK(n == 0 || pgpg[n - 1] == top, "%s: last page 0x%02X, want 0x%02X",
+	      label, n ? pgpg[n - 1] : 0, top);
+	for (i = 0; i < n; i++) {
+		CHECK(pgpg[i] >= PGPGLO && pgpg[i] != PGLRTEXT && (i == 0 || pgpg[i] > pgpg[i - 1]),
+		      "%s: slot %d is page 0x%02X", label, i, pgpg[i]);
+		has3e |= pgpg[i] == 0x3e;
+	}
+	CHECK(has3e == hr3e, "%s: page 0x3E %s", label, has3e ? "taken" : "left out");
+	printf("pgtest: map %-22s -> %3d slots\n", label, n);
+}
+
+static void maps(void)
+{
+	/* What kboot lists: the ROM's range less 0x00-0x07, 0x37, 0x3F and,
+	 * with an HR board, 0x3E. */
+	unsigned short nohr[] = { 0x08, 0x2f, 0x38, 7 };
+	unsigned short hr[] = { 0x08, 0x2f, 0x38, 6 };
+	unsigned short m25[] = { 0x08, 40 };
+	unsigned short resv[] = { 0x08, 0x10, 0x20, 0x17, 0x38, 7 };	/* reserve 18 1F */
+	unsigned short lrtext[] = { 0x08, 0x37 };
+	unsigned short past[] = { 0x08, 0x2f, 0x38, 9 };
+	unsigned short under[] = { 0x00, 0x37 };
+	unsigned short down[] = { 0x38, 7, 0x08, 0x2f };
+	unsigned short overlap[] = { 0x08, 0x2f, 0x30, 2 };
+	unsigned short empty[] = { 0x08, 0x2f, 0x38, 0 };
+	unsigned short huge[] = { 0x08, 0xffff };
+
+	mapped("4 MB, no HR", 3584, nohr, 2, 46, 0x3e, 1);
+	mapped("4 MB, HR", 3584, hr, 2, 45, 0x3d, 0);
+	mapped("2.5 MB", 2560, m25, 1, 31, 0x2e, 0);
+	mapped("4 MB, reserve 18-1F", 3584, resv, 3, 38, 0x3e, 1);
+	mapped("none", 3584, NULL, 0, 45, 0x3d, 0);
+	mapped("rejected: LR text", 3584, lrtext, 1, 45, 0x3d, 0);
+	mapped("rejected: past the ROM", 3584, past, 2, 45, 0x3d, 0);
+	mapped("rejected: below the ROM", 3584, under, 1, 45, 0x3d, 0);
+	mapped("rejected: descending", 3584, down, 2, 45, 0x3d, 0);
+	mapped("rejected: overlapping", 3584, overlap, 2, 45, 0x3d, 0);
+	mapped("rejected: empty run", 3584, empty, 2, 45, 0x3d, 0);
+	mapped("rejected: huge run", 3584, huge, 1, 45, 0x3d, 0);
 }
 
 int main(void)
 {
-	machine("512 KB", 512, 0, "");
-	machine("1024 KB", 1024, 7, " 28 29 2A 2B 2C 2D 2E");
-	machine("2560 KB", 2560, 31, NULL);
-	machine("ceiling", 0x370000 / 1024 - 512, 38, NULL);	/* RAM to the LR card */
-	machine("beyond", 16384, 38, NULL);			/* a report past it */
-	CHECK(pgsize(1024, 1536) == 0, "a report starting above CPM.SYS was accepted");
+	machine("512 KB", 512, 0, 0, "");
+	machine("1024 KB", 1024, 7, 0x16, " 28 29 2A 2B 2C 2D 2E");
+	machine("2560 KB", 2560, 31, 0x2e, NULL);
+	machine("4 MB", 4096 - 512, 45, 0x3d, NULL);	/* 0x10..0x3E, less 0x37 */
+	machine("16 MB", 16384 - 512, PGNSLOT, 0xfe, NULL);
+	machine("beyond", 65000, PGNSLOT, 0xfe, NULL);
+	CHECK(pgsize(1024, 1536, NULL, 0) == 0, "a report starting above CPM.SYS was accepted");
+	swaps();
+	maps();
 	if (fails) { printf("pgtest: FAIL -- %d check(s)\n", fails); return 1; }
-	printf("pgtest: PASS -- 512 KB 0, 1024 KB 7 (0x28..0x2E as before), 2560 KB 31, ceiling %d\n", PGNSLOT);
+	printf("pgtest: PASS -- 512 KB 0, 1024 KB 7 (0x28..0x2E as before), 16 MB %d, holes skipped\n", PGNSLOT);
 	return 0;
 }

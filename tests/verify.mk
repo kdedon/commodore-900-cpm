@@ -347,10 +347,11 @@ build/splittest: tests/splittest.c src/bdos/splitsc.c src/bdos/zsplit.c src/bdos
 splittest: build/splittest
 	build/splittest
 # ---- the segment pool's sizing, host side (src/bios/pgalloc.c) ----
-# The emulator's RAM is 1 MB and nothing else, so pginit()'s arithmetic for
-# 512 KB, 2560 KB and the ceiling runs here: slots served, their segments
-# (the first seven must stay 0x28..0x2E), and the refusals.
-build/pgtest: tests/pgtest.c src/bios/pgalloc.c src/bios/c900cfg.h | $(OBJDIR)
+# pginit()'s arithmetic for 512 KB up to 16 MB, and for loader maps good
+# and bad, runs here: pages served and the holes skipped, their
+# segments (the first seven must stay 0x28..0x2E), parked handles, and the
+# refusals.
+build/pgtest: tests/pgtest.c src/bios/pgalloc.c src/bios/pginit.c src/bios/c900cfg.h | $(OBJDIR)
 	$(HOSTCC) -std=gnu89 -w -Isrc/bios -o $@ tests/pgtest.c
 pgtest: build/pgtest
 	build/pgtest
@@ -546,7 +547,7 @@ verify-z80: all
 	$(MKDISK) $(Z80IMG) $(CPMSYS) $(Z80CPMA) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(Z80IMG)) 		--input="$(OSSEL)$(SESS1)Z80 DUMP.COM Z80IN.BIN" 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } 		| tee $(abspath $(Z80LOG))
 	@$(EMUOK)
-	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- BIOS function 25 handed out no segment."; 		     echo "            That is the whole gate: without it the guest has"; 		     echo "            no 64 KB and nothing below this can run."; exit 1; }
+	@grep -q 'z80: guest segment 28, staging segment 29' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- BIOS function 25 handed out no segment."; 		     echo "            That is the whole gate: without it the guest has"; 		     echo "            no 64 KB and nothing below this can run."; exit 1; }
 	@grep -q 'z80: load: ok' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP.COM did not load"; exit 1; }
 	@grep -q '0100: C3' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- the image is not in the guest segment"; exit 1; }
 	@grep -q '0000: 00 01 02 03' $(Z80LOG) 		|| { echo "verify-z80: FAIL -- DUMP did not print the file's own bytes"; exit 1; }
@@ -620,7 +621,7 @@ verify-z80pip: all
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(Z80PLOG))
 	@$(EMUOK)
-	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80PLOG) \
+	@grep -q 'z80: guest segment 28, staging segment 29' $(Z80PLOG) \
 		|| { echo "verify-z80pip: FAIL -- BIOS function 25 handed out no segment."; exit 1; }
 	@grep -q 'z80: load: ok' $(Z80PLOG) \
 		|| { echo "verify-z80pip: FAIL -- PIP.COM did not load"; exit 1; }
@@ -697,7 +698,7 @@ verify-z80save: all
 		--max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(Z80SLOG))
 	@$(EMUOK)
-	@grep -q 'z80: guest segment 29, staging segment 2A' $(Z80SLOG) \
+	@grep -q 'z80: guest segment 28, staging segment 29' $(Z80SLOG) \
 		|| { echo "verify-z80save: FAIL -- BIOS function 25 handed out no segment."; exit 1; }
 	@grep -q 'z80: load: ok' $(Z80SLOG) \
 		|| { echo "verify-z80save: FAIL -- SAVE.COM did not load"; exit 1; }
@@ -1322,13 +1323,12 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 		--max=$(I86MAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(I86LOG))
 	@$(EMUOK)
-	@# ONE HIGHER SINCE C10.  A session runs on console
-	@# 1 (SESSION 1, typed first: since D8 a serial boot starts none) and it takes the first page out of
-	@# the pool, so every number handed out below it moves up by one.
-	@# The numbers are still pinned rather than matched loosely: what
+	@# A session runs on console 1 (SESSION 1, typed first) and takes a
+	@# page, but a parked page holds no segment, so numbering starts at
+	@# 0x28.  The numbers are pinned rather than matched loosely: what
 	@# they say is that fn 25 handed out THREE DIFFERENT consecutive
 	@# segments, and that is the gate.
-	@grep -q 'i86: code segment 29, data segment 2A, staging segment 2B' $(I86LOG) \
+	@grep -q 'i86: code segment 28, data segment 29, staging segment 2A' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- BIOS function 25 handed out no segments."; \
 		     echo "            That is the whole gate: a small-model .CMD needs"; \
 		     echo "            two 64 KB groups and nothing below this can run."; exit 1; }
@@ -1407,17 +1407,17 @@ verify-i86: all build/i86sub-host.bin build/i86hex-host.cmd
 	@# which included the ROM's two display planes 0x3A and 0x3B, so this
 	@# very target was proof that BIOS function 25 hands out the
 	@# framebuffer (first-release review P1 #9).  PGSEGLO is now 0x28.
-	@grep -q 'i86: extra segments: 2C 2D 2E' $(I86LOG) \
+	@grep -q 'i86: extra segments: 2B 2C 2D' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- BIOS function 25 did not supply the"; \
 		     echo "            three further segments a five-group .CMD"; \
 		     echo "            needs.  The pool is seven, one is the console"; \
-		     echo "            1 session's, and this run holds six: 29 2A 2C"; \
-		     echo "            2D 2E for the groups and 2B to stage in."; exit 1; }
+		     echo "            1 session's, and this run holds six: 28 29 2B"; \
+		     echo "            2C 2D for the groups and 2A to stage in."; exit 1; }
 	@# One line per group: form, the guest paragraph it was given, the
 	@# physical segment behind it.  The auxiliary group (form 5) is the
 	@# one with no segment register at all -- it is reachable only through
 	@# the base page -- so it is the one asserted by name.
-	@grep -q 'i86: group 5 at 5000:0000, segment 2E' $(I86LOG) \
+	@grep -q 'i86: group 5 at 5000:0000, segment 2D' $(I86LOG) \
 		|| { echo "verify-i86: FAIL -- the auxiliary group got no segment"; \
 		     echo "            of its own.  src/shim/i86load.c i86place()"; \
 		     echo "            gives one to every declared group."; exit 1; }
@@ -8182,7 +8182,7 @@ verify-c10two: all $(C10IMG)
 # live program's memory back to the pool.  CONCW/CONCWB/CONCWC (see
 # src/tests/concw.c) make that observable with no timing in it at all.
 PGSEGLO  = $(shell sed -n 's/^#define[ 	]*PGSEGLO[ 	][ 	]*\(0x[0-9a-fA-F]*\).*/\1/p' src/bios/c900cfg.h)
-PGNSLOT  = $(shell sed -n 's/^#define[ 	]*PGNSLOT[ 	][ 	]*\([0-9]*\).*/\1/p' src/bios/c900cfg.h)
+PGNSEG   = $(shell sed -n 's/^#define[ 	]*PGNSEG[ 	][ 	]*\([0-9]*\).*/\1/p' src/bios/c900cfg.h)
 PGNUP    = $(shell sed -n 's/^#define[ 	]*PGNUP[ 	][ 	]*\([0-9]*\).*/\1/p' src/bios/c900cfg.h)
 PGSEGVIDA = $(shell sed -n 's/^#define[ 	]*PGSEGVIDA[ 	][ 	]*\(0x[0-9a-fA-F]*\).*/\1/p' src/bios/c900cfg.h)
 PGSEGVIDB = $(shell sed -n 's/^#define[ 	]*PGSEGVIDB[ 	][ 	]*\(0x[0-9a-fA-F]*\).*/\1/p' src/bios/c900cfg.h)
@@ -8192,16 +8192,16 @@ PGSEGIN  = $(OSSEL)CONCW\rCONCWC\r
 
 .PHONY: verify-pgseg
 verify-pgseg: all $(CPMACONCW)
-	@test -n "$(PGSEGLO)" -a -n "$(PGNSLOT)" \
+	@test -n "$(PGSEGLO)" -a -n "$(PGNSEG)" \
 		-a -n "$(PGSEGVIDA)" -a -n "$(PGSEGVIDB)" \
-		|| { echo "verify-pgseg: FAIL -- PGSEGLO/PGNSLOT/PGSEGVIDA/PGSEGVIDB"; \
+		|| { echo "verify-pgseg: FAIL -- PGSEGLO/PGNSEG/PGSEGVIDA/PGSEGVIDB"; \
 		     echo "              could not be read out of src/bios/c900cfg.h, so"; \
 		     echo "              this target does not know what the pool is."; exit 1; }
 	@# The whole pool, slot by slot, against the two display planes.
 	@# Slots 0..PGNUP-1 ascend from PGSEGLO and the rest descend below
 	@# it (c900cfg.h PGSEG); a slot outside 0x02..0x2F would be ROM,
 	@# resident or display territory.
-	@lo=$$(($(PGSEGLO))); n=$$(($(PGNSLOT))); up=$$(($(PGNUP))); \
+	@lo=$$(($(PGSEGLO))); n=$$(($(PGNSEG))); up=$$(($(PGNUP))); \
 	 va=$$(($(PGSEGVIDA))); vb=$$(($(PGSEGVIDB))); \
 	 i=0; while [ $$i -lt $$n ]; do \
 		if [ $$i -lt $$up ]; then s=$$((lo + i)); \
@@ -8278,9 +8278,40 @@ verify-pgseg: all $(CPMACONCW)
 		     echo "              foreground warm boot."; \
 		     grep 'CONCWB' build/pgseg.txt; exit 1; }
 	@a=`cat build/pgseg-a.txt`; b=`cat build/pgseg-b.txt`; c=`cat build/pgseg-c.txt`; \
-	 echo "verify-pgseg: PASS -- pool $(PGSEGLO)..+$(PGNSLOT) clear of the display planes"; \
+	 echo "verify-pgseg: PASS -- pool $(PGSEGLO)..+$(PGNSEG) clear of the display planes"; \
 	 echo "              $(PGSEGVIDA)/$(PGSEGVIDB); the warm boot reclaimed the foreground's $$a and"; \
 	 echo "              left the live background's $$b alone (CONCWC got:$$c)"
+
+# ---- the pool above 1 MB, from kboot's map or the holes (verify-kmem) ----
+# CONCWC prints the pool's size in hex.  With a handoff the pool is kboot's
+# memory map; with --no-bootinfo it is the compiled-in holes.  Without an HR
+# board kboot lists 0x3E, which the holes leave out: 4 MB is 0x2E slots by
+# the map and 0x2D without it.  Each run is: medium, emulator options, slots.
+# At 4 MB the RAM at 0x37 answers the console probe as LR text, so the serial
+# line is console 1 at user 1: USER 0 reaches CONCWC.
+KMEMIMG  = build/kmem.bin
+KMEMNBIMG = build/kmem-nb.bin
+KMEMIN   = $(OSSEL)USER 0\rCONCWC\r$(ENDIN)
+
+.PHONY: verify-kmem
+verify-kmem: all $(CPMACONCW)
+	$(MKDISK) $(KMEMIMG) $(CPMSYS) $(CPMACONCW) $(CPMBIMG)
+	$(MKDISK) --no-bootinfo $(KMEMNBIMG) $(CPMSYS) $(CPMACONCW) $(CPMBIMG)
+	@for run in "kmem --ram=08-2F 1F" "kmem --ram=08-3F 2E" \
+		    "kmem-nb --ram=08-2F 1F" "kmem-nb --ram=08-3F 2D"; do \
+		set -- $$run; opts=$$2; \
+		log=$(abspath build)/verify-$$1$$2.log; \
+		( $(EMUCD) && ./c900 --disk=$(abspath build)/$$1.bin $$opts \
+			--input="$(KMEMIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null ) \
+			> "$$log" \
+			|| { echo "verify-kmem: FAIL -- $$1.bin $$opts: the emulator exited $$?"; exit 1; }; \
+		got=`tr -d '\r' < "$$log" | sed -n 's/^CONCWC: slots //p'`; \
+		test "$$got" = "$$3" \
+			|| { echo "verify-kmem: FAIL -- $$1.bin $$opts: pool '$$got' slots, want $$3"; \
+			     echo "              transcript: $$log"; exit 1; }; \
+		echo "verify-kmem: $$1.bin $$opts: 0x$$got slots"; \
+	done
+	@echo "verify-kmem: PASS -- 2.5 MB and 4 MB sized by kboot's map and by the holes"
 
 # ---- a wedged disk controller must be reported, not retried for ever ----
 # src/bios/wd900.c wdsec() in the first-release review.  wdsec() looped `for (;;)'

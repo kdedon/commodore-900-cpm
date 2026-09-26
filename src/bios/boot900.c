@@ -15,11 +15,12 @@
 
 /* The version this BIOS asks the loader for, and the block length that goes
  * with it.  It is this system's choice, not part of the handoff layout. */
-#define	BI_ASK		4
-#if	BI_ASK == 4
-#define	BI_ASKLEN	BI_LEN4
+#if	BI_VERSION >= 5
+#define	BI_ASK		5
+#define	BI_ASKLEN	BI_LEN5
 #else
-#define	BI_ASKLEN	BI_LEN3
+#define	BI_ASK		4
+#define	BI_ASKLEN	BI_LEN4
 #endif
 
 /* Keep this externally patched handoff in initialized data: kboot scans
@@ -316,7 +317,13 @@ biosinit()
 	mapseg(SPLITTSEG, SPLITTPAGE, 2);
 	/* size the segment pool from the ROM's memory report -- before
 	 * anything can ask, and answering zero on a 512 KB machine */
-	pginit();
+#if	BI_VERSION >= 5
+	if (bivalid() && bootinf.bi_len >= (unsigned short)BI_LEN5
+	    && bootinf.bi_nram <= BI_NRAM)
+		pginit((unsigned short *)bootinf.bi_ram, (int)bootinf.bi_nram);
+	else
+#endif
+		pginit((unsigned short *)0, 0);
 	rtcinit();			/* CIO #1 Port B/PC1 -> MSM58321 */
 	tickinit();			/* CIO #1 C/T 3 -> the 100 Hz tick */
 	wdinit900();

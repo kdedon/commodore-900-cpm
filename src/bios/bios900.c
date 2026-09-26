@@ -592,6 +592,7 @@ extern long rtctime();
 extern int	pgalloc();
 extern int	pgfree();
 extern int	pgcount();
+extern int	pgnslot;
 extern		pgrelall();
 extern int	pgtpaswap();
 extern int	tpaphys;
@@ -963,7 +964,8 @@ long d1, d2;
 		return (tickget());
 
 	/* SEGMENT: d1=0 allocates (segment or 0); d1=1 frees d2 (1 or 0);
-	 * d1=2 counts free slots. Other operations return 0. */
+	 * d1=2 counts free slots; d1=3 counts all of them. Other operations
+	 * return 0. */
 	case 25:				/* SEGMENT */
 		switch ((int)d1) {
 		case 0:
@@ -972,6 +974,8 @@ long d1, d2;
 			return ((long)pgfree((int)d2));
 		case 2:
 			return ((long)pgcount());
+		case 3:
+			return ((long)pgnslot);
 		}
 		return (0L);
 

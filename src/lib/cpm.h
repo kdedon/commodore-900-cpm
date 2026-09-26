@@ -131,6 +131,7 @@ struct biospb {
 #define	SEG_GET		0L	/* -> segment number, or 0 if none left	*/
 #define	SEG_PUT		1L	/* P2 = segment; -> 1 freed, 0 not ours	*/
 #define	SEG_COUNT	2L	/* -> how many are free right now	*/
+#define	SEG_SLOTS	3L	/* -> how many pages the pool has	*/
 
 /* the XADDR of a segment's first byte: what SEG_GET's answer is for */
 #define	SEGBASE(s)	((long)(s) << 24)
