@@ -25,7 +25,7 @@
 	.globl	pgcur_			/   and the row: the running process
 	.globl	panic_			/ frame printer (bios900.c)
 
-XVNPROC	=	6			/ rows in xvec (bios900.c XVNPROC)
+XVNPROC	=	7			/ rows in xvec (bios900.c XVNPROC)
 
 	.shri
 

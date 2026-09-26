@@ -7717,9 +7717,9 @@ verify-rsxn: all $(CPMAGP)
 	@echo "             still going straight to the BDOS"
 
 # ---- verify-ddtseg: no program may write over a supervisor stack ----
-# Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: six
-# stacks from 0xFC00 down to 0x3C00).  Nothing may ever write BELOW the
-# lowest of them, so the headroom at 0x0000 and 0x2000 is a tripwire: on a
+# Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: seven
+# stacks from 0xFC00 down to 0x1C00).  Nothing may ever write BELOW the
+# lowest of them, so the headroom at 0x0000 and 0x1000 is a tripwire: on a
 # healthy machine it reads as zeros for the whole run.
 #
 # DDT.Z8K is the program that proved this can be violated.  It is a
@@ -7744,7 +7744,7 @@ verify-ddtseg: all $(CPMAGP)
 	$(MKDISK) $(DDTSEGIMG) $(CPMSYS) $(CPMAGP)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(DDTSEGIMG)) \
 		--input="$(DDTSEGIN)" --max=$(DDTSEGMAX) \
-		--dump=3F:0000+32 --dump=3F:2000+32 2>&1; $(EMUSTAT); } \
+		--dump=3F:0000+32 --dump=3F:1000+32 2>&1; $(EMUSTAT); } \
 		| tee $(abspath $(DDTSEGLOG))
 	@$(EMUOK)
 	@grep -q 'Zilog portable debugger' $(DDTSEGLOG) \
@@ -7756,8 +7756,8 @@ verify-ddtseg: all $(CPMAGP)
 		     echo "               Suspect the SC #1 gate (src/bdos/bdosglue.s memgate)"; \
 		     echo "               taking a non-segmented pointer literally, and xfer_"; \
 		     echo "               (src/bios/glue.s) launching it in System mode."; exit 1; }
-	@grep -qE 'spec=3F:2000\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
-		|| { echo "verify-ddtseg: FAIL -- segment 0x3F:2000 was written: see above"; exit 1; }
+	@grep -qE 'spec=3F:1000\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- segment 0x3F:1000 was written: see above"; exit 1; }
 	@echo "verify-ddtseg: PASS -- DDT ran and the supervisor-stack headroom in"
 	@echo "               segment 0x3F is untouched: no program wrote over"
 	@echo "               another process's supervisor stack"
@@ -8857,12 +8857,12 @@ CONCRLOG = build/verify-concr.log
 CONCRMAX ?= 900000000
 # THE ARRANGEMENT NEEDS EXACTLY ONE FREE DESCRIPTOR, and at PNPROC 4 that
 # was implicit: the console-1 session, CONCM and CONCO were three of four.
-# At 6 it has to be said out loud, so CONCM creates this many CONCR W
+# At 7 it has to be said out loud, so CONCM creates this many CONCR W
 # ballast processes and prints the live count for the check below to assert.
 # Nothing here is weakened by that -- the refusal being tested is the same
 # refusal; it is the machine's capacity that moved (F14).
-CONCRBALLAST = 2
-CONCRLIVE = 5
+CONCRBALLAST = 3
+CONCRLIVE = 6
 .PHONY: verify-concr
 verify-concr: all $(CPMACONCR)
 	$(MKDISK) $(CONCRIMG) $(CPMSYS) $(CPMACONCR) $(CPMBIMG)
@@ -9331,13 +9331,13 @@ CONCR2LOG = build/verify-concr2.log
 # Five process loads, a handful of disk operations and three one-sided
 # waits; the run ends on console idle well inside this.
 CONCR2MAX ?= 900000000
-# One ballast process, which is what leaves exactly one descriptor free at
-# PNPROC 6: the console-1 session, CONCL, CONCR A, CONCR B and the ballast
-# are five of six.  CONCL prints the count and the check below asserts it,
+# Two ballast processes, which is what leaves exactly one descriptor free at
+# PNPROC 7: the console-1 session, CONCL, CONCR A, CONCR B and the ballast
+# are six of seven.  CONCL prints the count and the check below asserts it,
 # so if PNPROC moves again this target says so instead of quietly measuring
 # nothing.
-CONCR2BALLAST = 1
-CONCR2LIVE = 5
+CONCR2BALLAST = 2
+CONCR2LIVE = 6
 .PHONY: verify-concr2
 verify-concr2: all $(CPMACONCR2)
 	$(MKDISK) $(CONCR2IMG) $(CPMSYS) $(CPMACONCR2) $(CPMBIMG)

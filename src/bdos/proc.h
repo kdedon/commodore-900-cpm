@@ -37,26 +37,25 @@ struct context {
 /*  Descriptor capacity; each process also needs a TPA page and a supervisor
     stack, and both of those are the reason this number is not larger.
 
-    SIX puts the ceiling at FIVE user processes, because the cold-boot
+    SEVEN puts the ceiling at SIX user processes, because the cold-boot
     session on the second console holds one descriptor for as long as the
     machine is up.  What bounds it:
 
       * SUPERVISOR STACKS.  PSTKOF(i) = PSTKTOP - i*PSTKSZ in segment
-	0x3F, so six stacks run 0xFC00 down to 0x3C00, leaving 0x3C00 of
-	headroom below the lowest.  The segment is a full 64 KB page and
-	holds nothing else, so seven fit; an eighth would get 0x1C00.
+	0x3F, so seven stacks run 0xFC00 down to 0x1C00.  The segment is a
+	full 64 KB page and holds nothing else; an eighth would get 0x1C00.
       * TPA PAGES.  One live process owns segment TPASEG and the rest are
-	parked in allocator slots, so six processes need five pool slots.
-	pginit() gives as many slots as RAM backs, up to PGNSLOT: seven on
-	a 1024 KB machine, 31 on 2560 KB.
+	parked in allocator slots, so seven processes need six pool slots.
+	pginit() gives as many slots as RAM backs: seven on a 1024 KB
+	machine.
       * DESCRIPTOR INDEX.  Every loop in proc.c is written against PNPROC
-	and pgown[] holds pgcur+1 in a char, so an index of 5 costs
+	and pgown[] holds pgcur+1 in a char, so an index of 6 costs
 	nothing.
 
     Each descriptor costs one struct pdesc of BSS -- mostly the struct
     stvars copy inside it -- and 8 KB of segment 0x3F.  */
 
-#define	PNPROC		6
+#define	PNPROC		7
 
 /* Ask the BIOS for the runtime console count when validating console numbers. */
 
@@ -209,7 +208,7 @@ struct pdesc {
 };
 
 /* PNPROC 8 KB supervisor stacks occupy segment 3F from its top downwards
- * (six of them today: 0xFC00 down to 0x3C00).  Stack tops are fixed per
+ * (seven of them today: 0xFC00 down to 0x1C00).  Stack tops are fixed per
  * descriptor so parked C frames do not move. */
 
 #define	PSTKTOP		0xfc00

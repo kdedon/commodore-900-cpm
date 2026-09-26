@@ -771,7 +771,7 @@ UWORD space;
  * a process with no row records nothing and sees nothing recorded, which
  * is exactly today's behaviour for every program that never asks.
  */
-#define XVNPROC	6		/* src/bdos/proc.h PNPROC; trap.s XVNPROC */
+#define XVNPROC	7		/* src/bdos/proc.h PNPROC; trap.s XVNPROC */
 long	xvec[XVNPROC][48];
 extern int pgcur;		/* the running process (pgalloc.c)	*/
 
