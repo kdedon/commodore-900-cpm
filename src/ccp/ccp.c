@@ -74,6 +74,7 @@ BYTE   msg10[] = "Enter User No: $";
 BYTE   msg11[] = ".SUB file not found$";
 BYTE   msg12[] = "User # range is [0-15]$";
 BYTE   msg13[] = "Too many arguments: $";
+BYTE   msg14[] = " required$";
 /*--------------------------------------------------------------*\
  |		    Global Arrays & Variables			|
 \*--------------------------------------------------------------*/
@@ -110,6 +111,8 @@ BYTE nd_argu[4] =		/* per-argument user number from*/
 BYTE nullcmd[2] =		/* an empty command line: the	*/
 {NULL,NULL};			/*  submit loop asks for the	*/
 				/*  next line by pointing at it	*/
+BYTE *xcmd;			/* transient a built-in hands	*/
+				/*  its command to, or NULL	*/
 
 /*--------------------------------------------------------------*\
  |		      Function Definitions			|
@@ -157,6 +160,8 @@ UWORD errhook();		/* this returns a word		*/
 #define cbdos(c,a) bdos(c,(long)a)
 				/* call BDOS with an address in	*/
 				/*  the caller's memory space.	*/
+#define SET_ERRMODE	45
+#define XERR(r)	((r) > 0xFF)	/* an extended error came back	*/
 				/*  When the CCP was resident	*/
 				/*  that meant map_adr(a,0) -- a	*/
 				/*  BDOS data-segment address is	*/
@@ -814,12 +819,71 @@ REG UWORD attrib;
 
 
 					/************************/
+UWORD fcall(func)			/* a file call on cmdfcb*/
+					/* that returns its	*/
+					/* extended error	*/
+					/************************/
+UWORD func;
+{
+	REG UWORD r;
+
+	bdos(SET_ERRMODE,(long)0xFF);
+	r = cbdos(func,cmdfcb);
+	bdos(SET_ERRMODE,(long)0);
+	return(r);
+}
+
+
+					/************************/
+UWORD xform(name)			/* options or a pass-	*/
+					/* word: only the	*/
+					/* transient takes them	*/
+					/************************/
+BYTE *name;
+{
+	REG BYTE *p;
+
+	for(p = tail;*p != NULL && *p != EXLIMPT;p++)
+		if(*p == '[' || *p == ';')
+		{
+			xcmd = name;
+			return(TRUE);
+		}
+	return(FALSE);
+}
+
+
+					/************************/
+VOID xfer_cmd()				/* run the transient a	*/
+					/* built-in handed its	*/
+					/* command to		*/
+					/************************/
+{
+	REG UWORD i;
+
+	for(i = 0;xcmd[i] != NULL;i++)
+		parm[0][i] = xcmd[i];
+	parm[0][i] = NULL;
+	nd_argu[0] = CURDU;
+	if(!(cmd_file(SEARCH)))
+	{
+		for(i = 0;xcmd[i] != NULL;i++)
+			bdos(CONSOLE_OUTPUT,(long)xcmd[i]);
+		cbdos(PRINT_STRING,&msg14[0]);
+		ccp_seterr(TRUE);
+	}
+}
+
+
+					/************************/
 VOID type_cmd()				/*   type out a file	*/
 					/*   to the console 	*/
 					/************************/
 {
-	REG 	UWORD i;
+	REG 	UWORD i,r;
 
+	if(xform("TYPE"))
+		return(0);
 	if(parm[1][0] == NULL)		/*prompt user for filename*/
 	{
 		cbdos(PRINT_STRING,&msg2[0]);
@@ -843,7 +907,15 @@ VOID type_cmd()				/*   type out a file	*/
 		}
 	}
 	i = fill_fcb(1,cmdfcb);		/*fill a file control block*/
-	if(i == 0 && parm[1][0] != NULL && (cbdos(OPEN_FILE,cmdfcb) <= 3))
+	r = 0xFF;
+	if(i == 0 && parm[1][0] != NULL)
+		r = fcall(OPEN_FILE);
+	if(XERR(r))
+	{
+		xcmd = "TYPE";
+		return(0);
+	}
+	if(r <= 3)
 	{
 		/*  One function 111 per RECORD, not one function 2 per
 		    character.  The BDOS cooks the block exactly as it
@@ -895,7 +967,9 @@ VOID ren_cmd()				/*    rename a file	*/
 	BYTE    	new_fcb[FCB_LEN];
 	REG UWORD	i,j,k,bad_cmd;
 
-	bad_cmd = FALSE;	       /*-------------------------*/	
+	if(xform("RENAME"))
+		return(0);
+	bad_cmd = FALSE;	       /*-------------------------*/
 	if(parm[1][0] == NULL)	       /*prompt user for filenames*/
 	{			       /*-------------------------*/	
 		cbdos(PRINT_STRING,&msg3[0]); 
@@ -963,7 +1037,13 @@ VOID ren_cmd()				/*    rename a file	*/
 			if(new_fcb[0] < 1 || new_fcb[0] > 16)
 				bad_cmd = TRUE;
 			if(!(bad_cmd) && cbdos(SEARCH_FIRST,new_fcb) != 255)
-				cbdos(PRINT_STRING,&msg5[0]);
+			{	/* RENAME offers to delete it, but	*/
+				/*  prompted names are not in the tail	*/
+				if(*tail == NULL)
+					cbdos(PRINT_STRING,&msg5[0]);
+				else
+					xcmd = "RENAME";
+			}
 			else{
 				k = 0;
 				for(i = 16;i <= 35;i++)
@@ -971,7 +1051,9 @@ VOID ren_cmd()				/*    rename a file	*/
 				if(cmdfcb[0] < 0 || cmdfcb[0] > 15)
 					bad_cmd = TRUE;
 				if(!(bad_cmd) &&
-				cbdos(RENAME_FILE,cmdfcb) > 0)
+				XERR(i = fcall(RENAME_FILE)))
+					xcmd = "RENAME";
+				else if(!(bad_cmd) && i > 0)
 					cbdos(PRINT_STRING,&msg6[0]);
 			    }
 		}
@@ -989,6 +1071,9 @@ VOID era_cmd()				/*  erase a file from	*/
 					/************************/
 {
 	REG 	UWORD i;
+
+	if(xform("ERASE"))
+		return(0);
 				        /*----------------------*/
 	if(parm[1][0] == NULL)		/* prompt for a file	*/
 	{				/*----------------------*/
@@ -1026,7 +1111,9 @@ VOID era_cmd()				/*  erase a file from	*/
 			return(0);
 	}
 	if(parm[2][0] != 'N')
-		if(cbdos(DELETE_FILE,cmdfcb) > 0)
+		if(XERR(i = fcall(DELETE_FILE)))
+			xcmd = "ERASE";
+		else if(i > 0)
 		{
 			cbdos(PRINT_STRING,&msg6[0]);
 			ccp_seterr(TRUE);
@@ -1632,6 +1719,7 @@ REG BYTE *cmd;
 			return(0);
 	}
 	ccp_seterr(FALSE);
+	xcmd = NULL;
 	nu = map_names();	/* NAME: -> d: ; nu = its user + 1	*/
 	code = decode(cmd);
 	saveu = 0;
@@ -1701,6 +1789,8 @@ gosub:				if(cmd_file(flag))
 	}
 	if(saveu)
 		bdos(GET_USER_NO,(long)(saveu - 1));
+	if(xcmd != NULL)
+		xfer_cmd();
 }
 
 

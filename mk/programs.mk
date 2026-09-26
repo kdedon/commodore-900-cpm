@@ -719,6 +719,15 @@ $(UOBJDIR)/SET.Z8K: $(UOBJDIR)/set.lout $(LOUT2CPM)
 $(UOBJDIR)/INITDIR.Z8K: $(UOBJDIR)/initdir.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/ERASE.Z8K: $(UOBJDIR)/erase.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/RENAME.Z8K: $(UOBJDIR)/rename.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
+$(UOBJDIR)/TYPE.Z8K: $(UOBJDIR)/type.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/BIOSET.Z8K: $(UOBJDIR)/bioset.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

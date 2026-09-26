@@ -4037,6 +4037,97 @@ verify-pass: all
 	@echo "verify-pass: PASS -- three modes enforced on an armed drive,"
 	@echo "        and the identical directory unenforced on an unarmed one"
 
+# ---- ERASE, RENAME and TYPE, and the built-ins that hand off to them ----
+# ERA, REN and TYPE run the transient for options, a password, or an
+# extended error (a protected file, an existing new name).  Three cold
+# boots on one password-armed image, then the directory is read host-side.
+# \g after the first command: the Y/N and password prompts do not gate input.
+XFFS	= build/xffs
+XFCPMA	= build/cpma-xfile.img
+XFIMG	= build/xfile.bin
+XFPART	= build/xfile-part.img
+XFOUT	= build/xfile-out
+XFLOG	= build/verify-xfile
+XFIN1	= $(OSSEL)TYPE HELLO.TXT [NOPAGE]\r\\gTYPE X*.TXT [NO PAGE]\rTYPE HELLO.TXT [BOGUS]\rTYPE PWR.TXT\rRSECRET\rTYPE BIG.TXT [PAGE]\r\003$(ENDIN)
+XFIN2	= $(OSSEL)ERA X1.TXT [CONFIRM]\r\\gYERASE X2.TXT [CONFIRM]\rNERA PWD.TXT\rDSECRET\rERASE PWX.TXT;XSECRET [PASSWORD]\rERASE Q*.TXT [BOGUS]\rERASE NOSUCH.TXT\r$(ENDIN)
+XFIN3	= $(OSSEL)RENAME S1.TXT=R1.TXT\r\\gRENAME W?.TXT=R?.TXT\rREN EX.TXT=S1.TXT\rYREN PWN.TXT=PWR.TXT;RSECRET\rRENAME BAD\r$(ENDIN)
+.PHONY: verify-xfile
+verify-xfile: all
+	rm -rf $(XFFS) $(XFOUT)
+	mkdir -p $(XFFS) $(XFOUT)
+	cp $(DISKA)/* $(XFFS)/
+	@for f in X1:xfile-one X2:xfile-two R1:rename-one R2:rename-two \
+		RA:rename-a EX:old-ex PWD:delete-protected \
+		PWR:read-protected-fixture PWX:xfcb-only; do \
+		printf '%s\r\n' "$${f#*:}" > $(XFFS)/$${f%%:*}.TXT; done
+	python3 tools/mkcpmfs.py $(XFCPMA) $(CPMA_BLOCKS) $(XFFS)
+	python3 tools/mkcpmfs.py --label C900X --label-mode create,update,password \
+		--xfcb PWD.TXT:0x20:DSECRET --xfcb PWR.TXT:0x80:RSECRET \
+		--xfcb PWX.TXT:0x20:XSECRET $(XFCPMA)
+	$(MKDISK) $(XFIMG) $(CPMSYS) $(XFCPMA)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XFIMG)) \
+		--input="$$(printf '$(XFIN1)')" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(XFLOG)-1.log)
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XFIMG)) \
+		--input="$$(printf '$(XFIN2)')" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(XFLOG)-2.log)
+	@$(EMUOK)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(XFIMG)) \
+		--input="$$(printf '$(XFIN3)')" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(XFLOG)-3.log)
+	@$(EMUOK)
+	dd if=$(XFIMG) of=$(XFPART) bs=512 \
+		skip=$(CPMA_BASEBLK) count=$(CPMA_BLOCKS) status=none conv=sparse
+	python3 tools/mkcpmfs.py --extract $(XFPART) $(XFOUT) > /dev/null
+	python3 tools/mkcpmfs.py --entries $(XFPART) > $(XFLOG)-dir.txt
+	@# ---- 1: TYPE
+	@grep -q 'Too many arguments' $(XFLOG)-1.log $(XFLOG)-2.log $(XFLOG)-3.log \
+		&& { echo "verify-xfile: FAIL -- a built-in kept a command with options"; exit 1; } || true
+	@grep -q 'Hello from CP/M-8000' $(XFLOG)-1.log \
+		|| { echo "verify-xfile: FAIL -- TYPE [NOPAGE] did not type"; exit 1; }
+	@grep -q '^X1.TXT:' $(XFLOG)-1.log && grep -q 'xfile-two' $(XFLOG)-1.log \
+		|| { echo "verify-xfile: FAIL -- TYPE of a wildcard"; exit 1; }
+	@grep -q "Try 'PAGE' or 'NO PAGE'" $(XFLOG)-1.log \
+		|| { echo "verify-xfile: FAIL -- TYPE took a bad option"; exit 1; }
+	@grep -q 'read-protected-fixture' $(XFLOG)-1.log \
+		|| { echo "verify-xfile: FAIL -- TYPE did not ask for and use the password"; exit 1; }
+	@grep -q 'Press RETURN to Continue' $(XFLOG)-1.log && grep -q 'REC0021' $(XFLOG)-1.log \
+		|| { echo "verify-xfile: FAIL -- TYPE [PAGE] did not pause"; exit 1; }
+	@grep -q 'REC0022' $(XFLOG)-1.log \
+		&& { echo "verify-xfile: FAIL -- TYPE went on past ^C at the pause"; exit 1; } || true
+	@# ---- 2: ERASE
+	@grep -q 'X1      .TXT (Y/N)?' $(XFLOG)-2.log \
+		|| { echo "verify-xfile: FAIL -- ERASE [CONFIRM] did not ask"; exit 1; }
+	@grep -q 'PWD     .TXT  Not erased,  Password Error' $(XFLOG)-2.log \
+		|| { echo "verify-xfile: FAIL -- ERA of a protected file did not reach ERASE"; exit 1; }
+	@grep -q 'Unrecognized Option Near: BOGUS' $(XFLOG)-2.log \
+		|| { echo "verify-xfile: FAIL -- ERASE took a bad option"; exit 1; }
+	@grep -q 'No File' $(XFLOG)-2.log \
+		|| { echo "verify-xfile: FAIL -- ERASE of a missing file"; exit 1; }
+	@# ---- 3: RENAME
+	@grep -q 'W2      .TXT=R2      .TXT' $(XFLOG)-3.log \
+		&& grep -q 'WA      .TXT=RA      .TXT' $(XFLOG)-3.log \
+		|| { echo "verify-xfile: FAIL -- RENAME of a wildcard"; exit 1; }
+	@grep -q 'EX      .TXT file already exists, delete (Y/N)?' $(XFLOG)-3.log \
+		&& grep -q 'EX      .TXT=S1      .TXT' $(XFLOG)-3.log \
+		|| { echo "verify-xfile: FAIL -- REN onto an existing name did not reach RENAME"; exit 1; }
+	@grep -q 'Invalid File' $(XFLOG)-3.log \
+		|| { echo "verify-xfile: FAIL -- RENAME of one name"; exit 1; }
+	@# ---- the directory the three sessions left
+	@for f in X2 W2 WA EX PWN PWX; do test -f $(XFOUT)/$$f.TXT \
+		|| { echo "verify-xfile: FAIL -- $$f.TXT is missing"; exit 1; }; done
+	@for f in X1 PWD R1 R2 RA S1 PWR; do test ! -f $(XFOUT)/$$f.TXT \
+		|| { echo "verify-xfile: FAIL -- $$f.TXT is still there"; exit 1; }; done
+	@grep -q 'rename-one' $(XFOUT)/EX.TXT \
+		|| { echo "verify-xfile: FAIL -- EX.TXT is not the renamed file"; exit 1; }
+	@grep -q 'xfcb *PWN' $(XFLOG)-dir.txt \
+		|| { echo "verify-xfile: FAIL -- the password did not follow the rename"; exit 1; }
+	@grep -q 'xfcb *PWX' $(XFLOG)-dir.txt \
+		&& { echo "verify-xfile: FAIL -- ERASE [PASSWORD] left the XFCB"; exit 1; } || true
+	@echo "verify-xfile: PASS -- ERASE, RENAME and TYPE with options and passwords,"
+	@echo "        reached directly and through ERA, REN and TYPE"
+
 # ---- SET's drive PASSWORD and PROTECT, which are function 100 ----
 #
 # The two forms this port can build.  [PROTECT=ON] is the label's
@@ -4125,12 +4216,16 @@ verify-passset: all
 # share a BDOS with the program under test: the armed image ends with an
 # XFCB for HELLO.TXT that it did not start with, and the control image
 # ends with none.
+#
+# The refused TYPE is handed to TYPE.Z8K, which asks for the password;
+# an empty one, typed ahead (\i) since that prompt does not gate input,
+# gets the BDOS's Password Error.
 PFCPMA	 = build/cpma-passfile.img
 PFCTLCPMA = build/cpma-passfilectl.img
 PFIMG	 = build/passfile.bin
 PFCTLIMG = build/passfilectl.bin
 PFLOG	 = build/verify-passfile
-PFIN	 = $(OSSEL)SET HELLO.TXT [PASSWORD=OPENUP,PROTECT=READ]\rTYPE HELLO.TXT\rSET [DEFAULT=OPENUP]\rTYPE HELLO.TXT\rSET HELLO.C [PASSWORD=OPENUP,PROTECT=DELETE]\rSET HELLO.C [PROTECT=OFF]\rTYPE HELLO.C\rSDIR HELLO.*[XFCB]\rSDIR HELLO.*[NONXFCB]\r$(ENDIN)
+PFIN	 = $(OSSEL)SET HELLO.TXT [PASSWORD=OPENUP,PROTECT=READ]\rTYPE HELLO.TXT\r\i\rSET [DEFAULT=OPENUP]\rTYPE HELLO.TXT\rSET HELLO.C [PASSWORD=OPENUP,PROTECT=DELETE]\rSET HELLO.C [PROTECT=OFF]\rTYPE HELLO.C\rSDIR HELLO.*[XFCB]\rSDIR HELLO.*[NONXFCB]\r$(ENDIN)
 .PHONY: verify-passfile
 verify-passfile: all
 	cp $(CPMAIMG) $(PFCPMA)
