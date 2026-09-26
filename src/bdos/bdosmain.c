@@ -528,7 +528,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 			rtnval = 0xff;
 			break;
 		    }
-		    if ( UBWORD(temp.fptr->fname[5]) & 0x80 )
+		    if ( UBWORD(temp.fptr->fname[4]) & 0x80 )
 		    {	/* XFCB-only deletion removes password metadata and leaves file data intact. */
 			del_xfcb(temp.fptr, 0);
 			rtnval = 0;

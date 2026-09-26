@@ -912,9 +912,9 @@ char *n;
 		 * file itself is not touched, and a delete without it
 		 * would erase the file this command was protecting.
 		 */
-		wfcb.fname[5] |= 0x80;
+		wfcb.fname[4] |= 0x80;
 		__bdos(BDOS_DELETE, (long) &wfcb);
-		wfcb.fname[5] &= 0x7f;
+		wfcb.fname[4] &= 0x7f;
 	}
 	putfile(n);
 	showxfcb(pmode);
