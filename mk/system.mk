@@ -42,22 +42,23 @@ $(CPMSYS): $(OBJ) $(BOOTOBJ) $(OBJDIR)/modimg.bin tools/gencpm.py $(GENCPMDAT)
 	@cat $(OBJDIR)/bootlink.txt
 	python3 tools/mkblob.py --place $(OBJDIR)/cpm.lnk $(OBJDIR)/modimg.bin \
 	    $(OBJDIR)/boot.mod $@
-	@python3 -c 'import struct,sys; \
+	@python3 -c 'import re,struct,sys; \
 hd = lambda f: open(f,"rb").read(48); \
 gl = lambda o: (struct.unpack_from("<H",b,o)[0]<<16)|struct.unpack_from("<H",b,o+2)[0]; \
 b = hd("$(OBJDIR)/cpm.lnk"); \
 text = gl(8)+gl(12); data = gl(20)+gl(24); bss = gl(28); \
 print("cpm.sys: text=0x%x data=0x%x bss=0x%x" % (text,data,bss)); \
+cf = lambda n: int(re.search(r"#define\s+%s\s+(0x[0-9a-fA-F]+)" % n, open("src/bios/c900cfg.h").read()).group(1), 16); \
 rnd = (text + 1023) // 1024 * 1024; \
-free = 0x20000 - (rnd + data + bss); \
+free = cf("BUFPHYS") - 0x080000 - (rnd + data + bss); \
 b = hd("$(CPMSYS)"); \
 data = gl(20)+gl(24); bss = gl(28); \
-load = 0x20000 - (rnd + data + bss); \
-print("cpm.sys: %d bytes free below phys 0x0A0000 (%d while loading modules)" % (free,load)); \
-free = load; \
+load = 0x10000 + cf("SSTKTOP") - cf("SSTKSZ") - (rnd + data + bss); \
+print("cpm.sys: %d bytes free below phys 0x%06x (%d below stack 0 while loading modules)" % (free,cf("BUFPHYS"),load)); \
 sys.exit("TEXT > 64K: data seg moves to 0x32 and collides with the TPA" if text > 0x10000 else \
 ("data+bss > 64K" if data+bss > 0x10000 else \
-("IMAGE OVERRUNS phys 0x0A0000 (the TPA) by %d bytes: crt.s puts data at 0x080000+roundup(text,1K), so roundup(text,1K)+data+bss must stay under 128K.  Past it the image runs into the transient program area." % -free) if free < 0 else None))'
+("data+bss OVERRUNS phys 0x%06x by %d bytes: crt.s puts data at 0x080000+roundup(text,1K); what follows it in page 0x09 is overwritten." % (cf("BUFPHYS"),-free)) if free < 0 else \
+("IMAGE OVERRUNS stack 0 by %d bytes while loading modules: cold boot runs on that stack before the images are copied out." % -load) if load < 0 else None))'
 	python3 tools/gencpm.py $(GENCPMDAT) $@ > $(OBJDIR)/gencpm.txt
 	@cat $(OBJDIR)/gencpm.txt
 

@@ -26,8 +26,8 @@ only until cold boot.
 
 The boot module is the code only cold boot runs.  It links after
 CPM.SYS, against --syms's absolute copy of CPM.SYS's globals, so it
-calls and names them directly.  --place puts it past both the blob and
-bss, on a 256-byte physical boundary, where cmain.c maps its segment
+calls and names them directly.  --place puts it past the blob, bss and
+disk cache, on a 256-byte physical boundary, where cmain.c maps its segment
 onto it in place.  Nothing uses that RAM afterwards.  CPM.SYS reaches
 it through bootent_, the first bytes of its segment.
 
@@ -136,10 +136,13 @@ def place(lnkf, binf, bootf, outf):
     # The boot module runs in place, so it starts on a 256-byte physical
     # boundary past both the blob and the bss cold boot fills in.  The
     # data segment's physical base is 1K-aligned.
-    bo = max(ds + pad + len(blob), ds + pad + ssize[L_BSSD])
-    bo = (bo + 255) & ~255
+    # Past the disk cache too, which cold boot reads into.
     tsz = ssize[L_SHRI] + ssize[L_PRVI]
-    bpage = ((cfg("SYSPHYSPAGE") << 16) + ((tsz + 1023) & ~1023) + bo) >> 8
+    dbase = (cfg("SYSPHYSPAGE") << 16) + ((tsz + 1023) & ~1023)
+    bo = max(ds + pad + len(blob), ds + pad + ssize[L_BSSD],
+             cfg("DHPHYS") + 5 * cfg("DHMAX") - dbase)
+    bo = (bo + 255) & ~255
+    bpage = (dbase + bo) >> 8
     bimg = boot["img"] + b"\0" * boot["bss"]
     grow = bo - ds + len(bimg)
 

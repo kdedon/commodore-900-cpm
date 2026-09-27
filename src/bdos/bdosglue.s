@@ -64,7 +64,7 @@
 	.globl	faultpanic_
 	.globl	map_adr_	/ BIOS side (SC #1 gate targets)
 	.globl	mem_cpy_
-	.globl	pgmine_
+	.globl	pgmine_, pgpeek_
 	.globl	xfer_
 	.globl	spemu_		/ split-I/D shim: SC #255 emulator (splitsc.c)
 	.globl	spusp_		/   user r15/r14 mirrors around spemu_
@@ -226,6 +226,20 @@ memcpy:
 	popl	rr2, (rr14)
 	test	r1
 	jr	z, scret		/   not its own: copy nothing
+	pushl	(rr14), rr2
+	pushl	(rr14), rr4
+	push	(rr14), r3		/ len
+	push	(rr14), r7		/ source offset
+	ld	r4, r6
+	srl	r4, $8			/ source segment number
+	and	r4, $0x007F
+	push	(rr14), r4
+	call	pgpeek_
+	add	r15, $6
+	popl	rr4, (rr14)
+	popl	rr2, (rr14)
+	test	r1
+	jr	z, scret		/   unmapped stack: copy nothing
 memcpyok:
 	pushl	(rr14), rr2		/ len
 	pushl	(rr14), rr4		/ dst

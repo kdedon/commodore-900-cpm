@@ -168,6 +168,17 @@ unsigned off, len, lo;
 	return (i >= 0 && pgss[i] && pgown[pgss[i] - 1] == pgcur + 1);
 }
 
+/* May the running process read len bytes at seg:off?  In 0x3F only its
+ * own stack and those above it are mapped. */
+int pgpeek(seg, off, len)
+int seg;
+unsigned off, len;
+{
+	if (seg != 0x3f)
+		return (1);
+	return (off >= (unsigned)sysstk - SSTKSZ && len <= (unsigned)(0 - off));
+}
+
 /* Mark a slot as a live process's parked image, or no longer one.  The
  * scheduler sets this on creation and clears it on exit; pgrelall()
  * preserves held slots.  Holding unmaps the segment: the answer is the

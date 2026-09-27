@@ -218,35 +218,32 @@ start:
 	ldb	rl0, $0x00
 	soutb	0x0ffc, rl0
 
-	/ seg 0x33 -> phys 0x0C0000, attr 0x02 (SYS r/w): disk/deblock buffers
-	/ (the kboot launch stub at 0x0C0000 is dead once we are here).
+	/ seg 0x33 -> BUFPHYS, attr 0x02 (SYS r/w): disk/deblock buffers.
 	ldb	rl0, $0x33
 	soutb	0x01fc, rl0
-	ldb	rl0, $0x0c
+	ld	r0, $BUFPAGE
+	soutb	0x0ffc, rh0
 	soutb	0x0ffc, rl0
-	ldb	rl0, $0x00
-	soutb	0x0ffc, rl0
-	ldb	rl0, $0xff
+	ldb	rl0, $BUFLIM
 	soutb	0x0ffc, rl0
 	ldb	rl0, $0x02
 	soutb	0x0ffc, rl0
 
-	/ seg 0x3F -> phys 0x0D0000, attr 0x02: the C stack.  Frame/local refs
+	/ seg 0x3F -> the supervisor stacks, limited to stack 0.  Frame/local refs
 	/ carry the segment SS, defined above as 0x3F -- the same segment the
 	/ ROM's own routines frame in, which is what makes calling back into
 	/ the ROM safe.
 	ldb	rl0, $0x3f
 	soutb	0x01fc, rl0
-	ldb	rl0, $0x0d
+	ld	r0, $SSTKPAGE
+	soutb	0x0ffc, rh0
 	soutb	0x0ffc, rl0
-	ldb	rl0, $0x00
-	soutb	0x0ffc, rl0
-	ldb	rl0, $0xff
-	soutb	0x0ffc, rl0
-	ldb	rl0, $0x02
+	ld	r0, $[SSTKTOP-SSTKSZ]	/ limit: stack 0's lowest block
+	soutb	0x0ffc, rh0
+	ldb	rl0, $SSTKATTR
 	soutb	0x0ffc, rl0
 	ld	r14, $0x3f00		/ SP segment = seg 0x3F (<<8 form)
-	ld	r15, $0xfc00		/ SP offset (top; grows down)
+	ld	r15, $SSTKTOP		/ SP offset (top; grows down)
 	sub	r13, r13		/ clear frame pointer
 	call	cmain_
 hang:

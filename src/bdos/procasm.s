@@ -22,6 +22,8 @@
 	.globl	pgone_		/ src/bdos/proc.c
 	.globl	sysstk_		/   and the stack top it publishes
 
+#include "c900cfg.h"
+
 	.shri
 
 / pnspget(pf)  LONG pf;  -- the save half's last two words.
@@ -76,6 +78,16 @@ presume_:
 	ldctl	NSPSEG, r0
 	ld	r0, rr2(38)
 	ldctl	NSPOFF, r0
+	ldb	rl0, $0x3f		/ limit 0x3F to the new stack before
+	soutb	0x01fc, rl0		/   using it: its lowest block warns
+	ld	r0, $SSTKPAGE		/   and below it faults
+	soutb	0x0ffc, rh0
+	soutb	0x0ffc, rl0
+	ld	r0, sysstk_
+	sub	r0, $SSTKSZ
+	soutb	0x0ffc, rh0
+	ldb	rl0, $SSTKATTR
+	soutb	0x0ffc, rl0
 	ld	r14, $0x3f00		/ the system stack, back to its top --
 	ld	r15, sysstk_		/   THIS PROCESS'S top.  It was the
 					/   literal 0xFC00, which is still what
@@ -138,14 +150,27 @@ pcopark_:
 / by pnspget_ at the park and they have to come back here, or the resumed
 / process would return to user code on another process's stack.
 pcoresume_:
+	ldctl	r5, FCW			/ no tick between the new limit and the
+	di	VI			/   new SP: it would push below the limit
 	ldl	rr2, rr14(4)		/ far pointer to the pframe
 	ld	r4, rr14(8)		/ the parked supervisor SP
 	ld	r0, rr2(36)
 	ldctl	NSPSEG, r0
 	ld	r0, rr2(38)
 	ldctl	NSPOFF, r0
+	ldb	rl0, $0x3f		/ limit 0x3F to the new stack, as in
+	soutb	0x01fc, rl0		/   presume_
+	ld	r0, $SSTKPAGE
+	soutb	0x0ffc, rh0
+	soutb	0x0ffc, rl0
+	ld	r0, sysstk_
+	sub	r0, $SSTKSZ
+	soutb	0x0ffc, rh0
+	ldb	rl0, $SSTKATTR
+	soutb	0x0ffc, rl0
 	ld	r14, $0x3f00
 	ld	r15, r4
+	ldctl	FCW, r5
 	popl	rr6, (rr14)
 	popl	rr8, (rr14)
 	popl	rr10, (rr14)

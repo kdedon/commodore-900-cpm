@@ -7813,9 +7813,11 @@ verify-rsxn: all $(CPMAGP)
 
 # ---- verify-ddtseg: no program may write over a supervisor stack ----
 # Segment 0x3F holds EVERY process's supervisor stack (proc.h PSTKOF: seven
-# stacks from 0xFC00 down to 0x1C00).  Nothing may ever write BELOW the
-# lowest of them, so the headroom at 0x0000 and 0x1000 is a tripwire: on a
-# healthy machine it reads as zeros for the whole run.
+# stacks from 0xFC00 down to 0x8C00, phys 0x098C00 up).  The MMU maps the
+# segment down to the running stack's lowest block only, so 3F:EB00 must
+# fault, a write into that block is a TRAP, and the bottoms of the two
+# lowest stacks, which this run never uses, read as zeros through the
+# ROM's identity map of segment 0x09.
 #
 # DDT.Z8K is the program that proved this can be violated.  It is a
 # NON-SEGMENTED caller of the SC #1 memory gate, and it passes that gate a
@@ -7827,7 +7829,7 @@ verify-rsxn: all $(CPMAGP)
 # supervisor stacks of processes that had nothing to do with DDT.
 #
 # Before the bdosglue.s/glue.s fix this target FAILS on the default build:
-# the two windows come back full of 0xFFFF.  It is not a DDT test -- DDT is
+# the stacks came back full of 0xFFFF.  It is not a DDT test -- DDT is
 # merely the caller that gets there -- it is the rule that one program's
 # mistake cannot reach another process's stack.
 DDTSEGIMG = build/ddtsegtest.bin
@@ -7839,20 +7841,24 @@ verify-ddtseg: all $(CPMAGP)
 	$(MKDISK) $(DDTSEGIMG) $(CPMSYS) $(CPMAGP)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(DDTSEGIMG)) \
 		--input="$(DDTSEGIN)" --max=$(DDTSEGMAX) \
-		--dump=3F:0000+32 --dump=3F:1000+32 2>&1; $(EMUSTAT); } \
+		--dump=09:8C00+32 --dump=09:9C00+32 --dump=3F:EB00+32 \
+		2>&1; $(EMUSTAT); } \
 		| tee $(abspath $(DDTSEGLOG))
 	@$(EMUOK)
 	@grep -q 'Zilog portable debugger' $(DDTSEGLOG) \
 		|| { echo "verify-ddtseg: FAIL -- DDT.Z8K did not run, so the gate it exercises was never reached"; exit 1; }
-	@grep -qE 'spec=3F:0000\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
-		|| { echo "verify-ddtseg: FAIL -- segment 0x3F:0000 was written."; \
-		     echo "               That is BELOW the lowest supervisor stack, so a"; \
-		     echo "               process has written over another process's stack."; \
-		     echo "               Suspect the SC #1 gate (src/bdos/bdosglue.s memgate)"; \
-		     echo "               taking a non-segmented pointer literally, and xfer_"; \
+	@! grep -q 'TRAP vec=0002' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- a segment trap: a write reached the bottom"; \
+		     echo "               of the running supervisor stack.  Suspect the SC #1"; \
+		     echo "               gate (src/bdos/bdosglue.s memgate) taking a"; \
+		     echo "               non-segmented pointer literally, and xfer_"; \
 		     echo "               (src/bios/glue.s) launching it in System mode."; exit 1; }
-	@grep -qE 'spec=3F:1000\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
-		|| { echo "verify-ddtseg: FAIL -- segment 0x3F:1000 was written: see above"; exit 1; }
+	@grep -qE 'spec=09:8C00\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- the lowest supervisor stack was written: see above"; exit 1; }
+	@grep -qE 'spec=09:9C00\+32 .*data=0{64} fault=0' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- the second-lowest supervisor stack was written: see above"; exit 1; }
+	@grep -qE 'spec=3F:EB00\+32 .*fault=1' $(DDTSEGLOG) \
+		|| { echo "verify-ddtseg: FAIL -- segment 0x3F reaches below the running stack"; exit 1; }
 	@echo "verify-ddtseg: PASS -- DDT ran and the supervisor-stack headroom in"
 	@echo "               segment 0x3F is untouched: no program wrote over"
 	@echo "               another process's supervisor stack"

@@ -34,18 +34,31 @@
 #define	MODPHYSPAGE	0x0f		/* phys 0x0F0000 */
 #define	MODLIM		0xE3		/* last usable 256-byte block */
 
-/* System-only disk cache segment. Buffers occupy NBCB*512 bytes starting
- * at offset zero; the directory signature table starts at 0x4000 and
- * uses DHMAX entries of five bytes each. WD DMA uses physical addresses.
- * Keep NBCB, DHBASE, and the segment capacity consistent. */
+/* System-only disk cache segment, in page 0x09 between CPM.SYS's bss and
+ * the supervisor stacks. Buffers occupy NBCB*512 bytes starting at offset
+ * zero; the directory signature table starts at 0x4000 and uses DHMAX
+ * entries of five bytes each, ending at the lowest stack. WD DMA uses
+ * physical addresses. Keep NBCB, DHBASE and BUFLIM consistent. */
 #define	BUFSEG		0x33
 #define	BUFBASE		0x33000000L
-#define	BUFPHYS		0x000C0000L	/* phys 0x0C0000 (DMA target) */
+#define	BUFPHYS		0x00094200L	/* phys 0x094200 (DMA target) */
+#define	BUFPAGE		0x0942		/* mapseg base page */
+#define	BUFLIM		0x49		/* last 256-byte block */
 #define	NBCB		32		/* sector buffers in the pool */
 #define	DHBASE		0x33004000L	/* NBCB*512 = 0x4000 */
-#define	DHPHYS		0x000C4000L
+#define	DHPHYS		0x00098200L
 #define	DHMAX		512		/* directory entries the table covers */
 					/* per-drive on/off: dskhash.c hashen[] */
+
+/* Supervisor stacks: segment 0x3F is based on phys page 0x09, so a stack
+ * offset is also the offset in that page.  Seven 4 KB stacks run down from
+ * SSTKTOP to 0x8C00, above the disk cache.  The descriptor is a DIRW stack
+ * segment whose limit is the running stack's lowest block: a write there
+ * traps, and anything below it faults. */
+#define	SSTKPAGE	0x0900		/* phys 0x090000 (mapseg base page) */
+#define	SSTKTOP		0xfc00
+#define	SSTKSZ		0x1000
+#define	SSTKATTR	0x22		/* SYS | DIRW */
 
 #define	SPLITSCW	0x7FFF		/* the patch word: SC #255 */
 #define	SPLITMAXT	0xE000		/* max text bytes: the side table's

@@ -42,8 +42,7 @@ struct context {
     machine is up.  What bounds it:
 
       * SUPERVISOR STACKS.  PSTKOF(i) = PSTKTOP - i*PSTKSZ in segment
-	0x3F, so seven stacks run 0xFC00 down to 0x1C00.  The segment is a
-	full 64 KB page and holds nothing else; an eighth would get 0x1C00.
+	0x3F, so seven stacks run 0xFC00 down to 0x8C00.
       * TPA PAGES.  One live process owns segment TPASEG and the rest are
 	parked in allocator slots, so seven processes need six pool slots.
 	pginit() gives as many slots as RAM backs: seven on a 1024 KB
@@ -53,7 +52,7 @@ struct context {
 	nothing.
 
     Each descriptor costs one struct pdesc of BSS -- mostly the struct
-    stvars copy inside it -- and 8 KB of segment 0x3F.  */
+    stvars copy inside it -- and 4 KB of segment 0x3F.  */
 
 #define	PNPROC		7
 
@@ -207,12 +206,11 @@ struct pdesc {
 				   4 names, or 0 if it has never asked. */
 };
 
-/* PNPROC 8 KB supervisor stacks occupy segment 3F from its top downwards
- * (seven of them today: 0xFC00 down to 0x1C00).  Stack tops are fixed per
- * descriptor so parked C frames do not move. */
+/* PNPROC 4 KB supervisor stacks occupy segment 3F from SSTKTOP downwards.
+ * Stack tops are fixed per descriptor so parked C frames do not move. */
 
-#define	PSTKTOP		0xfc00
-#define	PSTKSZ		0x2000
+#define	PSTKTOP		SSTKTOP
+#define	PSTKSZ		SSTKSZ
 #define	PSTKOF(i)	((short)(PSTKTOP - (i) * PSTKSZ))
 
 /* Priority selects slice length in four bands; runnable order stays
