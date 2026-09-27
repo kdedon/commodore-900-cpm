@@ -827,222 +827,318 @@ int vec, id, fcw, pcseg, pcoff;
 /*	Init + dispatcher						*/
 /************************************************************************/
 
-long bios(d0, d1, d2)
-int d0;
+/*
+ * One routine per function.  bios() jumps to biostab[d0] with the
+ * caller's frame, so each takes (d0, d1, d2) and saves only the
+ * registers it uses.
+ */
+static long bnull()
+{
+	return (0L);
+}
+
+static long binit()				/* INIT */
+{
+	bootent(0);		/* biosinit() in the boot module */
+	return (0L);
+}
+
+static long bwboot()				/* WBOOT: back to the CCP */
+{
+	procdead();			/* a BACKGROUND process ending
+					 * here resumes another one and
+					 * never comes back (proc.c);
+					 * the foreground falls through
+					 * to the ordinary warm boot */
+	pgrelall();			/* the transient is over: its
+					 * segments go back, mapped
+					 * System-only again -- except
+					 * a page a live process is
+					 * parked on */
+	flushhst();
+	crsreset();			/* a program killed mid-escape
+					 * must not leave the parser
+					 * eating the CCP's output */
+	ccpentry();			/* resets the stack; no return */
+	return (0L);
+}
+
+/* CONST/CONIN take the console in d1; CONOUT takes it in d2.
+ * Zero preserves the standard console-0 interface. */
+static long bconst(d0, d1)				/* CONST(console) */
+long d1;
+{
+	return ((long)conststat(conok((int)d1)));
+}
+
+static long bconin(d0, d1)				/* CONIN(console) */
+long d1;
+{
+	return ((long)conin(conok((int)d1)));
+}
+
+static long bconout(d0, d1, d2)			/* CONOUT(char, console) */
+long d1, d2;
+{
+	conout((int)d1, conok((int)d2));
+	return (0L);
+}
+
+static long blist(d0, d1)				/* LIST: console or bit-bucket */
+long d1;
+{
+	if (LSTCON())
+		putchar((int)d1);
+	return (0L);
+}
+
+/*
+ * PUNCH and READER, on the AUX line.  With no AUX device bound
+ * they are a discard and a constant EOF.
+ * READER does not block -- see the AUX banner --
+ * so 0x1A means either the reader's EOF or "nothing yet", and
+ * function 31 is how a caller tells those apart.
+ */
+static long bpunch(d0, d1)				/* PUNCH(char) */
+long d1;
+{
+	auxout((int)d1);
+	return (0L);
+}
+
+static long breader()				/* READER */
+{
+	register int c;
+
+	c = auxin();
+	return (c < 0 ? 0x1aL : (long)c);
+}
+
+static long bhome()				/* HOME */
+{
+	settrk = 0;
+	return (0L);
+}
+
+static long bseldsk(d0, d1)				/* SELDSK */
+long d1;
+{
+	return (seldsk((int)d1));
+}
+
+static long bsettrk(d0, d1)				/* SETTRK */
+long d1;
+{
+	settrk = (int)d1;
+	return (0L);
+}
+
+static long bsetsec(d0, d1)				/* SETSEC */
+long d1;
+{
+	setsec = (int)d1;
+	return (0L);
+}
+
+static long bsetdma(d0, d1)				/* SETDMA */
+long d1;
+{
+	setdma = d1;
+	return (0L);
+}
+
+static long bwrite(d0, d1)				/* WRITE */
+long d1;
+{
+	return (dskwrite((int)d1));
+}
+
+static long blistst()				/* LISTST: always ready (both
+						 * routes accept immediately) */
+{
+	return (0xffL);
+}
+
+static long bsectran(d0, d1)			/* SECTRAN: identity, xlt 0 */
+long d1;
+{
+	return (d1);
+}
+
+static long bgmrta()				/* GMRTA */
+{
+	register int seg;
+
+	if (mrtusr) {
+		mrtusr = 0;
+		seg = pmrtseg();
+		memtab.regions[4].tpalow = seg ?
+			((long)seg << 24) : TPABASE;
+	}
+	return ((long)&memtab);
+}
+
+static long bgetiob()				/* GETIOB */
+{
+	return ((long)iobyte);
+}
+
+static long bsetiob(d0, d1)				/* SETIOB */
+long d1;
+{
+	iobyte = (char)d1;
+	return (0L);
+}
+
+static long bflush()				/* FLUSH */
+{
+	dskerr = 0;
+	flushhst();
+	return ((long)dskerr);
+}
+
+static long bsetxvec(d0, d1, d2)			/* SETXVEC: record + return old */
 long d1, d2;
 {
 	long oldv;
-	int seg;
 
+	if ((int)d1 >= 0 && (int)d1 < 48
+	    && pgcur >= 0 && pgcur < XVNPROC) {
+		oldv = xvec[pgcur][(int)d1];
+		xvec[pgcur][(int)d1] = d2;
+		return (oldv);
+	}
+	return (0L);
+}
+
+static long btime(d0, d1, d2)			/* TIME: read/set the RTC */
+long d1, d2;
+{
+	return (rtctime(d1, (int)d2));
+}
+
+/* SEGMENT: d1=0 allocates (segment or 0); d1=1 frees d2 (1 or 0);
+ * d1=2 counts free slots; d1=3 counts all of them. Other operations
+ * return 0. */
+static long bsegment(d0, d1, d2)			/* SEGMENT */
+long d1, d2;
+{
+	switch ((int)d1) {
+	case 0:
+		return ((long)pgalloc());
+	case 1:
+		return ((long)pgfree((int)d2));
+	case 2:
+		return ((long)pgcount());
+	case 3:
+		return ((long)pgnslot);
+	}
+	return (0L);
+}
+
+/* TPASWAP: d1=0 queries the TPA physical page; otherwise exchange it
+ * with allocated segment d1 (1 on success, 0 on failure).
+ * Resident callers only: code executing in the TPA cannot swap itself. */
+static long btpaswap(d0, d1)			/* TPASWAP */
+long d1;
+{
+	if ((int)d1 == 0)
+		return ((long)tpaphys);
+	return ((long)pgtpaswap((int)d1));
+}
+
+/* CONOUTN: d1 is the buffer XADDR; d2 packs the count in bits 15:0
+ * and console number in bits 23:16. Reserved for resident callers. */
+static long bconoutn(d0, d1, d2)			/* CONOUTN */
+long d1, d2;
+{
+	conoutn(d1, (int)d2, conok((int)(d2 >> 16)));
+	return (0L);
+}
+
+/* CONDEV binds console d1 to device d2, returning its old device or -1.
+ * CD_NONE detaches; serial channel c is device c+1. */
+static long bcondev(d0, d1, d2)			/* CONDEV(console, device) */
+long d1, d2;
+{
+	return ((long)conattach((int)d1, (int)d2));
+}
+
+/* CONCNT returns the number of configured consoles (1..CONMAX). */
+static long bconcnt()				/* CONCNT */
+{
+	return ((long)ncon);
+}
+
+/* CONRX: d2=1 arms, 0 polls, other values query console d1.
+ * Returns 1 (interrupt), 0 (polled), or -1 (no serial channel). */
+static long bconrx(d0, d1, d2)			/* CONRX(console, mode) */
+long d1, d2;
+{
+	return ((long)conrx((int)d1, (int)d2));
+}
+
+/* AUXIST returns 1 for pending input, 0 for none, -1 for no AUX port. */
+static long bauxist()				/* AUXIST */
+{
+	return ((long)auxist());
+}
+
+/*
+ * AUXDEV: bind the AUX device to a serial channel, in the same
+ * CD_SER() numbering function 28 uses; d1 < 0 only asks.  Answers
+ * the device it was bound to, or -1 if the argument was not one.
+ * 32 is the next free code above AUXIST, and it is on bioscl()'s
+ * allowed list for the reason function 28 is: the whole point is
+ * that a transient program decides who owns the spare wire.
+ */
+static long bauxdev(d0, d1)				/* AUXDEV(device) */
+long d1;
+{
+	return ((long)auxattach((int)d1));
+}
+
+/*
+ * CONSES: the console the cold boot starts its one extra session on,
+ * or 0 for none (src/bdos/bdosboot.c pcoldses).  That is the console bound
+ * to SCC-B, and only when console 0 is video; a serial operator gets
+ * no cold-boot session.  Resident only: not on bioscl()'s list.
+ */
+static long bconses()				/* CONSES */
+{
+	if (convid) {
+		register int n;
+
+		for (n = 1; n < ncon; n++)
+			if (condev[n] == CD_ROM)
+				return ((long)n);
+	}
+	return (0L);
+}
+
+/* GSX: one parameter block d2 on surface d1, or on the HR screen
+ * when d1 is 0.  -1 when there is no screen to draw on. */
+static long bgsx(d0, d1, d2)			/* GSX(surface, pb) */
+long d1, d2;
+{
+	return ((long)crsgsx((char *)d1, (char *)d2));
+}
+
+long (*biostab[])() = {
+	binit, bwboot, bconst, bconin, bconout, blist, bpunch, breader,
+	bhome, bseldsk, bsettrk, bsetsec, bsetdma, dskread, bwrite, blistst,
+	bsectran, bnull, bgmrta, bgetiob, bsetiob, bflush, bsetxvec, btime,
+	tickget, bsegment, btpaswap, bconoutn, bcondev, bconcnt, bconrx,
+	bauxist, bauxdev, bconses, bgsx
+};
+int nbios = sizeof(biostab) / sizeof(biostab[0]);
+
+/* bios() itself is in glue.s; it lands here for d0 past biostab[]. */
+long biosx(d0, d1, d2)
+int d0;
+long d1, d2;
+{
 	switch (d0) {
-
-	case 0:					/* INIT */
-		bootent(0);		/* biosinit() in the boot module */
-		break;
-
-	case 1:					/* WBOOT: back to the CCP */
-		procdead();			/* a BACKGROUND process ending
-						 * here resumes another one and
-						 * never comes back (proc.c);
-						 * the foreground falls through
-						 * to the ordinary warm boot */
-		pgrelall();			/* the transient is over: its
-						 * segments go back, mapped
-						 * System-only again -- except
-						 * a page a live process is
-						 * parked on */
-		flushhst();
-		crsreset();			/* a program killed mid-escape
-						 * must not leave the parser
-						 * eating the CCP's output */
-		ccpentry();			/* resets the stack; no return */
-		break;
-
-	/* CONST/CONIN take the console in d1; CONOUT takes it in d2.
-	 * Zero preserves the standard console-0 interface. */
-	case 2:					/* CONST(console) */
-		return ((long)conststat(conok((int)d1)));
-
-	case 3:					/* CONIN(console) */
-		return ((long)conin(conok((int)d1)));
-
-	case 4:					/* CONOUT(char, console) */
-		conout((int)d1, conok((int)d2));
-		break;
-
-	case 5:					/* LIST: console or bit-bucket */
-		if (LSTCON())
-			putchar((int)d1);
-		break;
-
-	/*
-	 * PUNCH and READER, on the AUX line.  With no AUX device bound
-	 * they are a discard and a constant EOF.
-	 * READER does not block -- see the AUX banner --
-	 * so 0x1A means either the reader's EOF or "nothing yet", and
-	 * function 31 is how a caller tells those apart.
-	 */
-	case 6:					/* PUNCH(char) */
-		auxout((int)d1);
-		break;
-
-	case 7:					/* READER */
-		{
-			register int c;
-
-			c = auxin();
-			return (c < 0 ? 0x1aL : (long)c);
-		}
-
-	case 8:					/* HOME */
-		settrk = 0;
-		break;
-
-	case 9:					/* SELDSK */
-		return (seldsk((int)d1));
-
-	case 10:				/* SETTRK */
-		settrk = (int)d1;
-		break;
-
-	case 11:				/* SETSEC */
-		setsec = (int)d1;
-		break;
-
-	case 12:				/* SETDMA */
-		setdma = d1;
-		break;
-
-	case 13:				/* READ */
-		return (dskread());
-
-	case 14:				/* WRITE */
-		return (dskwrite((int)d1));
-
-	case 15:				/* LISTST: always ready (both
-						 * routes accept immediately) */
-		return (0xffL);
-
-	case 16:				/* SECTRAN: identity, xlt 0 */
-		return (d1);
-
-	case 18:				/* GMRTA */
-		if (mrtusr) {
-			mrtusr = 0;
-			seg = pmrtseg();
-			memtab.regions[4].tpalow = seg ?
-				((long)seg << 24) : TPABASE;
-		}
-		return ((long)&memtab);
-
-	case 19:				/* GETIOB */
-		return ((long)iobyte);
-
-	case 20:				/* SETIOB */
-		iobyte = (char)d1;
-		break;
-
-	case 21:				/* FLUSH */
-		dskerr = 0;
-		flushhst();
-		return ((long)dskerr);
-
-	case 22:				/* SETXVEC: record + return old */
-		if ((int)d1 >= 0 && (int)d1 < 48
-		    && pgcur >= 0 && pgcur < XVNPROC) {
-			oldv = xvec[pgcur][(int)d1];
-			xvec[pgcur][(int)d1] = d2;
-			return (oldv);
-		}
-		return (0L);
-
-	case 23:				/* TIME: read/set the RTC */
-		return (rtctime(d1, (int)d2));
-
-	/* TICK returns the 100 Hz counter; it is reserved for resident callers. */
-	case 24:				/* TICK */
-		return (tickget());
-
-	/* SEGMENT: d1=0 allocates (segment or 0); d1=1 frees d2 (1 or 0);
-	 * d1=2 counts free slots; d1=3 counts all of them. Other operations
-	 * return 0. */
-	case 25:				/* SEGMENT */
-		switch ((int)d1) {
-		case 0:
-			return ((long)pgalloc());
-		case 1:
-			return ((long)pgfree((int)d2));
-		case 2:
-			return ((long)pgcount());
-		case 3:
-			return ((long)pgnslot);
-		}
-		return (0L);
-
-	/* TPASWAP: d1=0 queries the TPA physical page; otherwise exchange it
-	 * with allocated segment d1 (1 on success, 0 on failure).
-	 * Resident callers only: code executing in the TPA cannot swap itself. */
-	case 26:				/* TPASWAP */
-		if ((int)d1 == 0)
-			return ((long)tpaphys);
-		return ((long)pgtpaswap((int)d1));
-
-	/* CONOUTN: d1 is the buffer XADDR; d2 packs the count in bits 15:0
-	 * and console number in bits 23:16. Reserved for resident callers. */
-	case 27:				/* CONOUTN */
-		conoutn(d1, (int)d2, conok((int)(d2 >> 16)));
-		break;
-
-	/* CONDEV binds console d1 to device d2, returning its old device or -1.
-	 * CD_NONE detaches; serial channel c is device c+1. */
-	case 28:				/* CONDEV(console, device) */
-		return ((long)conattach((int)d1, (int)d2));
-
-	/* CONCNT returns the number of configured consoles (1..CONMAX). */
-	case 29:				/* CONCNT */
-		return ((long)ncon);
-
-	/* CONRX: d2=1 arms, 0 polls, other values query console d1.
-	 * Returns 1 (interrupt), 0 (polled), or -1 (no serial channel). */
-	case 30:				/* CONRX(console, mode) */
-		return ((long)conrx((int)d1, (int)d2));
-
-	/* AUXIST returns 1 for pending input, 0 for none, -1 for no AUX port. */
-	case 31:				/* AUXIST */
-		return ((long)auxist());
-
-	/*
-	 * AUXDEV: bind the AUX device to a serial channel, in the same
-	 * CD_SER() numbering function 28 uses; d1 < 0 only asks.  Answers
-	 * the device it was bound to, or -1 if the argument was not one.
-	 * 32 is the next free code above AUXIST, and it is on bioscl()'s
-	 * allowed list for the reason function 28 is: the whole point is
-	 * that a transient program decides who owns the spare wire.
-	 */
-	case 32:				/* AUXDEV(device) */
-		return ((long)auxattach((int)d1));
-
-	/*
-	 * CONSES: the console the cold boot starts its one extra session on,
-	 * or 0 for none (src/bdos/bdosboot.c pcoldses).  That is the console bound
-	 * to SCC-B, and only when console 0 is video; a serial operator gets
-	 * no cold-boot session.  Resident only: not on bioscl()'s list.
-	 */
-	case 33:				/* CONSES */
-		if (convid) {
-			register int n;
-
-			for (n = 1; n < ncon; n++)
-				if (condev[n] == CD_ROM)
-					return ((long)n);
-		}
-		return (0L);
-
-	/* GSX: one parameter block d2 on surface d1, or on the HR screen
-	 * when d1 is 0.  -1 when there is no screen to draw on. */
-	case 34:				/* GSX(surface, pb) */
-		return ((long)crsgsx((char *)d1, (char *)d2));
-
 	/*
 	 * BIOCOST-only, cpm.h BIOS_ROMCHAR/BIOS_VSETCHAR: not stock CP/M-8000
 	 * BIOS functions and not on bioscl()'s (sys/iosys.c) allowed list --

@@ -15,7 +15,20 @@
 	.globl	bt4_			/ opt-in cold-boot marker (cmain.c)
 #endif
 	.globl	sysstk_		/ current process's system-stack top
+	.globl	bios_, biostab_, nbios_, biosx_
 	.shri
+
+/ long bios(d0, d1, d2): jump to biostab[d0] (bios900.c), which returns
+/ straight to our caller.
+bios_:
+	ld	r1, rr14(4)
+	ld	r0, nbios_
+	cp	r1, r0
+	jr	uge, 1f
+	sll	r1, $2
+	ldl	rr2, biostab_(r1)
+	jp	(rr2)
+1:	jp	biosx_
 
 / Reset this process's system stack and enter the transient loader.
 / Cold and warm boot share this entry; ccprun does not return.
