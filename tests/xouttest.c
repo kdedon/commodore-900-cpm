@@ -179,6 +179,13 @@ int pspother()
 	return (gspother);
 }
 
+/*  src/bios/pgalloc.c -- the split banks, always there to be had.  */
+
+int pgbanks()
+{
+	return (1);
+}
+
 static long dmaset;			/* what pgmld recorded, leg (c)	*/
 static int dmasets;
 

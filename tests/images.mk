@@ -133,6 +133,16 @@ $(CPMACONCW): $(CPMAIMG) $(UCONCW) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
 	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
 		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKACW)
 
+# Process-count fixture (verify-mem512).
+CPMAPFILL = build/cpma-pfill.img
+DISKAPF   = build/diska-pfill
+$(CPMAPFILL): $(CPMAIMG) $(UPFILL) tools/mkcpmfs.py tools/sparse.py | $(OBJDIR)
+	@rm -rf $(DISKAPF)
+	@mkdir -p $(DISKAPF)
+	@for f in $(DISKA)/* $(UPFILL); do cp $$f $(DISKAPF)/; done
+	python3 tools/mkcpmfs.py --initdir --label $(LABEL) \
+		--label-mode $(LABELMODE) $@ $(CPMA_BLOCKS) $(DISKAPF)
+
 # Malformed x.out fixtures for verify-xout.  tests/mkxout.py derives them
 # from MHELLO.Z8K, so a fixture that fails to be malformed in exactly the
 # intended way fails the script rather than quietly testing nothing.

@@ -296,8 +296,6 @@ static coninit()
 
 biosinit()
 {
-	extern int mapseg();
-
 	BTRACE("<1>");		/* binit (BIOS fn 0) entered */
 	/* Console type as kboot decided it, in bi_console, and never the
 	 * ROM's flags (crsinit.c).  No handoff, or one older than
@@ -310,13 +308,8 @@ biosinit()
 	coninit();			/* the console table: the loader's
 					 * bi_serial, or the known map */
 	iobyte = 0;
-	/* split-I/D shim banks: pgmld's loadseg copies a 0xEE0B program's
-	 * D segments into SPLITDSEG before spload() runs, so both shim
-	 * segments must be mapped from boot, not at scan time */
-	mapseg(SPLITDSEG, SPLITDPAGE, 2);
-	mapseg(SPLITTSEG, SPLITTPAGE, 2);
 	/* size the segment pool from the ROM's memory report -- before
-	 * anything can ask, and answering zero on a 512 KB machine */
+	 * anything can ask */
 #if	BI_VERSION >= 5
 	if (bivalid() && bootinf.bi_len >= (unsigned short)BI_LEN5
 	    && bootinf.bi_nram <= BI_NRAM)

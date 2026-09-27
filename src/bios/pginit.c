@@ -9,6 +9,7 @@
 extern char	pgown[], pghld[];
 extern unsigned char pgpg[];
 extern int	pgcur, tpaphys, pgnslot;
+extern int	pgbkfree();
 extern unsigned	pgbram, pgeram;
 
 /* Segment 1 offset zero contains a CPU far pointer, (seg<<24)|offset,
@@ -22,6 +23,19 @@ extern unsigned	pgbram, pgeram;
 #define CLICKPAGE	6		/* clicks >> 6 = page		*/
 
 static unsigned char pghole[] = PGHOLES;
+static unsigned char pgsyspg[] = PGSYSPG;
+
+/* Is page p one the resident system keeps? */
+static int pgsys(p)
+int p;
+{
+	register int i;
+
+	for (i = 0; i < PGNSYSPG; i++)
+		if (pgsyspg[i] == p)
+			return (1);
+	return (0);
+}
 
 /*
  * The loader's map, nram (first, count) runs, if every page in it is RAM
@@ -71,7 +85,8 @@ int nram;
 	if (pgmapok((int)(bram >> CLICKPAGE), hi, ram, nram)) {
 		for (; nram > 0; nram--, ram += 2)
 			for (p = ram[0], h = p + ram[1]; p < h; p++)
-				if (p >= PGPGLO && p < hi - 1 && n < PGNSLOT)
+				if (p >= PGPGLO && p < hi - 1 && n < PGNSLOT
+				    && !pgsys(p))
 					pgpg[n++] = p;
 		return (n);
 	}
@@ -80,7 +95,7 @@ int nram;
 	for (p = PGPGLO; p < hi; p++) {
 		for (h = 0; h < PGNHOLE && pghole[h] != p; h++)
 			;
-		if (h == PGNHOLE)
+		if (h == PGNHOLE && !pgsys(p))
 			pgpg[n++] = p;
 	}
 	return (n);
@@ -105,6 +120,7 @@ int nram;
 		pgown[i] = 0;
 		pghld[i] = 0;
 	}
+	pgbkfree();			/* no bank mapped until a split load */
 
 	pp = *(long *)ROMCONF_PP;
 	if (((pp >> 24) & 0x7fL) != 1L)

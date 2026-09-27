@@ -8386,8 +8386,8 @@ verify-pgseg: all $(CPMACONCW)
 # ---- the pool above 1 MB, from kboot's map or the holes (verify-kmem) ----
 # CONCWC prints the pool's size in hex.  With a handoff the pool is kboot's
 # memory map; with --no-bootinfo it is the compiled-in holes.  Without an HR
-# board kboot lists 0x3E, which the holes leave out: 4 MB is 0x2E slots by
-# the map and 0x2D without it.  Each run is: medium, emulator options, slots.
+# board kboot lists 0x3E, which the holes leave out: 4 MB is 0x32 slots by
+# the map and 0x31 without it.  Each run is: medium, emulator options, slots.
 # At 4 MB the RAM at 0x37 answers the console probe as LR text, so the serial
 # line is console 1 at user 1: USER 0 reaches CONCWC.
 KMEMIMG  = build/kmem.bin
@@ -8398,8 +8398,8 @@ KMEMIN   = $(OSSEL)USER 0\rCONCWC\r$(ENDIN)
 verify-kmem: all $(CPMACONCW)
 	$(MKDISK) $(KMEMIMG) $(CPMSYS) $(CPMACONCW) $(CPMBIMG)
 	$(MKDISK) --no-bootinfo $(KMEMNBIMG) $(CPMSYS) $(CPMACONCW) $(CPMBIMG)
-	@for run in "kmem --ram=08-2F 1F" "kmem --ram=08-3F 2E" \
-		    "kmem-nb --ram=08-2F 1F" "kmem-nb --ram=08-3F 2D"; do \
+	@for run in "kmem --ram=08-2F 23" "kmem --ram=08-3F 32" \
+		    "kmem-nb --ram=08-2F 23" "kmem-nb --ram=08-3F 31"; do \
 		set -- $$run; opts=$$2; \
 		log=$(abspath build)/verify-$$1$$2.log; \
 		( $(EMUCD) && ./c900 --disk=$(abspath build)/$$1.bin $$opts \
@@ -8413,6 +8413,25 @@ verify-kmem: all $(CPMACONCW)
 		echo "verify-kmem: $$1.bin $$opts: 0x$$got slots"; \
 	done
 	@echo "verify-kmem: PASS -- 2.5 MB and 4 MB sized by kboot's map and by the holes"
+
+# ---- verify-mem512: a 512 KB machine runs five processes ----
+# PFILL starts copies of itself until one is refused.  At 512 KB the pool is
+# pages 0x0B-0x0E, so the TPA and four parked images make five processes and
+# the sixth is refused for want of a page (proc.h PC_NOPAGE, 6).
+MEM512IMG = build/mem512.bin
+MEM512LOG = build/verify-mem512.log
+.PHONY: verify-mem512
+verify-mem512: all $(CPMAPFILL)
+	$(MKDISK) $(MEM512IMG) $(CPMSYS) $(CPMAPFILL) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(MEM512IMG)) --ram=08-0F \
+		--input="$(OSSEL)PFILL\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		| tee $(abspath $(MEM512LOG))
+	@$(EMUOK)
+	@grep -q 'PFILL: live 5' $(MEM512LOG) \
+		|| { echo "verify-mem512: FAIL -- five processes did not start at 512 KB"; exit 1; }
+	@grep -q 'PFILL: refused 6' $(MEM512LOG) \
+		|| { echo "verify-mem512: FAIL -- the sixth was not refused for want of a page"; exit 1; }
+	@echo "verify-mem512: PASS -- five processes at 512 KB, the sixth refused"
 
 # ---- a wedged disk controller must be reported, not retried for ever ----
 # src/bios/wd900.c wdsec() in the first-release review.  wdsec() looped `for (;;)'

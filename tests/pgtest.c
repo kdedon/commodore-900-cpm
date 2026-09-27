@@ -32,6 +32,7 @@ static void reset(void)
 	memset(pgks, 0, sizeof pgks);
 	pgcur = 0;
 	tpaphys = TPAPHYSPAGE;
+	pgbk[0] = pgbk[1] = 0;
 }
 
 /* A ROM report for `kb' of RAM starting at phys 0x080000, in 1 KB clicks. */
@@ -162,32 +163,56 @@ static void maps(void)
 	unsigned short empty[] = { 0x08, 0x2f, 0x38, 0 };
 	unsigned short huge[] = { 0x08, 0xffff };
 
-	mapped("4 MB, no HR", 3584, nohr, 2, 46, 0x3e, 1);
-	mapped("4 MB, HR", 3584, hr, 2, 45, 0x3d, 0);
-	mapped("2.5 MB", 2560, m25, 1, 31, 0x2e, 0);
-	mapped("4 MB, reserve 18-1F", 3584, resv, 3, 38, 0x3e, 1);
-	mapped("none", 3584, NULL, 0, 45, 0x3d, 0);
-	mapped("rejected: LR text", 3584, lrtext, 1, 45, 0x3d, 0);
-	mapped("rejected: past the ROM", 3584, past, 2, 45, 0x3d, 0);
-	mapped("rejected: below the ROM", 3584, under, 1, 45, 0x3d, 0);
-	mapped("rejected: descending", 3584, down, 2, 45, 0x3d, 0);
-	mapped("rejected: overlapping", 3584, overlap, 2, 45, 0x3d, 0);
-	mapped("rejected: empty run", 3584, empty, 2, 45, 0x3d, 0);
-	mapped("rejected: huge run", 3584, huge, 1, 45, 0x3d, 0);
+	mapped("4 MB, no HR", 3584, nohr, 2, 50, 0x3e, 1);
+	mapped("4 MB, HR", 3584, hr, 2, 49, 0x3d, 0);
+	mapped("2.5 MB", 2560, m25, 1, 35, 0x2e, 0);
+	mapped("4 MB, reserve 18-1F", 3584, resv, 3, 42, 0x3e, 1);
+	mapped("none", 3584, NULL, 0, 49, 0x3d, 0);
+	mapped("rejected: LR text", 3584, lrtext, 1, 49, 0x3d, 0);
+	mapped("rejected: past the ROM", 3584, past, 2, 49, 0x3d, 0);
+	mapped("rejected: below the ROM", 3584, under, 1, 49, 0x3d, 0);
+	mapped("rejected: descending", 3584, down, 2, 49, 0x3d, 0);
+	mapped("rejected: overlapping", 3584, overlap, 2, 49, 0x3d, 0);
+	mapped("rejected: empty run", 3584, empty, 2, 49, 0x3d, 0);
+	mapped("rejected: huge run", 3584, huge, 1, 49, 0x3d, 0);
+}
+
+/* The split-I/D banks: two slots, never the boot TPA page, not parked handles. */
+static void banks(void)
+{
+	int n;
+
+	reset();
+	pgnslot = pgsize(512, 512 + 512, NULL, 0);
+	pgpg[0] = TPAPHYSPAGE;			/* as after a swap */
+	n = pgcount();
+	CHECK(pgbanks() == 1 && pgcount() == n - 2, "banks: two slots not taken");
+	CHECK(pgbk[0] != 1 && pgbk[1] != 1, "banks: took the boot TPA page");
+	CHECK(mseg == SPLITTSEG && mattr == 2, "banks: side table mapped 0x%02X attr %d", mseg, mattr);
+	CHECK(pgslot(PGPARK + pgbk[0] - 1) < 0, "banks: a bank named as a parked slot");
+	CHECK(pgbanks() == 1 && pgcount() == n - 2, "banks: taken twice");
+	CHECK(pgalloc() != 0 && pgbanks() == 1, "banks: lost");
+	pgbkfree();
+	CHECK(pgcount() == n - 1, "banks: not given back");
+	CHECK(mseg == SPLITTSEG && mattr == 6, "banks: side table left mapped, attr %d", mattr);
+	CHECK(pgalloc() != 0 && pgalloc() != 0 && pgbanks() == 0,
+	      "banks: taken from a pool without two free slots");
+	pgbkfree();
 }
 
 int main(void)
 {
-	machine("512 KB", 512, 0, 0, "");
-	machine("1024 KB", 1024, 7, 0x16, " 28 29 2A 2B 2C 2D 2E");
-	machine("2560 KB", 2560, 31, 0x2e, NULL);
-	machine("4 MB", 4096 - 512, 45, 0x3d, NULL);	/* 0x10..0x3E, less 0x37 */
+	machine("512 KB", 512, 4, 0x0e, " 28 29 2A 2B");
+	machine("1024 KB", 1024, 11, 0x16, " 28 29 2A 2B 2C 2D 2E");
+	machine("2560 KB", 2560, 35, 0x2e, NULL);
+	machine("4 MB", 4096 - 512, 49, 0x3d, NULL);	/* 0x0B..0x0E, 0x10..0x3E, less 0x37 */
 	machine("16 MB", 16384 - 512, PGNSLOT, 0xfe, NULL);
 	machine("beyond", 65000, PGNSLOT, 0xfe, NULL);
 	CHECK(pgsize(1024, 1536, NULL, 0) == 0, "a report starting above CPM.SYS was accepted");
 	swaps();
 	maps();
+	banks();
 	if (fails) { printf("pgtest: FAIL -- %d check(s)\n", fails); return 1; }
-	printf("pgtest: PASS -- 512 KB 0, 1024 KB 7 (0x28..0x2E as before), 16 MB %d, holes skipped\n", PGNSLOT);
+	printf("pgtest: PASS -- 512 KB 4, 1024 KB 11 (0x28..0x2E first), 16 MB %d, holes skipped\n", PGNSLOT);
 	return 0;
 }

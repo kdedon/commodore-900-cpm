@@ -232,7 +232,7 @@ struct pdesc {
 
 #define	PC_OK		0
 #define	PC_NOPD		5	/* no free process descriptor		*/
-#define	PC_NOPAGE	6	/* no free 64 KB page: a 512 KB machine	*/
+#define	PC_NOPAGE	6	/* no free 64 KB page			*/
 #define	PC_SPLIT	7	/* a second split-I/D program		*/
 #define	PC_NOCON	8	/* fn 142: no such console		*/
 

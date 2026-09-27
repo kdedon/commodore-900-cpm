@@ -32,6 +32,7 @@ extern UWORD rsxres();		/* C900: bytes of TPA held by resident	*/
 extern UWORD rsxchk();		/* C900: placement rules + chain entry	*/
 extern UWORD rsxlink();		/*   (rsx.c), for the GENCOM path below	*/
 
+extern int pgbanks();		/* C900: pgalloc.c -- map the split banks */
 extern int pspother();		/* C900: proc.c -- is a split-I/D program
 				   live in ANOTHER process?  The split banks
 				   are shared, so the answer decides whether
@@ -239,6 +240,8 @@ XADDR xlpbp;
 		   report damage it had done (src/bdos/proc.c pcrgen). */
 		if (pspother())
 			return (NOSPLIT);
+		if (!pgbanks())		/* both banks, from the pool */
+			return (NOMEM);
 
 		split = SPLIT;
 		seg = FALSE;

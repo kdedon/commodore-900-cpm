@@ -179,10 +179,8 @@ char *argv[];
 
 	/*
 	 * The gate's first line, and the one the whole task was about.
-	 * A machine with no spare memory answers 0 here, which is the
-	 * standard 512 KB machine and is not a failure of anything: the
-	 * pages 0x0A-0x0F are spent on the TPA, the split-I/D banks, the
-	 * disk buffers and the C stack, and there is no eleventh page.
+	 * A machine with no spare memory answers 0 here, which is not a
+	 * failure of anything.
 	 */
 	n = segcall(SEG_COUNT, 0L);
 	cputs("z80: free segments: ");

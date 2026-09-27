@@ -36,6 +36,7 @@ EXTERN	WORD	pgalloc();
 EXTERN	WORD	pgfree();
 EXTERN	WORD	pgtpaswap();
 EXTERN	WORD	pghold();
+EXTERN	WORD	pgbkfree();
 EXTERN	WORD	pgrelproc();	/* free THIS process's scratch segments	*/
 EXTERN	WORD	xvclr();	/* src/bios/bios900.c: forget a process's
 				   recorded trap vectors		*/
@@ -441,10 +442,8 @@ WORD	con, sess;
 	    back.  */
 	kid->pd_state = PS_RSVD;
 
-	/*  A page.  Zero means the pool is empty, which on a 512 KB
-	    machine is always and by construction (pgalloc.c): there the
-	    answer to "run a second program" is no, and it is a hardware
-	    answer.  */
+	/*  A page.  Zero means the pool is empty: the answer to "run
+	    another program" is no, and it is a hardware answer.  */
 	if ((seg = pgalloc()) == 0) {
 		kid->pd_state = PS_FREE;
 		return (PC_NOPAGE);
@@ -577,6 +576,8 @@ WORD	con, sess;
 		pgfree(seg);
 		kid->pd_state = PS_FREE;	/* the claim, given back	*/
 		pload(me);
+		if (!spflag && !pspother())
+			pgbkfree();	/* a failed split load's banks */
 		return (k);
 	}
 
@@ -911,6 +912,9 @@ GLOBAL WORD procdead()
 					   program inside a locked region */
 	lkdrop();			/* its record locks */
 	pconrel();			/* release console ownership on every termination path */
+	if (!pspother())
+		pgbkfree();		/* the split banks, once no live
+					   program is split */
 	/*  A SESSION DOES NOT DIE HERE.  Returning 0 sends the BIOS on to
 	    the ordinary warm boot (bios900.c case 1), which reloads the CCP
 	    into the page this process is already on -- its own page, its own

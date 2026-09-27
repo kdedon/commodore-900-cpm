@@ -122,7 +122,7 @@ struct biospb {
  *
  * SEG_GET answers the logical segment number of 64 KB nothing else can
  * reach -- turn it into a pointer with SEGBASE() -- or 0 when there is
- * none, which is what the standard 512 KB machine always answers.
+ * none.
  * Every segment a program holds is released for it at the next warm
  * boot, so SEG_PUT is for a program that wants one back before it
  * exits, not for one that is exiting.

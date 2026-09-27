@@ -14,18 +14,16 @@
 /*
  * Split-I/D loader shim (Option 6, 0xEE0B programs).  Code runs natively
  * in the TPA (code bank), data lives in a second 64K bank, and the
- * load-time scanner's side table in a third.  Both are mapped at load
- * time (splitld.c spload), SYS-only: the program itself never addresses
+ * load-time scanner's side table in a third.  Both are pool pages mapped
+ * when such a program loads, SYS-only: the program itself never addresses
  * them -- every access goes through the SC #255 trap handler (splitsc.c)
  * or the BDOS gate's split-aware pointer mapping (bdosglue.s).  Neither
  * segment is in the MRT, so the BDOS never offers them as TPA.
  */
 #define	SPLITDSEG	0x35		/* data bank */
 #define	SPLITDBASE	0x35000000L
-#define	SPLITDPAGE	0x0b00		/* phys 0x0B0000 (mapseg base page) */
 #define	SPLITTSEG	0x36		/* side table + scanner scratch */
 #define	SPLITTBASE	0x36000000L
-#define	SPLITTPAGE	0x0e00		/* phys 0x0E0000, above the C stack */
 /* Modules (mk/config.mk MODULES): each is linked alone at the base of its
  * own logical segment.  Their images load over cpm.sys's bss; cmain.c
  * copies them into this physical page at cold boot, packed on 256-byte
@@ -66,7 +64,8 @@
 					 * in the SPLITTSEG segment */
 
 /* Allocator slots are physical 64 KB pages, from PGPGLO to the end of the
- * RAM the ROM reports, less its top page (ROM state) and the video holes.
+ * RAM the ROM reports, less its top page (ROM state), the video holes and
+ * the resident pages PGSYSPG names.
  * A slot takes one of PGNSEG logical segments while allocated; a parked
  * process image gives its segment back (pgalloc.c).
  *
@@ -112,12 +111,14 @@
 					 * the video planes */
 #define	PGSEG(i)	((i) < PGNUP ? PGSEGLO + (i) \
 				     : PGSEGLO - 1 - ((i) - PGNUP))
-#define	PGPGLO		0x10		/* MODPHYSPAGE + 1		 */
+#define	PGPGLO		0x0b		/* lowest page the system frees	 */
+#define	PGSYSPG		{ MODPHYSPAGE }	/* still resident */
+#define	PGNSYSPG	1
 #define	PGPGHI		0x100		/* 16 MB: one past the last page */
 #define	PGLRTEXT	0x37		/* never RAM, even in a loader's map */
 #define	PGHOLES		{ PGLRTEXT, 0x3e, 0x3f }	/* LR text, HR bitmap */
 #define	PGNHOLE		3
-#define	PGNSLOT		(PGPGHI - 1 - PGPGLO - PGNHOLE)	/* 236 */
+#define	PGNSLOT		(PGPGHI - 1 - PGPGLO - PGNHOLE - PGNSYSPG)	/* 240 */
 #define	PGPARK		0x40		/* handle of parked slot i: PGPARK+i */
 /*
  * The video-card probe's scratch segment (crsinit.c vprobe, D8).  COHERENT

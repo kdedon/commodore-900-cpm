@@ -302,6 +302,9 @@ $(UOBJDIR)/CONCWB.Z8K: $(UOBJDIR)/concwb.lout $(LOUT2CPM)
 $(UOBJDIR)/CONCWC.Z8K: $(UOBJDIR)/concwc.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/PFILL.Z8K: $(UOBJDIR)/pfill.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 # The F1 directory-guard programs; src/tests/dgena.c explains them.
 $(UOBJDIR)/DGENA.Z8K: $(UOBJDIR)/dgena.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@

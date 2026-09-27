@@ -17,7 +17,7 @@ static char *why[] = {
 	"read error loading the CCP",
 	"CCP load error",
 	"no free process descriptor",
-	"no free 64 KB page -- this needs a 1 MB machine",
+	"no free 64 KB page",
 	"a second split-I/D program would need a second data bank",
 	"no such console"
 };

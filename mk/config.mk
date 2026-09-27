@@ -220,6 +220,8 @@ UCONCV	= $(UOBJDIR)/CONCV.Z8K $(UOBJDIR)/CONCY.Z8K
 # Warm-boot segment ownership (F5): the foreground, the background that
 # outlives it, and the program the CCP runs afterwards.
 UCONCW	= $(UOBJDIR)/CONCW.Z8K $(UOBJDIR)/CONCWB.Z8K $(UOBJDIR)/CONCWC.Z8K
+# Process count at 512 KB.
+UPFILL	= $(UOBJDIR)/PFILL.Z8K
 
 # F1: the directory's three missing guards.  DGENA/DGENB are the two
 # processes that share a directory record (verify-dirgen), DERR writes past

@@ -7,7 +7,7 @@
  * slot is mapped on a free logical segment PGSEG(k), pgss[k] = i+1, and
  * the segment is its name.  A parked process image is unmapped and named
  * by the handle PGPARK+i instead, so parked processes do not use up
- * segments.  A 512 KB machine has no free slots.
+ * segments.
  * Allocated segments are accessible in Normal mode; freeing restores the
  * System-only attribute. Pool pages are not offered as loader TPA regions.
  *
@@ -31,6 +31,8 @@
 
 extern int mapseg();
 extern short sysstk;
+
+#define	PGBKOWN	0x7f		/* pgown[] of a split-I/D bank slot */
 
 char		pgown[PGNSLOT];	/* 0: slot i free.  Otherwise the owning
 				 * process's index plus one -- see the
@@ -86,7 +88,7 @@ int h;
 
 	if (h >= PGPARK) {
 		i = h - PGPARK;
-		if (i < pgnslot && pgown[i] && !pgks[i])
+		if (i < pgnslot && pgown[i] && pgown[i] != PGBKOWN && !pgks[i])
 			return (i);
 		return (-1);
 	}
@@ -118,6 +120,50 @@ int pgalloc()
 			mapseg(PGSEG(k), pgpg[i] << 8, 0x00);
 			return (PGSEG(k));
 		}
+	return (0);
+}
+
+/* The split-I/D data bank and side table: two slots, owned by no process
+ * and mapped System-only on SPLITDSEG and SPLITTSEG while a split program
+ * is live.  The slot holding the boot TPA page is never taken, so
+ * pgtparest() cannot move a bank. */
+static unsigned char pgbk[2];	/* slot+1 of each bank, 0 if none */
+
+/* Map both banks, taking slots unless they are held already: 1, or 0 if
+ * the pool has too few. */
+int pgbanks()
+{
+	register int i, n;
+
+	if (pgbk[0])
+		return (1);
+	for (i = n = 0; i < pgnslot && n < 2; i++)
+		if (!pgown[i] && pgpg[i] != TPAPHYSPAGE)
+			pgbk[n++] = i + 1;
+	if (n < 2) {
+		pgbk[0] = pgbk[1] = 0;
+		return (0);
+	}
+	for (n = 0; n < 2; n++)
+		pgown[pgbk[n] - 1] = PGBKOWN;
+	mapseg(SPLITDSEG, pgpg[pgbk[0] - 1] << 8, 0x02);
+	mapseg(SPLITTSEG, pgpg[pgbk[1] - 1] << 8, 0x02);
+	return (1);
+}
+
+/* Give both banks back to the pool and make their segments trap on any
+ * CPU access. */
+pgbkfree()
+{
+	register int n;
+
+	for (n = 0; n < 2; n++)
+		if (pgbk[n]) {
+			pgown[pgbk[n] - 1] = 0;
+			pgbk[n] = 0;
+		}
+	mapseg(SPLITDSEG, 0, 0x06);	/* SYS | CPU-inhibit */
+	mapseg(SPLITTSEG, 0, 0x06);
 	return (0);
 }
 
@@ -253,7 +299,7 @@ pgtparest()
 	return (0);		/* cannot happen: the page went somewhere */
 }
 
-/* How many pgalloc() calls would succeed.  Zero on a 512 KB machine. */
+/* How many pgalloc() calls would succeed. */
 int pgcount()
 {
 	register int i, n, m;
