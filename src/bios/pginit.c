@@ -9,7 +9,8 @@
 extern char	pgown[], pghld[];
 extern unsigned char pgpg[];
 extern int	pgcur, tpaphys, pgnslot;
-extern int	pgbkfree();
+extern int	pgbkfree(), pgccunmap();
+extern unsigned char pgcc;
 extern unsigned	pgbram, pgeram;
 
 /* Segment 1 offset zero contains a CPU far pointer, (seg<<24)|offset,
@@ -121,6 +122,8 @@ int nram;
 		pghld[i] = 0;
 	}
 	pgbkfree();			/* no bank mapped until a split load */
+	pgcc = 0;
+	pgccunmap();
 
 	pp = *(long *)ROMCONF_PP;
 	if (((pp >> 24) & 0x7fL) != 1L)

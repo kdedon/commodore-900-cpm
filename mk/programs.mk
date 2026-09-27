@@ -195,6 +195,9 @@ $(UOBJDIR)/CONN.Z8K: $(UOBJDIR)/conn.lout $(LOUT2CPM)
 $(UOBJDIR)/CATT.Z8K: $(UOBJDIR)/catt.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 
+$(UOBJDIR)/CCPCT.Z8K: $(UOBJDIR)/ccpct.lout $(LOUT2CPM)
+	$(LOUT2CPM) $< $@
+
 $(UOBJDIR)/SESSION.Z8K: $(UOBJDIR)/session.lout $(LOUT2CPM)
 	$(LOUT2CPM) $< $@
 

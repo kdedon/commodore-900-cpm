@@ -510,14 +510,56 @@ static flushhst()
 		dskerr = 1;
 }
 
+/*
+ * Guard for the cached CCP image (ccprun.c).  While dwrec is set, reads
+ * widen the range of sectors watched.  ccpcok is cleared by a write in that
+ * range, or by any record naming the file in a directory-entry slot, which
+ * covers create, delete, rename and close.
+ */
+int ccpcok;			/* the cached image matches the disk	*/
+int dwrec;			/* recording				*/
+char *dwname;			/* the file's 11-byte name		*/
+static long dwlo, dwhi;
+
+dwstart()
+{
+	ccpcok = 0;
+	dwlo = 0x7fffffffL;
+	dwhi = 0;
+	dwrec = 1;
+}
+
+static dwcheck(blk, p)
+long blk;
+register char *p;
+{
+	register int i, j;
+
+	if (blk >= dwlo && blk <= dwhi)
+		ccpcok = 0;
+	for (i = 0; i < SECLEN; i += 32)
+		for (j = 0; (p[i + 1 + j] & 0x7f) == dwname[j]; )
+			if (++j == 11) {
+				ccpcok = 0;
+				return;
+			}
+}
+
 static long dskread()
 {
-	register long rec;
+	register long rec, blk;
 	register int off, ix;
 
 	dskerr = 0;
 	rec = (long)settrk * ASPT + setsec;
-	if ((ix = getbuf(curbase + (rec >> 2), 1)) < 0) {
+	blk = curbase + (rec >> 2);
+	if (dwrec) {
+		if (blk < dwlo)
+			dwlo = blk;
+		if (blk > dwhi)
+			dwhi = blk;
+	}
+	if ((ix = getbuf(blk, 1)) < 0) {
 		dskerr = 1;
 		return (1L);
 	}
@@ -549,6 +591,8 @@ int mode;
 	}
 	off = ((int)rec & 3) << 7;
 	mem_cpy(setdma, BCBADR(ix) + (long)off, (long)SECLEN);
+	if (ccpcok)
+		dwcheck(curbase + (rec >> 2), (char *)(BCBADR(ix) + (long)off));
 	bcbmark(ix);
 	if (mode == 1 && bcbput(ix) != 0)
 		dskerr = 1;

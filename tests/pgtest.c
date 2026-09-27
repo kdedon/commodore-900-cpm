@@ -200,6 +200,38 @@ static void banks(void)
 	pgbkfree();
 }
 
+/* The CCP cache: a free slot while one is spare, given back when the pool
+ * runs dry unless the loader has it mapped. */
+static void ccpcache(void)
+{
+	int i, n;
+
+	reset();
+	pgcc = 0;
+	pgnslot = n = pgsize(512, 512 + 512, NULL, 0);
+	CHECK(pgccmap() == 1 && mseg == CCPCSEG && mattr == 2, "ccpc: not mapped");
+	pgccunmap();
+	CHECK(mseg == CCPCSEG && mattr == 6, "ccpc: left mapped, attr %d", mattr);
+	CHECK(pgcount() == n, "ccpc: a spare cache page not counted free");
+	CHECK(pgslot(PGPARK + pgcc - 1) < 0, "ccpc: the cache named as a parked slot");
+	ccpcok = 1;
+	for (i = 0; i < n; i++)
+		CHECK(pgalloc() != 0, "ccpc: allocation %d refused", i);
+	CHECK(pgcc == 0 && ccpcok == 0, "ccpc: the cache kept its page");
+	CHECK(pgccmap() == 0, "ccpc: mapped with the pool dry");
+	reset();
+	pgcc = 0;
+	pgnslot = n;
+	CHECK(pgccmap() == 1, "ccpc: not mapped again");
+	for (i = 0; i < n - 1; i++)
+		pgalloc();
+	CHECK(pgalloc() == 0 && pgcc != 0, "ccpc: a mapped cache was taken");
+	pgccunmap();
+	CHECK(pgbanks() == 0 && pgcc == 0, "ccpc: banks did not reclaim the cache");
+}
+
+int ccpcok;
+
 int main(void)
 {
 	machine("512 KB", 512, 4, 0x0e, " 28 29 2A 2B");
@@ -212,6 +244,7 @@ int main(void)
 	swaps();
 	maps();
 	banks();
+	ccpcache();
 	if (fails) { printf("pgtest: FAIL -- %d check(s)\n", fails); return 1; }
 	printf("pgtest: PASS -- 512 KB 4, 1024 KB 11 (0x28..0x2E first), 16 MB %d, holes skipped\n", PGNSLOT);
 	return 0;

@@ -79,6 +79,15 @@ mem_cpy_:
 					/ counts its counter register down)
 	test	r0
 	jr	eq, 1f
+	ld	r1, r0			/ all three even: move words
+	or	r1, r3
+	or	r1, r5
+	bit	r1, $0
+	jr	nz, 2f
+	srl	r0, $1
+	ldir	@rr4, @rr2, r0
+	ret
+2:
 	ldirb	@rr4, @rr2, r0
 1:
 	ret

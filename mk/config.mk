@@ -239,7 +239,7 @@ USESSION = $(UOBJDIR)/SESSION.Z8K
 
 # Console routing, sessions and ownership exercisers.
 UCON1	= $(UOBJDIR)/CON1.Z8K $(USESSION) $(UOBJDIR)/CONN.Z8K \
-	  $(UOBJDIR)/RXOV.Z8K $(UOBJDIR)/CATT.Z8K
+	  $(UOBJDIR)/RXOV.Z8K $(UOBJDIR)/CATT.Z8K $(UOBJDIR)/CCPCT.Z8K
 UPIP	= $(UOBJDIR)/PIP.Z8K
 # PIP and STAT are rebuilt from src/cmd, not staged vendor binaries.
 USTAT	= $(UOBJDIR)/STAT.Z8K

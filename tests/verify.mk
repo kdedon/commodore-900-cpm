@@ -6558,6 +6558,57 @@ verify-sess: all $(CPMAXDOS)
 	@echo "              run from it, and a prompt back afterwards; console 0"
 	@echo "              saw none of it"
 
+# ---- verify-ccpc: THE CCP RELOAD AFTER A PROGRAM ENDS ----
+# The CCP comes back from a cached image of CCP.Z8K.  Three runs:
+#   1. both sessions run CCPCT F, which fills its whole TPA, twice, and
+#      each still gets a working CCP back;
+#   2. CCPCT W rewrites CCP.Z8K's first record in place and never closes
+#      it: the reload must read the damaged file and halt;
+#   3. PIP copies CCPCT over CCP.Z8K: the reload must run the new file.
+CCPCIMG	= build/ccpctest.bin
+CCPCC0	= build/verify-ccpc-c0.log
+CCPCC1	= build/verify-ccpc-c1.log
+CCPCLOG	= build/verify-ccpc.log
+CCPCLOGW = build/verify-ccpc-w.log
+.PHONY: verify-ccpc
+verify-ccpc: all $(CPMAXDOS)
+	$(MKDISK) $(CCPCIMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	python3 tests/wirecon.py --emu '$(EMU)' --disk $(CCPCIMG) \
+		--input='SESSION 1\rCCPCT F\rCCPCT F\rDIR CCPCT.Z8K\r' \
+		--max=$(SESSMAX) --stop-on=idle \
+		--send-after='1A>' --send='USER 0\r' \
+		--send-after='A>' --send='CCPCT F\r' \
+		--send-after='CCPCT: filled' --send='CCPCT F\r' \
+		--send-after='CCPCT: filled' --send='DIR CCPCT.Z8K\r' \
+		--log $(CCPCC0) --wire-log $(CCPCC1)
+	@for c in 0 1; do tr -d '\r' < build/verify-ccpc-c$$c.log \
+		> build/ccpc-c$$c.txt; \
+	  test "`grep -c 'CCPCT: filled' build/ccpc-c$$c.txt`" = 2 \
+		|| { echo "verify-ccpc: FAIL -- console $$c did not run CCPCT F twice"; \
+		     exit 1; }; \
+	  sed -n '/CCPCT *Z8K/,$$p' build/ccpc-c$$c.txt | grep -q 'A>' \
+		|| { echo "verify-ccpc: FAIL -- console $$c's CCP did not come back"; \
+		     echo "              after a program filled its TPA"; exit 1; }; \
+	done
+	$(MKDISK) $(CCPCIMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CCPCIMG)) \
+		--input='CCPCT W\r' --max=$(EMUMAX) \
+		--stop-on=mark --stop-mark='system halted' 2>/dev/null; } \
+		| tr -d '\r' > $(CCPCLOGW)
+	@sed -n '/CCPCT: wrote/,$$p' $(CCPCLOGW) | grep -q 'Cannot load A:CCP.Z8K' \
+		|| { echo "verify-ccpc: FAIL -- the reload used a stale CCP image after"; \
+		     echo "              CCP.Z8K was written in place"; exit 1; }
+	$(MKDISK) $(CCPCIMG) $(CPMSYS) $(CPMAXDOS) $(CPMBIMG)
+	{ $(EMUCD) && ./c900 --disk=$(abspath $(CCPCIMG)) \
+		--input='PIP CCP.Z8K=CCPCT.Z8K\r' --max=$(EMUMAX) \
+		--stop-on=mark --stop-mark='F or W' 2>/dev/null; } \
+		| tr -d '\r' > $(CCPCLOG)
+	@grep -q 'CCPCT: F or W' $(CCPCLOG) \
+		|| { echo "verify-ccpc: FAIL -- the reload did not run the CCP.Z8K"; \
+		     echo "              PIP had just replaced"; exit 1; }
+	@echo "verify-ccpc: PASS -- both sessions get their CCP back after a full"
+	@echo "              TPA, and a CCP.Z8K changed on disk is the one reloaded"
+
 # ---- verify-kbcon: TYPE-AHEAD BELONGS TO ONE CONSOLE (F10) ----
 # The P2 finding on src/bdos/conbdos.c: `kbchar' was ONE byte for the whole
 # machine, so a keystroke typed at one console could be handed to a process
@@ -8417,20 +8468,25 @@ verify-kmem: all $(CPMACONCW)
 # ---- verify-mem512: a 512 KB machine runs five processes ----
 # PFILL starts copies of itself until one is refused.  At 512 KB the pool is
 # pages 0x0B-0x0E, so the TPA and four parked images make five processes and
-# the sixth is refused for want of a page (proc.h PC_NOPAGE, 6).
+# the sixth is refused for want of a page (proc.h PC_NOPAGE, 6).  The CCP
+# image cache holds a pool page from the cold boot on, so the fourth child
+# starts only if the pool takes that page back; the DIR after PFILL shows
+# the CCP still returns.
 MEM512IMG = build/mem512.bin
 MEM512LOG = build/verify-mem512.log
 .PHONY: verify-mem512
 verify-mem512: all $(CPMAPFILL)
 	$(MKDISK) $(MEM512IMG) $(CPMSYS) $(CPMAPFILL) $(CPMBIMG)
 	{ $(EMUCD) && ./c900 --disk=$(abspath $(MEM512IMG)) --ram=08-0F \
-		--input="$(OSSEL)PFILL\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
+		--input="$(OSSEL)PFILL\rDIR PFILL.Z8K\r$(ENDIN)" --max=$(EMUMAX) $(EMUIDLE) 2>/dev/null; $(EMUSTAT); } \
 		| tee $(abspath $(MEM512LOG))
 	@$(EMUOK)
 	@grep -q 'PFILL: live 5' $(MEM512LOG) \
 		|| { echo "verify-mem512: FAIL -- five processes did not start at 512 KB"; exit 1; }
 	@grep -q 'PFILL: refused 6' $(MEM512LOG) \
 		|| { echo "verify-mem512: FAIL -- the sixth was not refused for want of a page"; exit 1; }
+	@sed -n '/PFILL: refused/,$$p' $(MEM512LOG) | grep -q 'PFILL *Z8K' \
+		|| { echo "verify-mem512: FAIL -- the CCP did not return after PFILL"; exit 1; }
 	@echo "verify-mem512: PASS -- five processes at 512 KB, the sixth refused"
 
 # ---- a wedged disk controller must be reported, not retried for ever ----

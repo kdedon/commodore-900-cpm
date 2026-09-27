@@ -33,6 +33,11 @@ extern int mapseg();
 extern short sysstk;
 
 #define	PGBKOWN	0x7f		/* pgown[] of a split-I/D bank slot */
+#define	PGCCOWN	0x7e		/* pgown[] of the CCP image cache slot */
+
+extern int ccpcok;		/* the cached CCP image is current */
+unsigned char	pgcc;		/* slot+1 of the CCP image cache, 0 if none */
+int pgccbusy;			/* mapped: the loader is using it */
 
 char		pgown[PGNSLOT];	/* 0: slot i free.  Otherwise the owning
 				 * process's index plus one -- see the
@@ -88,13 +93,26 @@ int h;
 
 	if (h >= PGPARK) {
 		i = h - PGPARK;
-		if (i < pgnslot && pgown[i] && pgown[i] != PGBKOWN && !pgks[i])
+		if (i < pgnslot && pgown[i] && pgown[i] != PGBKOWN
+		    && pgown[i] != PGCCOWN && !pgks[i])
 			return (i);
 		return (-1);
 	}
 	if ((i = pgsegix(h)) < 0)
 		return (-1);
 	return (pgss[i] - 1);
+}
+
+/* Take back the CCP cache's slot for a caller the pool has run dry on:
+ * 1 if there was one to give. */
+static int pgccdrop()
+{
+	if (!pgcc || pgccbusy)
+		return (0);
+	pgown[pgcc - 1] = 0;
+	pgcc = 0;
+	ccpcok = 0;
+	return (1);
 }
 
 /*
@@ -112,14 +130,16 @@ int pgalloc()
 			break;
 	if (k == PGNSEG)
 		return (0);
-	for (i = 0; i < pgnslot; i++)
-		if (!pgown[i]) {
-			pgown[i] = (char)(pgcur + 1);
-			pgss[k] = i + 1;
-			pgks[i] = k + 1;
-			mapseg(PGSEG(k), pgpg[i] << 8, 0x00);
-			return (PGSEG(k));
-		}
+	do
+		for (i = 0; i < pgnslot; i++)
+			if (!pgown[i]) {
+				pgown[i] = (char)(pgcur + 1);
+				pgss[k] = i + 1;
+				pgks[i] = k + 1;
+				mapseg(PGSEG(k), pgpg[i] << 8, 0x00);
+				return (PGSEG(k));
+			}
+	while (pgccdrop());
 	return (0);
 }
 
@@ -137,9 +157,11 @@ int pgbanks()
 
 	if (pgbk[0])
 		return (1);
-	for (i = n = 0; i < pgnslot && n < 2; i++)
-		if (!pgown[i] && pgpg[i] != TPAPHYSPAGE)
-			pgbk[n++] = i + 1;
+	do
+		for (i = n = 0; i < pgnslot && n < 2; i++)
+			if (!pgown[i] && pgpg[i] != TPAPHYSPAGE)
+				pgbk[n++] = i + 1;
+	while (n < 2 && pgccdrop());
 	if (n < 2) {
 		pgbk[0] = pgbk[1] = 0;
 		return (0);
@@ -164,6 +186,35 @@ pgbkfree()
 		}
 	mapseg(SPLITDSEG, 0, 0x06);	/* SYS | CPU-inhibit */
 	mapseg(SPLITTSEG, 0, 0x06);
+	return (0);
+}
+
+/* Map the CCP image cache System-only on CCPCSEG, first taking a free slot
+ * if it has none: 1, or 0 if the pool has no page to spare.  A new page
+ * holds no image yet. */
+int pgccmap()
+{
+	register int i;
+
+	if (!pgcc) {
+		for (i = 0; i < pgnslot; i++)
+			if (!pgown[i] && pgpg[i] != TPAPHYSPAGE)
+				break;
+		if (i == pgnslot)
+			return (0);
+		pgown[i] = PGCCOWN;
+		pgcc = i + 1;
+		ccpcok = 0;
+	}
+	pgccbusy = 1;
+	mapseg(CCPCSEG, pgpg[pgcc - 1] << 8, 0x02);
+	return (1);
+}
+
+pgccunmap()
+{
+	pgccbusy = 0;
+	mapseg(CCPCSEG, 0, 0x06);	/* SYS | CPU-inhibit */
 	return (0);
 }
 
@@ -306,7 +357,7 @@ int pgcount()
 
 	n = m = 0;
 	for (i = 0; i < pgnslot; i++)
-		if (!pgown[i])
+		if (!pgown[i] || (pgown[i] == PGCCOWN && !pgccbusy))
 			n++;
 	for (i = 0; i < PGNSEG; i++)
 		if (!pgss[i])

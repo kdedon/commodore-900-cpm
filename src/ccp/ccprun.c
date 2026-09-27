@@ -132,36 +132,72 @@ static BOOLEAN	sysinit = FALSE;	/* bdosinit has run		*/
     to be a page at a fixed TPA offset, which is why a TPA segment could
     not be shorter than 64 KB.
 
-    `sv' stays as the working copy, so every sv.field reference in this
-    file is unchanged; what moved is the two ends of the exchange.
-    svload()/svstore() copy between it and this process's resident state
-    instead of cpy_in/cpy_out-ing the TPA.  Both ends are resident BSS, so
-    the copy is a plain byte loop and needs no address mapping.  */
+    `sv' names the asking process's state in place; svload() points it
+    there.  */
 
 EXTERN struct ccpsv	*ccpsvcur();	/* src/bdos/proc.c		*/
 
-static struct ccpsv	sv;
+MLOCAL struct ccpsv	*svp;
+#define	sv		(*svp)
+#define	svload()	(svp = ccpsvcur())
 
-MLOCAL VOID svload()			/* resident state -> sv		*/
+/*  CCP.Z8K's records as the loader last read them, in a pool page the
+    allocator takes back when it runs dry, shared by every session.  The BIOS clears ccpcok on any write that could change
+    the file; the opened FCB must also match the one the cache was filled
+    under.  */
+
+GLOBAL WORD	ldcmode;		/* LDCOFF, LDCFILL or LDCPLAY	*/
+GLOBAL UWORD	ldcpos;			/* records moved this load	*/
+GLOBAL UWORD	ldcnrec;		/* records the cache holds	*/
+EXTERN WORD	ccpcok, dwrec;		/* the BIOS's guard		*/
+EXTERN BYTE	*dwname;
+EXTERN VOID	dwstart();
+EXTERN WORD	pgccmap();		/* 0: no page for the cache	*/
+EXTERN VOID	pgccunmap();
+MLOCAL UBYTE	ccpcfcb[20];		/* FCB bytes 12..31 at the fill	*/
+WORD		ldimage();
+
+/*  Load the opened CCP, from the cache when it is current.  */
+
+MLOCAL WORD ldccp(ctxp)
+struct context *ctxp;
 {
-    REG UBYTE	*s, *d;
-    REG WORD	i;
+    REG WORD	i, k, m;
 
-    s = (UBYTE *) ccpsvcur();
-    d = (UBYTE *) &sv;
-    for (i = 0; i < sizeof sv; i++)
-	d[i] = s[i];
-}
-
-MLOCAL VOID svstore()			/* sv -> resident state		*/
-{
-    REG UBYTE	*s, *d;
-    REG WORD	i;
-
-    s = (UBYTE *) &sv;
-    d = (UBYTE *) ccpsvcur();
-    for (i = 0; i < sizeof sv; i++)
-	d[i] = s[i];
+    plock();
+    m = pgccmap();
+    ldcmode = m ? LDCFILL : LDCOFF;
+    if (m && ccpcok) {
+	for (i = 0; i < 20 && ccpcfcb[i] == ccpfcb[12 + i]; i++)
+	    ;
+	if (i == 20)
+	    ldcmode = LDCPLAY;
+    }
+    for (;;) {
+	if (ldcmode == LDCFILL) {
+	    dwname = (BYTE *) &ccpfcb[1];
+	    dwstart();
+	    for (i = 0; i < 20; i++)
+		ccpcfcb[i] = ccpfcb[12 + i];
+	}
+	ldcpos = 0;
+	k = ldimage(map_adr((XADDR) ccpfcb, MYDATA), 0, sv.sv_ptail,
+		    sv.sv_pfcb1, sv.sv_pfcb2, ctxp);
+	if (k == GOOD || ldcmode != LDCPLAY)
+	    break;
+	ccpcok = 0;			/* a stale cache: read the disk	*/
+	ldcmode = LDCFILL;
+    }
+    if (ldcmode == LDCFILL && k == GOOD && dwrec > 0) {
+	ldcnrec = ldcpos;
+	ccpcok = 1;
+    }
+    dwrec = 0;
+    ldcmode = LDCOFF;
+    if (m)
+	pgccunmap();
+    punlock();
+    return (k);
 }
 
 
@@ -368,10 +404,8 @@ VOID ccprun()
     svload();
 
     pend = sv.sv_pend;
-    if (pend) {				/* one request, one load	*/
+    if (pend)				/* one request, one load	*/
 	sv.sv_pend = 0;
-	svstore();
-    }
 
     if (pend) {
 	/*  The CCP resolved and OPENED a command; its FCB, its tail and
@@ -399,8 +433,9 @@ VOID ccprun()
 	    sv.sv_ptail[i] = 0;
     }
 
-    if ((k = ldimage(fcbadr, (WORD) tlen, sv.sv_ptail,
-		     sv.sv_pfcb1, sv.sv_pfcb2, &context)) != GOOD) {
+    if ((k = pend ? ldimage(fcbadr, (WORD) tlen, sv.sv_ptail,
+			    sv.sv_pfcb1, sv.sv_pfcb2, &context)
+		  : ldccp(&context)) != GOOD) {
 	if (!pend)
 	    ldfail(nofile);
 	bdos(PRNTSTR, map_adr((XADDR) msgs[min(MSGMAX, k)], MYDATA));
@@ -440,7 +475,6 @@ VOID ccpabort()
 	return;
     sv.sv_submit = 0;
     sv.sv_morecmds = 0;
-    svstore();
 }
 
 

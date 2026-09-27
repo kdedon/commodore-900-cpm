@@ -405,11 +405,49 @@ XADDR xlpbp;
 /* Routine to fill input buffer when fgetch macro detects it is empty	*/
 
 
+/* The CCP image cache (ccprun.c): replay its records or fill it. */
+
+extern WORD	ldcmode;
+extern UWORD	ldcpos, ldcnrec;
+
+/* Read n (1..128) records to dest in one BDOS call, or from the cache. */
+
+MLOCAL int rdrecs(dest, n)
+XADDR dest;
+register UWORD n;
+{
+	register UWORD	r;
+	UBYTE		mc;
+	BSETUP
+
+	if (ldcmode == LDCPLAY) {
+		if (ldcpos + n > ldcnrec)
+			return (READERR);
+		mem_cpy(CCPCBASE + ((long)ldcpos << 7), dest, (long)n << 7);
+		ldcpos += n;
+		return (GOOD);
+	}
+	bdos(SETDMA, dest);
+	mc = GBL.multcnt;
+	GBL.multcnt = (UBYTE)n;
+	r = bdos(READ, mylpb.fcbaddr);
+	GBL.multcnt = mc;
+	if (r != 0)
+		return (READERR);
+	if (ldcmode == LDCFILL) {
+		if (ldcpos + n > CCPCMAX)
+			ldcmode = LDCOFF;
+		else
+			mem_cpy(dest, CCPCBASE + ((long)ldcpos << 7),
+				(long)n << 7);
+		ldcpos += n;
+	}
+	return (GOOD);
+}
+
 int fillbuf()				/* Returns first char in buffer */
 {					/*   or EOF if read fails	*/
-					/* Set up address to read into	*/
-	mbdos(SETDMA, mydma);
-	if (bdos(READ, mylpb.fcbaddr) != 0)	/* Have BDOS do the read*/
+	if (rdrecs(map_adr((XADDR) mydma, MYDATA), 1) != GOOD)
 		return (EOF);
 	gp = mydma;			/* Initialize buffer pointer	*/
 	return ((int)*gp++ & 0xff);	/* Return first character	*/
@@ -534,6 +572,7 @@ int i;
 	register int	type;		/* Type of segment loaded	*/
 	register short	lseg;		/* logical segment index	*/
 	register XADDR	phystarg;	/* physical target load address	*/
+	int		j;
 
 	l = x_sg[i].x_sg_len;		/* number of bytes to load	*/
 	type = x_sg[i].x_sg_typ;	/* Type of segment		*/
@@ -660,11 +699,12 @@ int i;
 				   buffer to the program as its own code. */
 			gp = mydma;	/* fillbuf consumed the first byte */
 		}
-		else			/* Read full sector	*/
+		else			/* Read whole records	*/
 		{			/*   into target space  */
-			length = SECLEN;
-			bdos(SETDMA, phystarg);
-			if (bdos(READ, mylpb.fcbaddr) != 0) {
+			length = min(l >> 7, 128);
+			j = rdrecs(phystarg, length);
+			length <<= 7;
+			if (j != GOOD) {
 				/* C900: stock ignored this too, and then
 				   strode over the record it had not read:
 				   whatever was in the TPA -- the program

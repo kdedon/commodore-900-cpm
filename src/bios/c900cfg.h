@@ -47,6 +47,14 @@
 #define	DHPHYS		0x00098200L
 #define	DHMAX		512		/* directory entries the table covers */
 					/* per-drive on/off: dskhash.c hashen[] */
+/* The CCP image cache: a pool page mapped System-only on CCPCSEG only
+ * while the loader fills or copies it, CPU-inhibited otherwise. */
+#define	CCPCSEG		0x3e
+#define	CCPCBASE	0x3e000000L
+#define	CCPCMAX		480		/* records; 60 KB */
+#define	LDCOFF		0		/* ldcmode: read the disk only	*/
+#define	LDCFILL		1		/*   read it and fill the cache	*/
+#define	LDCPLAY		2		/*   read the cache		*/
 
 /* Supervisor stacks: segment 0x3F is based on phys page 0x09, so a stack
  * offset is also the offset in that page.  Seven 4 KB stacks run down from
@@ -83,7 +91,7 @@
  *
  * 0x28..0x2E is free: the ROM identity-maps all 64 descriptors at reset
  * and thereafter only ever addresses segments 0,
- * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32..0x36, 0x3F and the
+ * 1, 0x3A, 0x3B and 0x3F; this port programs 0x32..0x36, 0x3E, 0x3F and the
  * module segments (0x37..0x39, 0x3C, 0x3D), and nothing in the tree names a segment between 0x02 and
  * 0x31.  Only pgalloc.c uses PGSEGLO, so moving it is a config change.
  *

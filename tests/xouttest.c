@@ -78,6 +78,7 @@ static long dma;			/* what bdos(26) was last told	*/
 
 #define SECL 128
 
+static int hmulti();
 static int reads;			/* records actually delivered	*/
 static int failedreads;			/* reads refused at end of file	*/
 
@@ -89,14 +90,20 @@ long param;
 		dma = param;
 		return (0);
 	}
-	if (func == 20) {		/* Read Sequential		*/
-		if (fpos + SECL > fend) {
-			failedreads++;
-			return (1);	/* end of file, as the BDOS says */
+	if (func == 20) {		/* Read Sequential, multcnt records */
+		int n, k;
+
+		n = hmulti();
+		for (k = 0; k < n; k++) {
+			if (fpos + SECL > fend) {
+				failedreads++;
+				return (k << 8 | 1);	/* end of file	*/
+			}
+			memcpy(xlate(dma + (long) k * SECL), fbuf + fpos,
+			       (size_t) SECL);
+			fpos += SECL;
+			reads++;
 		}
-		memcpy(xlate(dma), fbuf + fpos, (size_t) SECL);
-		fpos += SECL;
-		reads++;
 		return (0);
 	}
 	fprintf(stderr, "xouttest: unexpected BDOS call %d\n", func);
@@ -201,8 +208,18 @@ long a;
     compiler accepted; declare them first so a host compiler does too.  */
 static int ldrsx();
 static int rsxfer();
+static int rdrecs();
 
 #include "../src/bdos/pgmld.c"
+
+struct stvars gbls;
+WORD ldcmode;				/* no CCP image cache here	*/
+UWORD ldcpos, ldcnrec;
+
+static int hmulti()
+{
+	return (gbls.multcnt ? gbls.multcnt & 0xff : 1);
+}
 
 /* ---- images ---------------------------------------------------------- */
 
