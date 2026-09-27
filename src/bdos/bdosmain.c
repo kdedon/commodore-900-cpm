@@ -163,21 +163,39 @@ REG UWORD dsk;
     returns.  So in function 45 modes 0FEh and 0FFh function 103 wrote
     an XFCB onto a drive the program itself had marked read-only.	*/
 
-#define fcbfunc(f) ( ((f) >= 15 && (f) <= 23) || (f) == 30 \
-		     || ((f) >= 33 && (f) <= 36) || (f) == 40 \
-		     || (f) == 42 || (f) == 43 \
-		     || (f) == 99 || (f) == 100 || (f) == 102 \
-		     || (f) == 103 )
-#define wrtfunc(f) ( (f) == 16 || (f) == 19 || ((f) >= 21 && (f) <= 23) \
-		     || (f) == 30 || (f) == 34 || (f) == 40 \
-		     || (f) == 99 || (f) == 100 || (f) == 103 )
-
 /* Function 15 falls back to user 0 SYS files. FCB name byte 8 bit 7 records
  * that origin across calls; keephi selects operations that preserve it. */
 
-#define keephi(f) ( (f) == 16 || (f) == 20 || (f) == 21 \
-		    || (f) == 33 || (f) == 34 || (f) == 40 \
-		    || (f) == 42 || (f) == 43 )
+#define BF_FCB	0x01
+#define BF_WRT	0x02
+#define BF_KEEP	0x04
+#define F	BF_FCB
+#define FW	(BF_FCB|BF_WRT)
+#define FK	(BF_FCB|BF_KEEP)
+#define FWK	(BF_FCB|BF_WRT|BF_KEEP)
+
+MLOCAL UBYTE bdflag[104] = {
+/*   0 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  10 */  0, 0, 0, 0, 0, F,FWK, F, F,FW,
+/*  20 */ FK,FWK,FW,FW, 0, 0, 0, 0, 0, 0,
+/*  30 */ FW, 0, 0,FK,FWK, F, F, 0, 0, 0,
+/*  40 */FWK, 0,FK,FK, 0, 0, 0, 0, 0, 0,
+/*  50 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  60 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  70 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  80 */  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+/*  90 */  0, 0, 0, 0, 0, 0, 0, 0, 0,FW,
+/* 100 */ FW, 0, F,FW
+};
+#undef F
+#undef FW
+#undef FK
+#undef FWK
+
+#define bdflagof(f) ((UWORD)(f) < sizeof bdflag ? UBWORD(bdflag[f]) : 0)
+#define fcbfunc(f) (bdflagof(f) & BF_FCB)
+#define wrtfunc(f) (bdflagof(f) & BF_WRT)
+#define keephi(f) (bdflagof(f) & BF_KEEP)
 
 MLOCAL UBYTE hi_ext;		/* v3's high$ext, for the call in progress */
 
@@ -337,16 +355,17 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
     BSETUP
 
 	BTRACE1("<a>");			/* FIRST xbdos() body entry */
+	if (func == 2)			/* the hottest call; it cannot fail */
+	{
+	    cookdout((UBYTE)info,FALSE);/* "cooked" console output */
+	    return(0);
+	}
 	temp.reselect = FALSE;
 	temp.fxptr = infop;
  	rtnval = 0;
 	GBL.curfx = (UBYTE)func;	/* named in the fcn 45 message */
 	GBL.curfcb = (struct fcb *)NULL;
 	GBL.errcode = 0;
-	setlrbc = 0;			/* in case fn 30's scan never returned */
-	hi_ext = 0;			/* v3's reselectx (bdos30.asm:2975);
-					   keephi() functions put it back  */
-	xfcb_ro = 0;			/* and :2978, the line after	*/
 
 	if (GBL.errmode && fcbfunc(func))
 	{			/* the drive this FCB names */
@@ -365,9 +384,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	    }
 	}
 
-	if (func == 2)			/* the hottest call, ahead of bdfn */
-	    cookdout((UBYTE)info,FALSE);/* "cooked" console output */
-	else if ( (UWORD)func < sizeof bdslot
+	if ( (UWORD)func < sizeof bdslot
 		  && (dsk = UBWORD(bdslot[func])) )
 	{
 	    newpw = UBWORD(bdhow[--dsk]);
@@ -388,7 +405,7 @@ REG XADDR infop;	/* parameter as (segmented) pointer */
 	}
 	else switch (func)	/* switch on function number */
 	{
-	  case 3:   return((UWORD)brdr());	/* get reader from bios */
+	  case 3: return((UWORD)brdr());	/* get reader from bios */
 		    /* break; */
 
 	  case 4:   bpun((UBYTE)info);		/* punch output to bios */
@@ -984,6 +1001,9 @@ REG struct tempstr *temptr;
 				/* get local copy of fcb pointer */
     fcbp = temptr->fptr;
     GBL.curfcb = fcbp;		/* named in the fcn 45 error message */
+    hi_ext = 0;			/* v3's reselectx (bdos30.asm:2975);
+				   keephi() functions put it back  */
+    xfcb_ro = 0;		/* and :2978, the line after	*/
 
 				/* select disk if necessary	 */
     tmp_dsk = fcbp->drvcode;
