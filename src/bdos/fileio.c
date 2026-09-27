@@ -22,6 +22,7 @@ EXTERN		seterr();	/* record a CP/M 3 error code for the caller */
 EXTERN UWORD	do_phio();	/* packet disk i/o handler	*/
 EXTERN		clraloc();	/* clear bit in allocation vector */
 EXTERN		setaloc();	/* set bit in allocation vector */
+EXTERN		alvinit();	/* clear the allocation vector */
 EXTERN UWORD	swap();		/* assembly language byte swapper */
 EXTERN UWORD	dir_wr();	/* directory write routine */
 EXTERN		tmp_sel();	/* temporary select disk routine */
@@ -175,8 +176,7 @@ REG UBYTE dsknum;		/* disk number to select */
 	drvlbl[dsknum] = 0;	/* the login scan below rediscovers the	*/
 	drvsfcb[dsknum] = 0;	/* label and the SFCBs of this medium	*/
 	dhopen((UWORD)UBWORD(dsknum), (GBL.parmp)->drm);
-	i = (GBL.parmp)->dsm;
-	do clraloc(i); while (i--);	/* clear the allocation vector */
+	alvinit();			/* clear the allocation vector */
 	i = udiv( (LONG)(((GBL.parmp)->drm) + 1), 
 		  4 * (((GBL.parmp)->blm) + 1), &j);
 					/* calculate nmbr of directory blks */

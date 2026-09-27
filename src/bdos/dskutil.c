@@ -401,6 +401,25 @@ retry:
  * -- turns one bad entry into an unmountable disk.
  */
 
+/* Per drive: every alv byte below this one is full.  getaloc() starts
+ * there, so it still returns the lowest free block. */
+static UWORD alvrov[16];
+
+alvinit()
+/* Clear blocks 0..dsm in the allocation vector, for a login */
+{
+    REG UWORD	i, n;
+    REG UBYTE	*p;
+    BSETUP
+
+    n = (GBL.parmp)->dsm;
+    p = (GBL.dphp)->alv;
+    for (i = 0; i < (n >> 3); i++)
+	p[i] = 0;
+    p[i] &= 0xff >> ((n & 7) + 1);	/* the bits past dsm stay */
+    alvrov[GBL.curdsk] = 0;
+}
+
 setaloc(bitnum)
 /*  Set bit in allocation vector	*/
 REG UWORD	bitnum;
@@ -419,16 +438,23 @@ REG UWORD	bitnum;
     BSETUP
 
     if ( bitnum && bitnum <= (GBL.parmp)->dsm )
+    {
 	*((GBL.dphp)->alv + (bitnum>>3)) &= ~(0x80 >> (bitnum & 7));
+	if ( (bitnum >>= 3) < alvrov[GBL.curdsk] )
+	    alvrov[GBL.curdsk] = bitnum;
+    }
 }
 
 
 UWORD	getaloc()
 /* Get a free block in the file system and set the bit in allocation vector */
 {
-    REG UWORD	i;		/* loop counter		*/
-    REG WORD	diskmax;	/* # bits in alv - 1	*/
+    REG UWORD	i;		/* block number		*/
+    REG UWORD	diskmax;	/* # bits in alv - 1	*/
     REG UBYTE	*p;		/* ptr to byte */
+    REG UWORD	k;		/* byte index		*/
+    REG UWORD	bit;
+    UWORD	d, k0;
 
     BSETUP
     LOCK		/* need to lock the file system while messing
@@ -437,14 +463,20 @@ UWORD	getaloc()
     diskmax = (GBL.parmp)->dsm;
 			/* get disk max field from dpb	*/
     p = (GBL.dphp)->alv;
-    for (i = 0; i <= diskmax; i++)
+    d = UBWORD(GBL.curdsk);
+    for (k = k0 = alvrov[d]; (i = k << 3) <= diskmax; k++)
     {
-	if ( ~(*(p + (i >> 3))) & (0x80 >> (i&7)) )
-	{			/* found a zero in allocation vector */
-	    setaloc(i);
-	    UNLOCK		/* can unlock file system now	*/
-	    return(i);		/* return block number		*/
-	}
+	if (UBWORD(p[k]) == 0xff)
+	    continue;
+	for (bit = 0x80; i <= diskmax; bit >>= 1, i++)
+	    if ( ! (p[k] & bit) )
+	    {			/* found a zero in allocation vector */
+		p[k] |= bit;
+		if (alvrov[d] == k0)	/* else clraloc() lowered it */
+		    alvrov[d] = k;
+		UNLOCK		/* can unlock file system now	*/
+		return(i);	/* return block number		*/
+	    }
     }
     UNLOCK		/* THE DISK IS FULL, AND THIS RELEASE WAS MISSING.
 			   Harmless while LOCK/UNLOCK were null macros
