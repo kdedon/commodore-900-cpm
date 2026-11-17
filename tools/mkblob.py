@@ -11,8 +11,10 @@ and an image blob, then lay the blob into CPM.SYS.
 
 Each FILE is an l.out linked alone at SEG<<24.  Its loaded image goes
 into modimg.bin, and cmain.c copies it into physical page MODPHYSPAGE
-at cold boot.  Images are packed there on 256-byte boundaries, and each
+at cold boot.  Images are packed there on 1 KB boundaries, and each
 segment is mapped onto its own slice with a limit that ends it.
+Every segment base must be 1 KB-aligned: the board passes A8 and A9
+around the MMU, so a base's low two page bits are ignored.
 
 --place loads the blob over the start of CPM.SYS's bss, which nothing
 touches before cold boot has copied the images out and zeroed it:
@@ -27,7 +29,7 @@ only until cold boot.
 The boot module is the code only cold boot runs.  It links after
 CPM.SYS, against --syms's absolute copy of CPM.SYS's globals, so it
 calls and names them directly.  --place puts it past the blob, bss and
-disk cache, on a 256-byte physical boundary, where cmain.c maps its segment
+disk cache, on a 1 KB physical boundary, where cmain.c maps its segment
 onto it in place.  Nothing uses that RAM afterwards.  CPM.SYS reaches
 it through bootent_, the first bytes of its segment.
 
@@ -54,6 +56,13 @@ def gl(b, o):
     """One PDP-order (high word first, each word little-endian) long."""
     return (struct.unpack_from("<H", b, o)[0] << 16) | \
         struct.unpack_from("<H", b, o + 2)[0]
+
+
+def align(what, page):
+    """Refuse a segment base page the MMU cannot honour."""
+    if page & 3:
+        die("%s: base page 0x%04x is not 1 KB-aligned" % (what, page))
+    return page
 
 
 def cfg(name):
@@ -133,7 +142,7 @@ def place(lnkf, binf, bootf, outf):
     ds = ssize[L_SHRD] + ssize[L_PRVD]
     pad = ds & 1
 
-    # The boot module runs in place, so it starts on a 256-byte physical
+    # The boot module runs in place, so it starts on a 1 KB physical
     # boundary past both the blob and the bss cold boot fills in.  The
     # data segment's physical base is 1K-aligned.
     # Past the disk cache too, which cold boot reads into.
@@ -141,9 +150,15 @@ def place(lnkf, binf, bootf, outf):
     dbase = (cfg("SYSPHYSPAGE") << 16) + ((tsz + 1023) & ~1023)
     bo = max(ds + pad + len(blob), ds + pad + ssize[L_BSSD],
              cfg("DHPHYS") + 5 * cfg("DHMAX") - dbase)
-    bo = (bo + 255) & ~255
-    bpage = (dbase + bo) >> 8
+    for nm in ("BUFPAGE", "SSTKPAGE"):
+        align(nm, cfg(nm))
+    bo = (bo + 1023) & ~1023
+    bpage = align("boot.mod", (dbase + bo) >> 8)
     bimg = boot["img"] + b"\0" * boot["bss"]
+    stk0 = (cfg("SSTKPAGE") << 8) + cfg("SSTKTOP") - cfg("SSTKSZ")
+    if (bpage << 8) + len(bimg) > stk0:
+        die("boot.mod ends at phys 0x%06x, over stack 0 at 0x%06x"
+            % ((bpage << 8) + len(bimg), stk0))
     grow = bo - ds + len(bimg)
 
     syms = dict((k, v) for k, (t, v) in lsyms(b).items())
@@ -191,13 +206,15 @@ def main():
         for nm in m["exps"]:
             if nm not in m["syms"]:
                 die("%s: exported symbol %s is not defined" % (modf, nm))
-        off += m["blocks"] * 256
+        off += (m["size"] + 1023) & ~1023
         mods.append(m)
     if off > top:
         die("modules need %d bytes; page 0x%02X holds %d"
             % (off, cfg("MODPHYSPAGE"), top))
 
     page = cfg("MODPHYSPAGE") << 8
+    for m in mods:
+        align("%s.mod" % m["name"], page + m["off"] // 256)
     blob = b""
     for m in mods:
         m["boff"] = len(blob)

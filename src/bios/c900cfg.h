@@ -26,25 +26,27 @@
 #define	SPLITTBASE	0x36000000L
 /* Modules (mk/config.mk MODULES): each is linked alone at the base of its
  * own logical segment.  Their images load over cpm.sys's bss; cmain.c
- * copies them into this physical page at cold boot, packed on 256-byte
+ * copies them into this physical page at cold boot, packed on 1 KB
  * boundaries, and maps each segment onto its slice.  The page stops at MODLIM, short
- * of the ROM's state at physical 0x0FE400 on a 512 KB machine. */
+ * of the ROM's state at physical 0x0FE400 on a 512 KB machine.
+ * Every segment base must be 1 KB-aligned: A8 and A9 bypass the MMU. */
 #define	MODPHYSPAGE	0x0f		/* phys 0x0F0000 */
 #define	MODLIM		0xE3		/* last usable 256-byte block */
 
 /* System-only disk cache segment, in page 0x09 between CPM.SYS's bss and
- * the supervisor stacks. Buffers occupy NBCB*512 bytes starting at offset
- * zero; the directory signature table starts at 0x4000 and uses DHMAX
- * entries of five bytes each, ending at the lowest stack. WD DMA uses
- * physical addresses. Keep NBCB, DHBASE and BUFLIM consistent. */
+ * the supervisor stacks, based on a 1 KB boundary. Buffers occupy NBCB*512
+ * bytes starting at offset zero; the directory signature table starts at
+ * 0x4000 and uses DHMAX entries of five bytes each, ending 0x200 below the
+ * lowest stack. WD DMA uses physical addresses. Keep NBCB, DHBASE, BUFLIM
+ * and DHPHYS consistent. */
 #define	BUFSEG		0x33
 #define	BUFBASE		0x33000000L
-#define	BUFPHYS		0x00094200L	/* phys 0x094200 (DMA target) */
-#define	BUFPAGE		0x0942		/* mapseg base page */
+#define	BUFPHYS		0x00094000L	/* phys 0x094000 (DMA target) */
+#define	BUFPAGE		0x0940		/* mapseg base page */
 #define	BUFLIM		0x49		/* last 256-byte block */
 #define	NBCB		32		/* sector buffers in the pool */
 #define	DHBASE		0x33004000L	/* NBCB*512 = 0x4000 */
-#define	DHPHYS		0x00098200L
+#define	DHPHYS		0x00098000L
 #define	DHMAX		512		/* directory entries the table covers */
 					/* per-drive on/off: dskhash.c hashen[] */
 /* The CCP image cache: a pool page mapped System-only on CCPCSEG only
